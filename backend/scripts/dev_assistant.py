@@ -93,18 +93,29 @@ def write_stub(path: str, content: str = ""):
     if os.path.exists(path):
         print(f"skipping existing file {path}")
         return False
+    # adjust header comment style for TS/JS files
+    if content.startswith("# generated") and path.endswith((".ts", ".tsx", ".js", ".jsx")):
+        content = content.replace("#", "//", 1)
     with open(path, "w") as f:
         f.write(content)
     print(f"created {path}")
     return True
 
 
-def scaffold(ticket_id: str, use_ai: bool = False, do_write: bool = False, do_git: bool = False):
+def scaffold(ticket_id: str, use_ai: bool = False, do_write: bool = False, do_git: bool = False, manual_desc: str | None = None, template: str | None = None, interactive: bool = False):
     tickets = load_tickets()
-    desc = tickets.get(ticket_id)
+    desc = manual_desc if manual_desc else tickets.get(ticket_id)
     if not desc:
-        print(f"ticket {ticket_id} not found in {FEATURE_BOARD}")
+        print(f"ticket {ticket_id} not found in {FEATURE_BOARD} and no manual description provided")
         sys.exit(1)
+    # interactive clarifying questions
+    if interactive:
+        print(f"Description: {desc}")
+        # ask if frontend if unclear
+        if not any(word in desc.lower() for word in ["frontend", "[fe]", "react"]):
+            resp = input("Is this a frontend feature? [y/N]: ").strip().lower()
+            if resp.startswith("y"):
+                desc += " [FE]"
 
     print(f"Scaffolding for BAT<{ticket_id}>: {desc}\n")
 
@@ -130,6 +141,21 @@ def scaffold(ticket_id: str, use_ai: bool = False, do_write: bool = False, do_gi
     for path in (model_file, service_file, route_file, test_file):
         print("  ", path)
     print()
+
+    # optional template processing
+    if template:
+        tpl_path = os.path.join(os.path.dirname(__file__), "templates", f"{template}.tpl")
+        if os.path.exists(tpl_path):
+            with open(tpl_path) as tf:
+                tpl = tf.read()
+            substitutions = {"TICKET": ticket_id, "DESC": desc}
+            out = tpl
+            for k, v in substitutions.items():
+                out = out.replace(f"{{{{{k}}}}}", v)
+            print("Template output:\n")
+            print(out)
+        else:
+            print(f"template {template} not found")
 
     ai_code = ""
     if use_ai:
@@ -174,21 +200,26 @@ class TODOModel(Base):
     # if requested, write stub files
     if do_write:
         created = []
-        # if we have AI output with markers, split
+        wrote = set()
+        # if we have AI output with markers, split and write those files
         if ai_code:
-            # parse markers
-            parts = re.split(r"^# --- (.+?) ---$", ai_code, flags=re.MULTILINE)
+            # parse markers; support both '# --- file ---' and '// --- file ---'
+            parts = re.split(r"^[#/]{1,2} --- (.+?) ---$", ai_code, flags=re.MULTILINE)
             # parts: [pre, filename1, content1, filename2, content2, ...]
             if len(parts) > 1:
                 for i in range(1, len(parts), 2):
                     fname = parts[i].strip()
                     content = parts[i+1].lstrip("\n")
+                    # strip initial comment line if still present
+                    content = re.sub(r"^([#/].*)\n", "", content)
                     write_stub(fname, content)
                     created.append(fname)
-        # always ensure base files exist
+                    wrote.add(fname)
+        # ensure base files exist only if not written already
         for path in (model_file, service_file, route_file, test_file):
-            if write_stub(path, f"# generated for BAT<{ticket_id}>: {desc}\n"):
-                created.append(path)
+            if path not in wrote:
+                if write_stub(path, f"# generated for BAT<{ticket_id}>: {desc}\n"):
+                    created.append(path)
 
         # optionally commit with git and open PR
         if do_git and created:
@@ -215,12 +246,38 @@ class TODOModel(Base):
 
 def main():
     parser = argparse.ArgumentParser(description="Dev assistant prototype")
-    parser.add_argument("ticket", help="BAT ticket id (just number, e.g. 170)")
+    parser.add_argument("ticket", nargs="?", help="BAT ticket id (or comma-separated list)")
+    parser.add_argument("--tickets", help="comma-separated BAT ticket ids")
     parser.add_argument("--ai", action="store_true", help="invoke AI to generate code")
     parser.add_argument("--write", action="store_true", help="actually create stub files")
     parser.add_argument("--git", action="store_true", help="open git branch and commit new files")
+    parser.add_argument("--interactive", action="store_true", help="ask for additional details interactively")
+    parser.add_argument("--template", help="use named template from scripts/templates/<name>.tpl")
     args = parser.parse_args()
-    scaffold(args.ticket, use_ai=args.ai, do_write=args.write, do_git=args.git)
+
+    ids = []
+    if args.tickets:
+        ids = [t.strip() for t in args.tickets.split(",") if t.strip()]
+    elif args.ticket:
+        ids = [args.ticket]
+    else:
+        parser.error("must supply a ticket or --tickets")
+
+    for tid in ids:
+        desc = None
+        if args.interactive:
+            desc = input(f"Enter description for BAT<{tid}> (leave blank to use board): ").strip()
+        scaffold(tid, use_ai=args.ai, do_write=args.write, do_git=args.git, manual_desc=desc, template=args.template, interactive=args.interactive)
+        log_entry = {
+            "ticket": tid,
+            "ai": bool(args.ai),
+            "write": bool(args.write),
+            "git": bool(args.git),
+            "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+            "template": args.template,
+        }
+        with open(os.path.join(os.path.dirname(__file__), "dev_assistant.log"), "a") as logf:
+            logf.write(__import__("json").dumps(log_entry) + "\n")
 
 
 if __name__ == "__main__":
