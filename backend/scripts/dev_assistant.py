@@ -34,36 +34,51 @@ def load_tickets():
 
 
 def ai_generate(prompt: str) -> str:
-    """Use OpenAI API to generate boilerplate based on prompt.
+    """Generate text using either OpenAI API or a local LLM.
 
-    Requires OPENAI_API_KEY in environment. If not present, returns empty string.
+    Priority: if OPENAI_API_KEY env var is set and "openai" package is
+    available, use it. Otherwise if LOCAL_AI_CMD is configured, exec that
+    with the prompt on stdin and return stdout. If neither is available,
+    return an empty string.
     """
+    # first attempt: OpenAI remote
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return ""  # no key, skip
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return ""  # openai not installed
+    if api_key:
+        try:
+            from openai import OpenAI
+        except ImportError:
+            api_key = None
+        else:
+            client = OpenAI(api_key=api_key)
+            resp = client.responses.create(
+                model="gpt-4o-mini",
+                input=[
+                    {"role": "system", "content": "You are a code assistant."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_output_tokens=500,
+            )
+            if hasattr(resp, "output_text") and resp.output_text:
+                return resp.output_text.strip()
+            try:
+                return resp.output[0].content[0].text
+            except Exception:
+                return ""
+    # fallback: local command
+    local_cmd = os.environ.get("LOCAL_AI_CMD")
+    if local_cmd:
+        try:
+            import subprocess
 
-    client = OpenAI(api_key=api_key)
-    # use the new responses API
-    resp = client.responses.create(
-        model="gpt-4o-mini",
-        input=[
-            {"role": "system", "content": "You are a code assistant."},
-            {"role": "user", "content": prompt},
-        ],
-        max_output_tokens=500,
-    )
-    # the response structure may contain 'output_text' summary
-    if hasattr(resp, "output_text") and resp.output_text:
-        return resp.output_text.strip()
-    # fallback parse first message
-    try:
-        return resp.output[0].content[0].text
-    except Exception:
-        return ""
+            proc = subprocess.Popen(
+                local_cmd.split(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            out, err = proc.communicate(prompt, timeout=60)
+            if proc.returncode == 0:
+                return out.strip()
+        except Exception:
+            pass
+    return ""  # nothing available
 
 
 def make_basename(desc: str) -> str:
@@ -95,10 +110,21 @@ def scaffold(ticket_id: str, use_ai: bool = False, do_write: bool = False, do_gi
 
     # build clean base name for files
     snake = make_basename(desc)
-    model_file = f"app/models/{snake}.py"
-    service_file = f"app/services/{snake}.py"
-    route_file = f"app/api/routes/{snake}.py"
-    test_file = f"tests/test_{snake}.py"
+    # if ticket indicates frontend work, suggest React component paths
+    fe_keywords = ["[fe]", "frontend", "react", "component"]
+    is_fe = any(word in desc.lower() for word in fe_keywords)
+    if is_fe:
+        # place inside customer-app by default
+        comp_name = ''.join(x.capitalize() or '_' for x in snake.split('_'))
+        model_file = f"frontend/apps/customer-app/src/components/{comp_name}.tsx"
+        service_file = f"frontend/apps/customer-app/src/services/{snake}.ts"
+        route_file = f"frontend/apps/customer-app/src/routes/{snake}.tsx"
+        test_file = f"frontend/apps/customer-app/src/__tests__/{comp_name}.test.tsx"
+    else:
+        model_file = f"app/models/{snake}.py"
+        service_file = f"app/services/{snake}.py"
+        route_file = f"app/api/routes/{snake}.py"
+        test_file = f"tests/test_{snake}.py"
 
     print("Suggested files to create:")
     for path in (model_file, service_file, route_file, test_file):
@@ -107,14 +133,26 @@ def scaffold(ticket_id: str, use_ai: bool = False, do_write: bool = False, do_gi
 
     ai_code = ""
     if use_ai:
-        prompt = (
-            f"You are an assistant for the GoSenderr codebase. "
-            f"Generate Python boilerplate for a FastAPI/SQLAlchemy backend feature described as: '{desc}'.\n"
-            "Follow project conventions: models live in app.models, services in app.services, "
-            "routers in app.api.routes, and tests in backend/tests. "
-            "Use Pydantic schemas where appropriate and keep imports relative. "
-            "Output all code sections in a single response."
-        )
+        # Construct prompt based on backend vs frontend
+        is_fe = any(word in desc.lower() for word in ["[fe]", "frontend", "react", "component"])
+        if is_fe:
+            prompt = (
+                f"You are an assistant for the GoSenderr React codebase. "
+                f"Generate TypeScript/React boilerplate for a frontend feature described as: '{desc}'.\n"
+                "Provide component/styled file, service hook if needed, route page, and a Jest/RTL test. "
+                "For each file, start with a header line `# --- filename.tsx ---` or `.ts` so output can be split. "
+                "Output all code sections in a single response."
+            )
+        else:
+            prompt = (
+                f"You are an assistant for the GoSenderr codebase. "
+                f"Generate Python boilerplate for a FastAPI/SQLAlchemy backend feature described as: '{desc}'.\n"
+                "Follow project conventions: models live in app.models, services in app.services, "
+                "routers in app.api.routes, and tests in backend/tests. "
+                "Use Pydantic schemas where appropriate and keep imports relative. "
+                "For each file, start with a header line `# --- filename.py ---` so the output can be split. "
+                "Output all code sections in a single response."
+            )
         ai_code = ai_generate(prompt)
         if ai_code:
             print("AI-generated boilerplate: \n")
@@ -136,25 +174,43 @@ class TODOModel(Base):
     # if requested, write stub files
     if do_write:
         created = []
-        for path in (model_file, service_file, route_file, test_file):
-            header = f"# generated for BAT<{ticket_id}>: {desc}\n"
-            write_stub(path, header)
-            created.append(path)
-        # if AI output is present, dump to companion file
+        # if we have AI output with markers, split
         if ai_code:
-            ai_path = f"generated_{snake}.txt"
-            write_stub(ai_path, ai_code)
-            created.append(ai_path)
+            # parse markers
+            parts = re.split(r"^# --- (.+?) ---$", ai_code, flags=re.MULTILINE)
+            # parts: [pre, filename1, content1, filename2, content2, ...]
+            if len(parts) > 1:
+                for i in range(1, len(parts), 2):
+                    fname = parts[i].strip()
+                    content = parts[i+1].lstrip("\n")
+                    write_stub(fname, content)
+                    created.append(fname)
+        # always ensure base files exist
+        for path in (model_file, service_file, route_file, test_file):
+            if write_stub(path, f"# generated for BAT<{ticket_id}>: {desc}\n"):
+                created.append(path)
 
-        # optionally commit with git
+        # optionally commit with git and open PR
         if do_git and created:
-            # create branch
             branch = f"bat-{ticket_id}"
             os.system(f"git checkout -b {branch}")
             for fpath in created:
                 os.system(f"git add {fpath}")
             os.system(f"git commit -m 'scaffold for BAT<{ticket_id}>'")
             print(f"Committed files on branch {branch}")
+            # try to open a PR if gh CLI exists
+            gh_check = os.system("which gh > /dev/null 2>&1")
+            if gh_check == 0:
+                os.system(f"gh pr create --fill --title 'scaffold BAT<{ticket_id}>'")
+                print("Opened PR using GitHub CLI")
+        # run simple compile/typecheck checks
+        if created:
+            print("running compile/typecheck checks...")
+            if any(path.startswith("app/") or path.startswith("tests/") for path in created):
+                os.system("python -m compileall app")
+            if any(path.startswith("frontend/") for path in created):
+                # run npm typecheck if configured
+                os.system("cd frontend && npm run typecheck || true")
 
 
 def main():
