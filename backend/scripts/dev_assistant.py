@@ -14,11 +14,13 @@ import os
 import re
 import sys
 
+# the feature board lives at the repo root under docs/
 FEATURE_BOARD = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "docs", "BAT_FEATURE_BOARD.md")
+    os.path.join(os.path.dirname(__file__), "..", "..", "docs", "BAT_FEATURE_BOARD.md")
 )
 
-TICKET_RE = re.compile(r"- `BAT<(?P<id>\d+)> \[(?P<status>[^\]]+)\].*?\] (?P<desc>.+)")
+# simplified regex: just capture the ticket id and everything after the final bracket
+TICKET_RE = re.compile(r"^- `BAT<(?P<id>\d+)>`.*? (?P<desc>.+)$")
 
 
 def load_tickets():
@@ -31,7 +33,32 @@ def load_tickets():
     return tickets
 
 
-def scaffold(ticket_id: str):
+def ai_generate(prompt: str) -> str:
+    """Use OpenAI API to generate boilerplate based on prompt.
+
+    Requires OPENAI_API_KEY in environment. If not present, returns empty string.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return ""  # no key, skip
+    try:
+        import openai
+    except ImportError:
+        return ""  # openai not installed
+
+    openai.api_key = api_key
+    resp = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a code assistant."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=500,
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def scaffold(ticket_id: str, use_ai: bool = False):
     tickets = load_tickets()
     desc = tickets.get(ticket_id)
     if not desc:
@@ -52,8 +79,21 @@ def scaffold(ticket_id: str):
         print("  ", path)
     print()
 
-    print("Example stub content for model:")
-    print("""
+    if use_ai:
+        prompt = (
+            f"Generate Python boilerplate for a FastAPI/SQLAlchemy backend feature: '{desc}'.\n"
+            "Include a SQLAlchemy model, a service module with basic CRUD stubs, "
+            "a FastAPI router with one endpoint, and a pytest file with a skeleton test."
+        )
+        ai_code = ai_generate(prompt)
+        if ai_code:
+            print("AI-generated boilerplate: \n")
+            print(ai_code)
+        else:
+            print("AI generation unavailable (missing key or package).\n")
+    else:
+        print("Example stub content for model:")
+        print("""
 from sqlalchemy import Column, Integer, String
 from app.db.session import Base
 
@@ -61,7 +101,7 @@ class TODOModel(Base):
     __tablename__ = 'todo_models'
     id = Column(Integer, primary_key=True)
 """)
-    # more sophisticated generation could go here
+        # more sophisticated generation could go here
 
 
 def main():
