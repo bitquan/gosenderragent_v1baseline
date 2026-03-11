@@ -44,6 +44,12 @@ const state = {
     loading: false,
     status: 'Select a changed file, failure, or artifact.',
   },
+  updates: {
+    state: 'idle',
+    message: 'Auto-update standby.',
+    checkedAt: null,
+    hasUpdates: false,
+  },
 };
 
 // DOM element registry only. Keep executable logic in functions below.
@@ -106,6 +112,16 @@ const elements = {
   btnLearn: document.getElementById('btnLearn'),
   btnSchedulerStart: document.getElementById('btnSchedulerStart'),
   btnSchedulerStop: document.getElementById('btnSchedulerStop'),
+  liveSignal: document.getElementById('liveSignal'),
+  liveSignalText: document.getElementById('liveSignalText'),
+  headerStatusText: document.getElementById('headerStatusText'),
+  updateStatusCard: document.getElementById('updateStatusCard'),
+  updateStatusTitle: document.getElementById('updateStatusTitle'),
+  updateStatusMeta: document.getElementById('updateStatusMeta'),
+  updateAutoEnabled: document.getElementById('updateAutoEnabled'),
+  updateAutoApply: document.getElementById('updateAutoApply'),
+  updateInterval: document.getElementById('updateInterval'),
+  btnSaveUpdatePrefs: document.getElementById('btnSaveUpdatePrefs'),
 };
 
 function esc(value) {
@@ -213,6 +229,7 @@ function renderRuns() {
   if (!latest) {
     elements.latestRun.textContent = 'No runs yet.';
     elements.runChecks.innerHTML = '';
+    updateLiveSignal(state.updates?.state || 'idle', state.updates?.message || 'Idle');
   } else {
     elements.latestRun.innerHTML = `
       <div class="title">${esc(latest.label || latest.command || latest.action || 'Run')}</div>
@@ -236,6 +253,7 @@ function renderRuns() {
     }
     elements.runStateBadge.className = statusChipClass(latest.state);
     elements.runStateBadge.textContent = String(latest.state || 'idle');
+    updateLiveSignal(latest.state || 'running', latest.label || latest.state || 'running');
   }
 
   elements.recentRuns.innerHTML = state.recentRuns
@@ -307,6 +325,44 @@ function renderPreflight() {
 
 function renderUpdatePlan(payload) {
   elements.updatePlan.textContent = JSON.stringify(payload, null, 2);
+}
+
+function updateLiveSignal(stateName, label) {
+  const next = String(stateName || 'idle').toLowerCase();
+  if (elements.liveSignal) {
+    elements.liveSignal.dataset.signal = next;
+  }
+  if (elements.liveSignalText) {
+    elements.liveSignalText.textContent = label || next || 'Idle';
+  }
+  document.body.dataset.signal = next;
+}
+
+function renderUpdateStatus() {
+  const update = state.updates || {};
+  const nextState = String(update.state || 'idle').toLowerCase();
+  if (elements.updateStatusCard) {
+    elements.updateStatusCard.dataset.state = nextState;
+  }
+  if (elements.updateStatusTitle) {
+    elements.updateStatusTitle.textContent = update.message || 'Auto-update standby';
+  }
+  if (elements.updateStatusMeta) {
+    const bits = [];
+    if (update.trigger) {
+      bits.push(`trigger: ${update.trigger}`);
+    }
+    if (update.checkedAt) {
+      bits.push(`checked: ${new Date(update.checkedAt).toLocaleTimeString()}`);
+    }
+    if (update.hasUpdates) {
+      bits.push('updates waiting');
+    }
+    elements.updateStatusMeta.textContent = bits.join(' • ') || 'Watching for safe workspace updates.';
+  }
+  if (elements.headerStatusText) {
+    elements.headerStatusText.textContent = update.message || 'Local-first engineering deck with live review, guarded updates, and repair loops.';
+  }
 }
 
 function renderBackups() {
@@ -524,23 +580,34 @@ async function refreshSnapshot() {
   state.settings = snapshot.settings || state.settings;
   state.changedFiles = snapshot.changedFiles || [];
   state.editorContext = snapshot.editorContext || {};
+  state.updates = snapshot.updates || state.updates;
   syncReviewFromSnapshot(snapshot);
   if (snapshot.recovery?.runs?.length) {
     state.latestRun = snapshot.recovery.runs[0];
   }
 
   elements.workspaceInput.value = state.workspaceRoot;
-  elements.settingModel.value = state.settings.model || 'GPT-5.3-Codex';
+  elements.settingModel.value = state.settings.model || 'GPT-5.4 Pro';
   elements.settingMode.value = state.settings.mode || 'Extra High';
   elements.settingRuntime.value = state.settings.runtime || 'hybrid';
   elements.settingLocalAiCmd.value =
     state.settings.localAiCmd || 'backend/.venv/bin/python backend/scripts/local_ai_llama_bridge.py';
   elements.settingGithub.checked = !!state.settings.githubEnabled;
+  if (elements.updateAutoEnabled) {
+    elements.updateAutoEnabled.checked = !!state.settings.autoUpdateEnabled;
+  }
+  if (elements.updateAutoApply) {
+    elements.updateAutoApply.checked = !!state.settings.autoUpdateAutoApply;
+  }
+  if (elements.updateInterval) {
+    elements.updateInterval.value = String(state.settings.autoUpdateIntervalMinutes || 30);
+  }
 
   renderTaskList();
   renderChat();
   renderRuns();
   renderPreflight();
+  renderUpdateStatus();
   renderValidation();
   renderReview();
 
@@ -966,6 +1033,16 @@ function bindEvents() {
     renderUpdatePlan(payload);
     await refreshSnapshot();
   });
+  elements.btnSaveUpdatePrefs?.addEventListener('click', async () => {
+    const payload = await gosAgent.updateSettings({
+      autoUpdateEnabled: !!elements.updateAutoEnabled?.checked,
+      autoUpdateAutoApply: !!elements.updateAutoApply?.checked,
+      autoUpdateIntervalMinutes: Number(elements.updateInterval?.value || 30),
+    });
+    state.settings = payload.settings || state.settings;
+    renderUpdateStatus();
+    appendChat('Assistant: update policy saved.');
+  });
 
   document.getElementById('btnPickWorkspace').addEventListener('click', async () => {
     const payload = await gosAgent.pickWorkspace();
@@ -1049,6 +1126,19 @@ function bindEvents() {
       for (const line of lines) {
         appendChat(line);
       }
+    }
+  });
+  gosAgent.onUpdateEvent((event) => {
+    if (!event) {
+      return;
+    }
+    state.updates = event;
+    renderUpdateStatus();
+    if (!state.activeRunId) {
+      updateLiveSignal(event.state || 'idle', event.message || 'Update status');
+    }
+    if (event.message && event.state && event.state !== 'checking') {
+      appendChat(`Update: ${event.message}`);
     }
   });
 }

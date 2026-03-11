@@ -64,10 +64,21 @@ const store = new Store({
     localAiCmd: 'backend/.venv/bin/python backend/scripts/local_ai_llama_bridge.py',
     githubEnabled: false,
     reviewDecisions: {},
+    autoUpdateEnabled: true,
+    autoUpdateAutoApply: true,
+    autoUpdateIntervalMinutes: 30,
   },
 });
 
 let mainWindow = null;
+let latestUpdateStatus = {
+  state: 'idle',
+  message: 'Auto-update standby.',
+  checkedAt: null,
+  hasUpdates: false,
+  trigger: 'startup',
+};
+let autoUpdateTimer = null;
 const runtime = new SharedAgentRuntime({
   workspaceRoot: getWorkspaceRoot(),
   pythonRelative: 'backend/.venv/bin/python',
@@ -89,6 +100,169 @@ function sendSchedulerEvent(payload) {
     return;
   }
   mainWindow.webContents.send('agent:scheduler-event', payload);
+}
+
+function sendUpdateEvent(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send('app:update-event', payload);
+}
+
+function activeRunCount() {
+  const status = runtime.getStatus();
+  return Array.isArray(status?.activeRuns) ? status.activeRuns.length : 0;
+}
+
+function repoIsClean(workspaceRoot) {
+  if (!workspaceRoot) {
+    return false;
+  }
+  try {
+    const output = childProcess.execSync('git status --porcelain', {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return !String(output || '').trim();
+  } catch (_err) {
+    return false;
+  }
+}
+
+function autoUpdateSettings() {
+  return {
+    enabled: !!store.get('autoUpdateEnabled'),
+    autoApply: !!store.get('autoUpdateAutoApply'),
+    intervalMinutes: Math.max(5, Number(store.get('autoUpdateIntervalMinutes') || 30)),
+  };
+}
+
+function updateStatusSnapshot(patch = {}) {
+  latestUpdateStatus = {
+    ...latestUpdateStatus,
+    ...patch,
+    checkedAt: patch.checkedAt || new Date().toISOString(),
+  };
+  sendUpdateEvent(latestUpdateStatus);
+  return latestUpdateStatus;
+}
+
+function runAutoUpdateCycle(options = {}) {
+  const { trigger = 'interval', allowApply = true } = options;
+  const workspaceRoot = getWorkspaceRoot();
+  if (!workspaceRoot) {
+    return updateStatusSnapshot({
+      state: 'blocked',
+      message: 'No workspace configured for auto-updates.',
+      trigger,
+      hasUpdates: false,
+    });
+  }
+
+  updateStatusSnapshot({
+    state: 'checking',
+    message: 'Checking for workspace updates…',
+    trigger,
+    hasUpdates: false,
+  });
+
+  const check = checkForUpdates(workspaceRoot);
+  if (!check.ok) {
+    return updateStatusSnapshot({
+      state: 'blocked',
+      message: check.reason || check.stderr || 'Unable to check updates.',
+      trigger,
+      hasUpdates: false,
+      details: check,
+    });
+  }
+
+  if (!check.hasUpdates) {
+    return updateStatusSnapshot({
+      state: 'ready',
+      message: check.reason || 'Workspace is up to date.',
+      trigger,
+      hasUpdates: false,
+      details: check,
+    });
+  }
+
+  const settings = autoUpdateSettings();
+  updateStatusSnapshot({
+    state: 'available',
+    message: `${check.behind || 0} update(s) available from ${check.upstream || 'upstream'}.`,
+    trigger,
+    hasUpdates: true,
+    details: check,
+  });
+
+  if (!allowApply || !settings.enabled || !settings.autoApply) {
+    return latestUpdateStatus;
+  }
+  if (activeRunCount() > 0) {
+    return updateStatusSnapshot({
+      state: 'deferred',
+      message: 'Updates deferred until active runs finish.',
+      trigger,
+      hasUpdates: true,
+      details: check,
+    });
+  }
+  if (!repoIsClean(workspaceRoot)) {
+    return updateStatusSnapshot({
+      state: 'deferred',
+      message: 'Updates deferred because the workspace is not clean.',
+      trigger,
+      hasUpdates: true,
+      details: check,
+    });
+  }
+
+  updateStatusSnapshot({
+    state: 'applying',
+    message: 'Applying safe auto-update…',
+    trigger,
+    hasUpdates: true,
+    details: check,
+  });
+  const applied = applyUpdate(workspaceRoot, { confirm: true });
+  if (!applied.ok) {
+    return updateStatusSnapshot({
+      state: 'failed',
+      message: applied.error || 'Auto-update failed.',
+      trigger,
+      hasUpdates: true,
+      details: applied,
+    });
+  }
+  return updateStatusSnapshot({
+    state: applied.updated ? 'updated' : 'ready',
+    message: applied.updated ? 'Workspace updated successfully.' : (applied.message || 'Workspace already up to date.'),
+    trigger,
+    hasUpdates: false,
+    details: applied,
+  });
+}
+
+function restartAutoUpdateMonitor() {
+  if (autoUpdateTimer) {
+    clearInterval(autoUpdateTimer);
+    autoUpdateTimer = null;
+  }
+  const settings = autoUpdateSettings();
+  if (!settings.enabled) {
+    updateStatusSnapshot({
+      state: 'idle',
+      message: 'Auto-update monitoring is disabled.',
+      trigger: 'settings',
+      hasUpdates: false,
+    });
+    return;
+  }
+  autoUpdateTimer = setInterval(() => {
+    runAutoUpdateCycle({ trigger: 'interval', allowApply: true });
+  }, settings.intervalMinutes * 60 * 1000);
 }
 
 function schedulerStatusPayload() {
@@ -170,6 +344,10 @@ function setWorkspaceRoot(nextRoot) {
   }
   store.set('workspaceRoot', root);
   runtime.setWorkspaceRoot(root);
+  restartAutoUpdateMonitor();
+  setTimeout(() => {
+    runAutoUpdateCycle({ trigger: 'workspace-change', allowApply: true });
+  }, 100);
   return root;
 }
 
@@ -323,6 +501,7 @@ function workspaceSnapshot() {
       decisions: store.get('reviewDecisions') || {},
     }),
     preflight: runPreflight(workspaceRoot, { requireGh: false }),
+    updates: latestUpdateStatus,
     recovery: {
       ...recovery,
       runs: (Array.isArray(recovery?.runs) ? recovery.runs : []).filter((run) => {
@@ -338,6 +517,9 @@ function workspaceSnapshot() {
       runtime: store.get('runtime'),
       localAiCmd: store.get('localAiCmd'),
       githubEnabled: !!store.get('githubEnabled'),
+      autoUpdateEnabled: !!store.get('autoUpdateEnabled'),
+      autoUpdateAutoApply: !!store.get('autoUpdateAutoApply'),
+      autoUpdateIntervalMinutes: Math.max(5, Number(store.get('autoUpdateIntervalMinutes') || 30)),
     },
   };
 }
@@ -436,6 +618,16 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.githubEnabled !== undefined) {
     store.set('githubEnabled', !!payload.githubEnabled);
   }
+  if (payload.autoUpdateEnabled !== undefined) {
+    store.set('autoUpdateEnabled', !!payload.autoUpdateEnabled);
+  }
+  if (payload.autoUpdateAutoApply !== undefined) {
+    store.set('autoUpdateAutoApply', !!payload.autoUpdateAutoApply);
+  }
+  if (payload.autoUpdateIntervalMinutes !== undefined) {
+    store.set('autoUpdateIntervalMinutes', Math.max(5, Number(payload.autoUpdateIntervalMinutes) || 30));
+  }
+  restartAutoUpdateMonitor();
   return {
     ok: true,
     settings: {
@@ -444,6 +636,9 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
       runtime: store.get('runtime'),
       localAiCmd: store.get('localAiCmd'),
       githubEnabled: !!store.get('githubEnabled'),
+      autoUpdateEnabled: !!store.get('autoUpdateEnabled'),
+      autoUpdateAutoApply: !!store.get('autoUpdateAutoApply'),
+      autoUpdateIntervalMinutes: Math.max(5, Number(store.get('autoUpdateIntervalMinutes') || 30)),
     },
   };
 });
@@ -926,23 +1121,53 @@ ipcMain.handle('automations:runNow', async (_event, payload = {}) => {
   });
 });
 
-ipcMain.handle('updates:check', async () => checkForUpdates(getWorkspaceRoot()));
-ipcMain.handle('updates:plan', async () => buildUpdatePlan(getWorkspaceRoot()));
+ipcMain.handle('updates:check', async () => runAutoUpdateCycle({ trigger: 'manual-check', allowApply: false }));
+ipcMain.handle('updates:plan', async () => {
+  const payload = buildUpdatePlan(getWorkspaceRoot());
+  updateStatusSnapshot({
+    state: payload.hasUpdates ? 'available' : 'ready',
+    message: payload.summary || payload.reason || 'Update plan ready.',
+    trigger: 'manual-plan',
+    hasUpdates: !!payload.hasUpdates,
+    details: payload,
+  });
+  return payload;
+});
 ipcMain.handle('updates:apply', async (_event, payload = {}) => {
-  return applyUpdate(getWorkspaceRoot(), {
+  const result = applyUpdate(getWorkspaceRoot(), {
     confirm: !!payload.confirm,
     backupTargets: payload.backupTargets,
   });
+  updateStatusSnapshot({
+    state: result.ok ? (result.updated ? 'updated' : 'ready') : 'failed',
+    message: result.ok ? (result.message || 'Update applied.') : (result.error || 'Update failed.'),
+    trigger: 'manual-apply',
+    hasUpdates: false,
+    details: result,
+  });
+  return result;
 });
 ipcMain.handle('updates:rollback', async (_event, payload = {}) => {
-  return rollbackUpdate(getWorkspaceRoot(), {
+  const result = rollbackUpdate(getWorkspaceRoot(), {
     backupId: payload.backupId,
   });
+  updateStatusSnapshot({
+    state: result.ok ? 'rolled-back' : 'failed',
+    message: result.ok ? 'Rollback restored backup successfully.' : (result.error || 'Rollback failed.'),
+    trigger: 'manual-rollback',
+    hasUpdates: false,
+    details: result,
+  });
+  return result;
 });
 ipcMain.handle('updates:backups', async () => listBackups(getWorkspaceRoot()));
 
 app.whenReady().then(() => {
   createMainWindow();
+  restartAutoUpdateMonitor();
+  setTimeout(() => {
+    runAutoUpdateCycle({ trigger: 'startup', allowApply: true });
+  }, 1200);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -953,6 +1178,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopAutopilotScheduler();
+  if (autoUpdateTimer) {
+    clearInterval(autoUpdateTimer);
+    autoUpdateTimer = null;
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }

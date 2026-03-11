@@ -66,4 +66,9 @@ contextBridge.exposeInMainWorld('gosAgent', {
     ipcRenderer.on('agent:scheduler-event', wrapped);
     return () => ipcRenderer.removeListener('agent:scheduler-event', wrapped);
   },
+  onUpdateEvent: (handler) => {
+    const wrapped = (_event, payload) => handler(payload);
+    ipcRenderer.on('app:update-event', wrapped);
+    return () => ipcRenderer.removeListener('app:update-event', wrapped);
+  },
 });

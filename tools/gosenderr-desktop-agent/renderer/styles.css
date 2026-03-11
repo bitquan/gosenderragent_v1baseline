@@ -7,8 +7,10 @@
   --muted: #9fafce;
   --accent: #4f83ff;
   --accent-2: #19c6ff;
+  --accent-3: #8a5cff;
   --danger: #ff6b85;
   --ok: #45d38a;
+  --warn: #ffd166;
 }
 
 * { box-sizing: border-box; }
@@ -26,6 +28,7 @@ html, body {
 }
 
 .app-shell {
+  position: relative;
   height: 100dvh;
   min-height: 0;
   padding: 16px;
@@ -33,6 +36,40 @@ html, body {
   flex-direction: column;
   gap: 12px;
   overflow: hidden;
+}
+
+.signal-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.signal-frame::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.24;
+  background:
+    linear-gradient(115deg, rgba(79, 131, 255, 0.4), rgba(25, 198, 255, 0.1), rgba(138, 92, 255, 0.4));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  padding: 1px;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+body[data-signal="running"] .signal-frame::after,
+body[data-signal="checking"] .signal-frame::after,
+body[data-signal="available"] .signal-frame::after,
+body[data-signal="updated"] .signal-frame::after {
+  opacity: 0.92;
+  animation: neonPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes neonPulse {
+  0%, 100% { filter: drop-shadow(0 0 5px rgba(79, 131, 255, 0.38)); }
+  50% { filter: drop-shadow(0 0 18px rgba(25, 198, 255, 0.64)); }
 }
 
 .topbar {
@@ -45,6 +82,13 @@ html, body {
   justify-content: space-between;
 }
 
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 840px;
+}
+
 .eyebrow {
   margin: 0;
   text-transform: uppercase;
@@ -55,7 +99,67 @@ html, body {
 
 h1 {
   margin: 4px 0 0;
-  font-size: 24px;
+  font-size: 28px;
+  max-width: 760px;
+}
+
+.hero-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(98, 123, 184, 0.62);
+  background: rgba(10, 16, 30, 0.82);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.signal-led,
+.update-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(140, 152, 180, 0.85);
+  box-shadow: 0 0 0 4px rgba(140, 152, 180, 0.12);
+}
+
+.live-signal[data-signal="running"] .signal-led,
+.live-signal[data-signal="checking"] .signal-led,
+#updateStatusCard[data-state="checking"] .update-led {
+  background: var(--accent-2);
+  box-shadow: 0 0 0 4px rgba(25, 198, 255, 0.14), 0 0 18px rgba(25, 198, 255, 0.6);
+}
+
+.live-signal[data-signal="pass"] .signal-led,
+.live-signal[data-signal="updated"] .signal-led,
+#updateStatusCard[data-state="updated"] .update-led,
+#updateStatusCard[data-state="ready"] .update-led {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(69, 211, 138, 0.14), 0 0 18px rgba(69, 211, 138, 0.52);
+}
+
+.live-signal[data-signal="fail"] .signal-led,
+#updateStatusCard[data-state="failed"] .update-led,
+#updateStatusCard[data-state="blocked"] .update-led {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(255, 107, 133, 0.14), 0 0 18px rgba(255, 107, 133, 0.52);
+}
+
+.live-signal[data-signal="available"] .signal-led,
+.live-signal[data-signal="deferred"] .signal-led,
+#updateStatusCard[data-state="available"] .update-led,
+#updateStatusCard[data-state="deferred"] .update-led,
+#updateStatusCard[data-state="applying"] .update-led {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.14), 0 0 18px rgba(255, 209, 102, 0.52);
 }
 
 .top-actions,
@@ -491,6 +595,32 @@ textarea {
   font-family: "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+.update-status-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(92, 110, 148, 0.7);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(11, 20, 39, 0.94), rgba(8, 15, 30, 0.92));
+}
+
+.update-settings-row {
+  align-items: center;
+}
+
+.update-interval-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.update-interval-label input {
+  width: 90px;
 }
 
 .settings-drawer {
