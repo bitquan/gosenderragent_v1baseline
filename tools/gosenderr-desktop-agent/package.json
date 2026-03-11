@@ -1,0 +1,84 @@
+{
+  "name": "gosenderr-desktop-agent",
+  "productName": "GoSenderr Desktop Agent",
+  "version": "0.1.2",
+  "description": "Standalone GoSenderr BAT assistant desktop app with tasks, chat, runs, skills, automations, and safe updates.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "sync:core": "node ./scripts/sync-core.js",
+    "sync:ui": "node ../scripts/sync-ui.js",
+    "prestart": "npm run sync:core",
+    "predev": "npm run sync:core",
+    "presmoke": "npm run sync:core",
+    "prepack": "npm run sync:core",
+    "prepack:mac": "npm run sync:core",
+    "prepack:win": "npm run sync:core",
+    "predist": "npm run sync:core",
+    "predist:mac": "npm run sync:core",
+    "predist:mac:zip": "npm run sync:core",
+    "predist:win": "npm run sync:core",
+    "preinstall:mac": "npm run sync:core",
+    "start": "electron .",
+    "dev": "electron .",
+    "smoke": "node ./scripts/smoke.js",
+    "pack": "electron-builder --dir",
+    "pack:mac": "electron-builder --dir --mac",
+    "pack:win": "electron-builder --dir --win",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac dmg zip --publish never",
+    "dist:mac:zip": "electron-builder --mac zip --publish never",
+    "dist:win": "electron-builder --win nsis zip --publish never",
+    "install:mac": "node ./scripts/build-open-mac-installer.js"
+  },
+  "build": {
+    "appId": "com.gosenderr.desktop.agent",
+    "asar": true,
+    "icon": "assets/icon.png",
+    "afterSign": "scripts/notarize.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "core/**/*",
+      "shared-runtime/**/*",
+      "scripts/**/*",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.inherit.plist",
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "electron-store": "^10.1.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.0",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}
