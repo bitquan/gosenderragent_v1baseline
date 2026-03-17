@@ -1,0 +1,18 @@
+{
+  "id": "docs-companion-plugin",
+  "kind": "plugin",
+  "label": "Docs Companion Plugin",
+  "summary": "Adds a docs-companion hook so generated settings, commands, and UI changes carry operator-facing documentation reminders.",
+  "version": "0.1.0",
+  "entry": "plugin.js",
+  "installMode": "copy",
+  "contributes": [
+    "post-change-docs-review",
+    "operator-doc-reminders"
+  ],
+  "tags": [
+    "docs",
+    "plugin",
+    "operator"
+  ]
+}

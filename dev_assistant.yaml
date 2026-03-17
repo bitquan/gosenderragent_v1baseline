@@ -1,0 +1,43 @@
+assistant_artifacts_root: E:/dev/projects/gosenderr_dev_offload
+assistant_promotions_root: E:/dev/projects/gosenderr_dev_offload/assistant_promotions
+assistant_benchmark_root: E:/dev/projects/gosenderr_dev_offload/assistant_benchmarks
+assistant_labs_root: E:/dev/projects/gosenderr_dev_offload/assistant_labs
+assistant_model_foundry_root: E:/dev/projects/gosenderr_dev_offload/model_foundry
+assistant_training_hardware_target: windows-i9-32gb-rtx4060-8gb
+assistant_training_profile: medium
+assistant_training_eco_mode: false
+assistant_training_cpu_limit_percent: 55
+assistant_training_thread_limit: 4
+assistant_training_thermal_preset: 80
+assistant_training_live_sampling_sec: 5
+assistant_training_auto_start_ollama: true
+assistant_training_ollama_model: "qwen2.5-coder:14b"
+assistant_training_model_storage_root: E:/dev/projects/gosenderr_dev_offload/local_model_storage/models
+
+assistant_training_launch_surface: app
+assistant_training_thermal_custom_c: 80
+assistant_training_pause_on_thermal: true
+assistant_training_allow_during_active_use: true
+assistant_training_ollama_keep_alive: true
+assistant_safety_level: lab-full-auto
+assistant_autonomy_mode: self
+assistant_self_improvement_only: true
+assistant_supervised_auto_run_recipes: true
+assistant_daily_safe_autonomous_target: 5
+assistant_daily_self_improvement_target: 5
+
+autopilot_self_improve: true
+autopilot_self_improve_max_difficulty: "medium"
+autopilot_interval_seconds: 900
+autopilot_action: implement
+autopilot_count: 1
+autopilot_status: "TODO"
+autopilot_profile: "aiWrite"
+autopilot_prefer_domain: "assistant_runtime"
+autopilot_fix_loop: true
+autopilot_continue_on_fail: true
+autopilot_synthesize_followups: true
+autopilot_auto_train: false
+autopilot_refresh_engine: false
+
+

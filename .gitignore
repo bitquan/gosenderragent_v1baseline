@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+*.log
+__pycache__/
+*.py[cod]
+.vscode/
+.gos-integrations/
+tmp-*.js
+tmp-*.json
+WINDOWS_APP/win-unpacked/

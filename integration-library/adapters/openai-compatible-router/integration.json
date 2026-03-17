@@ -1,0 +1,18 @@
+{
+  "id": "openai-compatible-router-adapter",
+  "kind": "adapter",
+  "label": "OpenAI Compatible Router Adapter",
+  "summary": "Starter adapter scaffold for OpenAI-compatible providers such as OpenRouter, Groq, Together, Hugging Face, or private compatible gateways.",
+  "version": "0.1.0",
+  "entry": "adapter.json",
+  "installMode": "copy",
+  "contributes": [
+    "provider-routing",
+    "compatible-api-normalization"
+  ],
+  "tags": [
+    "adapter",
+    "providers",
+    "routing"
+  ]
+}

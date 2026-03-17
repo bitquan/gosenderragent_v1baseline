@@ -1,0 +1,15 @@
+{
+  "id": "openai-compatible-router-adapter",
+  "baseUrlField": "aiRemoteBaseUrl",
+  "modelField": "aiRemoteModel",
+  "apiKeyField": "aiRemoteApiKeyName",
+  "supportsVision": true,
+  "providers": [
+    "openai",
+    "openrouter",
+    "groq",
+    "together",
+    "huggingface",
+    "custom-compatible"
+  ]
+}

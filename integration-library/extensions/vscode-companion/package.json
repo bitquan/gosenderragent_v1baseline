@@ -1,0 +1,122 @@
+{
+  "name": "gosenderr-vscode-companion",
+  "displayName": "GoSenderr VS Code Companion",
+  "description": "Coding workbench companion for the GoSenderr desktop agent runtime.",
+  "version": "0.1.1",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "scripts": {
+    "check": "node --check extension.js"
+  },
+  "activationEvents": [
+    "onView:gosenderr.workbenchView",
+    "onCommand:gosenderr.openDesktopAgent",
+    "onCommand:gosenderr.openWorkbench",
+    "onCommand:gosenderr.submitTask",
+    "onCommand:gosenderr.continueTask",
+    "onCommand:gosenderr.retryWithResearch",
+    "onCommand:gosenderr.runNextAction",
+    "onCommand:gosenderr.queueNextTask",
+    "onCommand:gosenderr.openTrace",
+    "onCommand:gosenderr.openFiles",
+    "onCommand:gosenderr.openTaskHub",
+    "onCommand:gosenderr.openProblems",
+    "onCommand:gosenderr.openSandbox",
+    "onCommand:gosenderr.openProviderSettings"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gosenderrSidebar",
+          "title": "GoSenderr",
+          "icon": "resources/activitybar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "gosenderrSidebar": [
+        {
+          "type": "webview",
+          "id": "gosenderr.workbenchView",
+          "name": "Workbench"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "gosenderr.openDesktopAgent",
+        "title": "GoSenderr: Open Desktop Workbench"
+      },
+      {
+        "command": "gosenderr.openWorkbench",
+        "title": "GoSenderr: Open Workbench"
+      },
+      {
+        "command": "gosenderr.submitTask",
+        "title": "GoSenderr: Submit Task"
+      },
+      {
+        "command": "gosenderr.continueTask",
+        "title": "GoSenderr: Continue Last Task"
+      },
+      {
+        "command": "gosenderr.retryWithResearch",
+        "title": "GoSenderr: Retry With Research"
+      },
+      {
+        "command": "gosenderr.runNextAction",
+        "title": "GoSenderr: Run Next Safe Action"
+      },
+      {
+        "command": "gosenderr.queueNextTask",
+        "title": "GoSenderr: Queue Next Bounded Task"
+      },
+      {
+        "command": "gosenderr.openTrace",
+        "title": "GoSenderr: Open Latest Trace"
+      },
+      {
+        "command": "gosenderr.openFiles",
+        "title": "GoSenderr: Open Touched Files"
+      },
+      {
+        "command": "gosenderr.openTaskHub",
+        "title": "GoSenderr: Open Task Hub"
+      },
+      {
+        "command": "gosenderr.openProblems",
+        "title": "GoSenderr: Open Problems"
+      },
+      {
+        "command": "gosenderr.openSandbox",
+        "title": "GoSenderr: Open Sandbox Artifact"
+      },
+      {
+        "command": "gosenderr.openProviderSettings",
+        "title": "GoSenderr: Open Provider Settings"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "gosenderr.submitTask",
+          "when": "view == gosenderr.workbenchView",
+          "group": "navigation"
+        },
+        {
+          "command": "gosenderr.runNextAction",
+          "when": "view == gosenderr.workbenchView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "gosenderr.openDesktopAgent",
+          "when": "view == gosenderr.workbenchView",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  }
+}

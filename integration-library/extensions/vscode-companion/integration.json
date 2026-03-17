@@ -1,0 +1,18 @@
+{
+  "id": "vscode-companion-extension",
+  "kind": "extension",
+  "label": "VS Code Companion Extension",
+  "summary": "Starter VS Code extension scaffold for the desktop agent's workspace commands, tasks, and quick-open hooks.",
+  "version": "0.1.0",
+  "entry": "package.json",
+  "installMode": "copy",
+  "contributes": [
+    "vscode-command",
+    "workspace-bootstrap"
+  ],
+  "tags": [
+    "extension",
+    "vscode",
+    "workspace"
+  ]
+}

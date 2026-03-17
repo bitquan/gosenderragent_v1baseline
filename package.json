@@ -1,0 +1,103 @@
+{
+  "name": "gosenderr-desktop-agent-pc",
+  "productName": "GoSenderr Desktop Agent PC",
+  "version": "0.1.4",
+  "description": "Windows-ready sibling of the standalone GoSenderr Desktop Agent.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "sync:core": "node ./scripts/sync-core.js",
+    "build:renderer": "node ./scripts/build-renderer.js",
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "node ./scripts/build-renderer.js && node --test ./tests/*.test.js",
+    "validate": "npm test && npm run smoke && npm run smoke:ui",
+    "smoke": "node ./scripts/build-renderer.js && node ./scripts/smoke.js",
+    "smoke:ui": "electron ./scripts/ui-smoke.js",
+    "packaged:smoke": "node ./scripts/build-renderer.js && node ./scripts/packaged-smoke.js",
+    "engine:acceptance": "node ./scripts/engine-acceptance.js",
+    "system:check": "node ./scripts/system-check.js",
+    "smart:patch": "node ./scripts/smart-patch.js",
+    "prep:windows:pc": "node ./scripts/prepare-windows-pc-clone.js",
+    "pack": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --dir",
+    "pack:mac": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --dir --mac",
+    "pack:win": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --dir --win",
+    "pack:win:x64": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --dir --win --x64",
+    "dist": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --publish never",
+    "dist:mac": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --mac dmg zip --publish never",
+    "dist:mac:zip": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --mac zip --publish never",
+    "dist:win": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --win nsis zip --publish never",
+    "dist:win:x64": "node ./scripts/build-renderer.js && node ./scripts/run-electron-builder.js --win nsis zip --x64 --publish never",
+    "dist:win:current": "node ./scripts/build-current-win-release.js",
+    "install:mac:local": "node ./scripts/install-built-app.js",
+    "install:mac": "node ./scripts/build-open-mac-installer.js",
+    "release:mac": "node ./scripts/build-stage-mac-release.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.gosenderr.desktop.agent.pc",
+    "asar": true,
+    "asarUnpack": [
+      "runtime/**/*"
+    ],
+    "icon": "assets/icon.png",
+    "afterSign": "scripts/notarize.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "desktop-learning-records.js",
+      "dev_assistant.yaml",
+      "dev_assistant.local.yaml.example",
+      "host/**/*",
+      "core/**/*",
+      "shared-ui/**/*",
+      "shared-runtime/**/*",
+      "runtime/**/*",
+      "scripts/**/*",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.inherit.plist",
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9",
+    "electron-store": "^10.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@electron/notarize": "^3.1.0",
+    "esbuild": "^0.25.11",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.3"
+  }
+}

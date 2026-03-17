@@ -1,0 +1,12 @@
+# Windows PC tuning template for GoSenderr Desktop Agent PC
+assistant_training_hardware_target: windows-i9-32gb-rtx4060-8gb
+assistant_training_profile: high
+assistant_training_eco_mode: false
+assistant_training_cpu_limit_percent: 70
+assistant_training_thread_limit: 8
+assistant_training_thermal_preset: 85
+assistant_training_live_sampling_sec: 3
+assistant_training_ollama_model: qwen2.5-coder:14b
+
+# Update this path after copying the bundle onto Windows.
+# assistant_training_model_storage_root: D:/gosenderr-models

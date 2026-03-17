@@ -1,0 +1,27 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path
+    d="M31 26.5C31 19.5964 36.5964 14 43.5 14H84.5C91.4036 14 97 19.5964 97 26.5V101.5C97 108.404 91.4036 114 84.5 114H43.5C36.5964 114 31 108.404 31 101.5V26.5Z"
+    stroke="currentColor"
+    stroke-width="10"
+  />
+  <path
+    d="M52 49L38 64L52 79"
+    stroke="currentColor"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M76 49L90 64L76 79"
+    stroke="currentColor"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M67 40L61 88"
+    stroke="currentColor"
+    stroke-width="10"
+    stroke-linecap="round"
+  />
+</svg>

@@ -1,0 +1,438 @@
+[
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "163",
+    "strategy": "backend_api",
+    "files": [
+      "backend/app/models/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/services/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/app/api/routes/pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py",
+      "backend/tests/test_pricing_engine_dynamic_fare_surge_calculation_leveraging_demand.py"
+    ],
+    "validation": [
+      "cd backend && . .venv/bin/activate && pytest -q"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "230",
+    "strategy": "frontend_feature",
+    "files": [
+      "frontend/apps/customer-app/src/components/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.tsx",
+      "frontend/apps/customer-app/src/services/jest_rtl_unit_testing_scaffolding_components_simple_header.ts",
+      "frontend/apps/customer-app/src/routes/jest_rtl_unit_testing_scaffolding_components_simple_header.tsx",
+      "frontend/apps/customer-app/src/__tests__/JestRtlUnitTestingScaffoldingComponentsSimpleHeader.test.tsx"
+    ],
+    "validation": [
+      "cd frontend && npm run typecheck",
+      "cd frontend && npm run build"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  },
+  {
+    "ticket": "500",
+    "strategy": "mixed",
+    "files": [
+      "backend/app/models/todo_sample.py",
+      "backend/app/services/todo_sample.py",
+      "backend/app/api/routes/todo_sample.py",
+      "backend/tests/test_todo_sample.py"
+    ],
+    "validation": [
+      "python3 -m compileall backend/app"
+    ]
+  }
+]
