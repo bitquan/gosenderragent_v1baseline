@@ -389,7 +389,6 @@ textarea {
   padding: 0;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
 }
 
 .chat-home {
@@ -404,7 +403,6 @@ textarea {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  min-width: 0;
   padding: 22px 24px 20px;
   gap: 18px;
   border: 1px solid transparent;
@@ -487,132 +485,10 @@ textarea {
   gap: 12px;
 }
 
-.workbench-layout-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  position: sticky;
-  top: 0;
-  z-index: 8;
-  padding-top: 2px;
-  background: linear-gradient(180deg, rgba(23, 23, 23, 0.98) 0%, rgba(23, 23, 23, 0.94) 78%, rgba(23, 23, 23, 0) 100%);
-}
-
-.workbench-layout-bar.is-focus-mode {
-  justify-content: flex-end;
-}
-
-.workbench-layout-bar.is-focus-mode > div:first-child {
-  display: none;
-}
-
-.workbench-layout-bar.is-fresh-thread {
-  margin-bottom: 2px;
-}
-
-.workbench-layout-bar button.active {
-  border-color: var(--line-strong);
-  background: rgba(255, 255, 255, 0.08);
-}
-
 .workbench-status-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
-}
-
-.workbench-run-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.workbench-pinned-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
-  gap: 12px;
-}
-
-.workbench-pinned-bar.is-sticky {
-  position: sticky;
-  top: 58px;
-  z-index: 6;
-  padding-top: 2px;
-  background: linear-gradient(180deg, rgba(23, 23, 23, 0.98) 0%, rgba(23, 23, 23, 0.94) 78%, rgba(23, 23, 23, 0) 100%);
-}
-
-.workbench-pinned-bar.is-compact {
-  grid-template-columns: 1fr;
-}
-
-.pinned-task-card,
-.pinned-profile-card {
-  gap: 10px;
-}
-
-.pinned-task-card p,
-.pinned-profile-card p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.pinned-profile-card button.active {
-  border-color: var(--line-strong);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.workbench-pinned-bar.is-compact .metric-card {
-  padding: 12px 14px;
-  gap: 8px;
-}
-
-.workbench-pinned-bar.is-compact .metric-card .eyebrow,
-.workbench-pinned-bar.is-compact .metric-card p {
-  display: none;
-}
-
-.workbench-pinned-bar.is-compact .metric-card strong {
-  font-size: 14px;
-}
-
-.workbench-pinned-bar.is-compact .quick-command-row {
-  gap: 8px;
-}
-
-.run-strip-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-}
-
-.run-strip-pill {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 96px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: #1d1d1d;
-}
-
-.run-strip-pill strong {
-  font-size: 15px;
-}
-
-.run-strip-pill p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.drawer-chip-row {
-  gap: 8px;
 }
 
 .safety-banner {
@@ -786,134 +662,12 @@ textarea {
   gap: 10px;
 }
 
-.chat-mode-bar,
-.workbench-git-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border-radius: 16px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.chat-mode-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.chat-mode-copy p,
-.workbench-git-summary span {
-  margin: 0;
-  color: var(--muted);
-}
-
 .chat-composer {
   margin-top: auto;
   padding: 14px 16px 12px;
   border-radius: 22px;
   border: 1px solid var(--line);
   background: #1b1b1b;
-}
-
-.chat-home-main.mode-balanced,
-.chat-home-main.mode-control-room {
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-gutter: stable;
-  padding-bottom: 26px;
-}
-
-.chat-home-main.mode-balanced .chat-stage,
-.chat-home-main.mode-control-room .chat-stage {
-  flex: 0 0 auto;
-  min-height: auto;
-}
-
-.chat-home-main.mode-balanced .chat-log,
-.chat-home-main.mode-control-room .chat-log {
-  overflow: visible;
-  flex: 0 0 auto;
-}
-
-.chat-home-main.mode-balanced .chat-composer,
-.chat-home-main.mode-control-room .chat-composer {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  margin-top: 4px;
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.28);
-}
-
-.chat-composer.size-tall textarea {
-  min-height: 182px;
-}
-
-.chat-home-main.mode-focus {
-  gap: 14px;
-}
-
-.chat-home-main.mode-focus .workbench-layout-bar {
-  align-items: flex-end;
-}
-
-.chat-home-main.mode-focus .prompt-grid {
-  margin-bottom: 2px;
-}
-
-.chat-home-main.mode-focus .workbench-status-strip {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.chat-home-main.mode-focus .workbench-pinned-bar {
-  grid-template-columns: 1fr;
-}
-
-.chat-home-main.mode-focus .chat-stage {
-  padding-right: 0;
-}
-
-.chat-home-main.mode-focus .chat-log {
-  gap: 14px;
-  padding-right: 0;
-}
-
-.chat-home-main.mode-focus .chat-composer {
-  padding: 16px 18px 14px;
-  background: #191919;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
-}
-
-.chat-home-main.mode-focus .chat-mode-bar {
-  align-items: flex-start;
-}
-
-.chat-home-main.mode-focus .composer-toolbar {
-  gap: 12px;
-}
-
-.chat-home-main.mode-focus .composer-toolbar,
-.chat-home-main.mode-focus .composer-footer {
-  align-items: flex-start;
-}
-
-.chat-home-main.mode-focus .chat-bubble {
-  max-width: min(92%, 920px);
-}
-
-.chat-home-main.mode-focus .chat-bubble.user {
-  max-width: min(78%, 760px);
-}
-
-.workbench-focus-detail {
-  gap: 10px;
-}
-
-.chat-home-main.mode-focus .workbench-focus-detail {
-  margin-top: -2px;
 }
 
 .composer-toolbar,
@@ -975,11 +729,6 @@ textarea {
   border: 1px solid var(--line);
 }
 
-.git-diff-viewer {
-  max-height: 420px;
-  overflow: auto;
-}
-
 .metric-card.active {
   border-color: var(--line-strong);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -997,10 +746,6 @@ textarea {
   border: 1px solid var(--line);
   background: #242424;
   text-align: left;
-}
-
-.workbench-helper-card {
-  gap: 10px;
 }
 
 .inbox-item {
@@ -1225,7 +970,6 @@ textarea,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .workbench-pinned-bar,
   .workbench-status-strip {
     grid-template-columns: 1fr;
   }
@@ -1270,7 +1014,6 @@ textarea,
   .settings-grid,
   .card-grid,
   .prompt-grid,
-  .workbench-pinned-bar,
   .workbench-status-strip,
   .toggle-grid {
     grid-template-columns: 1fr;

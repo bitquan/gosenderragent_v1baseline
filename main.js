@@ -210,7 +210,12 @@ const { sanitizeRelativePath } = require('./core/utils');
 const { handleAssistantChat } = require('./core/chat');
 const { buildStorageSnapshot, cleanupStorageArtifacts } = require('./core/storage');
 const { listLabs, createLab, destroyLab, resetLab, runLabRecipe } = require('./core/labs');
-const { listBenchmarkRuns, recordBenchmarkRun } = require('./core/benchmarks');
+const {
+  listBenchmarkRuns,
+  recordBenchmarkRun,
+  runBenchmarkValidation,
+  finalizeBenchmarkOutcome,
+} = require('./core/benchmarks');
 const { readLatestAcceptanceReport, runEngineAcceptanceSuite } = require('./core/engine-acceptance');
 const { buildReviewerSummary } = require('./core/reviewer');
 const { buildRegressionCandidates } = require('./core/regression-builder');
@@ -4482,6 +4487,9 @@ function collectBenchmarkArtifactPaths(result) {
   if (Array.isArray(result?.payload?.artifactPaths)) {
     candidates.push(...result.payload.artifactPaths);
   }
+  if (Array.isArray(result?.finalEvent?.artifactPaths)) {
+    candidates.push(...result.finalEvent.artifactPaths);
+  }
   if (Array.isArray(result?.artifact?.paths)) {
     candidates.push(...result.artifact.paths);
   }
@@ -4494,6 +4502,17 @@ function collectBenchmarkArtifactPaths(result) {
     paths.push(value);
   }
   return paths;
+}
+
+async function waitForBenchmarkRunCompletion(runId, timeoutMs = 15 * 60 * 1000) {
+  return Promise.race([
+    agentRuntimeService.waitForRunCompletion(runId),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Timed out waiting for benchmark run ${runId} to settle.`));
+      }, Math.max(1, Number(timeoutMs || 0)));
+    }),
+  ]);
 }
 
 async function executeBenchmarkRun(payload = {}, options = {}) {
@@ -4571,11 +4590,56 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
       label: payload.name || options.defaultName || 'Engine benchmark',
       requestedCapabilities: payload.capabilities || ['plan-reasoning', 'code-main', 'review-verify'],
     });
-    rawResult = { ok: !!benchmarkRun?.runId, payload: benchmarkRun };
-    status = benchmarkRun?.runId ? 'pass' : 'fail';
-    summary = benchmarkRun?.blockedReason || benchmarkRun?.label || summary;
+    if (!benchmarkRun?.runId) {
+      rawResult = { ok: false, payload: benchmarkRun };
+      status = 'fail';
+      summary = benchmarkRun?.blockedReason || benchmarkRun?.label || 'Benchmark run did not start.';
+    } else {
+      try {
+        const finalEvent = await waitForBenchmarkRunCompletion(
+          benchmarkRun.runId,
+          Number(payload.timeoutMs || options.timeoutMs || 15 * 60 * 1000),
+        );
+        rawResult = {
+          ok: String(finalEvent?.state || '').trim().toLowerCase() === 'pass',
+          payload: benchmarkRun,
+          finalEvent,
+          durationMs: Math.max(
+            0,
+            Date.parse(String(finalEvent?.timestamp || nowIso())) - Date.parse(String(startedAt)),
+          ),
+          artifactPaths: Array.isArray(finalEvent?.artifactPaths) ? finalEvent.artifactPaths : [],
+          approvalRequests: Array.isArray(finalEvent?.approvalRequests) ? finalEvent.approvalRequests : [],
+          repairDepth: Number(finalEvent?.repairDepth || 0),
+        };
+        status = rawResult.ok ? 'pass' : 'fail';
+        summary = finalEvent?.operatorExecution?.resultSummary
+          || finalEvent?.blockedReason
+          || finalEvent?.label
+          || benchmarkRun?.label
+          || summary;
+      } catch (error) {
+        rawResult = {
+          ok: false,
+          payload: benchmarkRun,
+          error: String(error?.message || error || 'Benchmark run timed out.'),
+        };
+        status = 'fail';
+        summary = rawResult.error;
+      }
+    }
   }
 
+  const validationResult = runBenchmarkValidation(targetWorkspaceRoot, payload, {
+    required: executionMode !== 'baseline',
+  });
+  const finalized = finalizeBenchmarkOutcome({
+    status,
+    summary,
+    validationResult,
+  });
+  status = finalized.status;
+  summary = finalized.summary;
   const completedAt = nowIso();
   const artifactPaths = collectBenchmarkArtifactPaths(rawResult);
   const benchmarkModel = settings.runtime === 'openai'
@@ -4593,7 +4657,7 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
     benchmarkTags: activeWrappedProfile?.benchmarkTags || [],
     runtime: settings.runtime,
     status,
-    ok: status !== 'fail',
+    ok: finalized.ok,
     startedAt,
     completedAt,
     taskId: String(payload.taskId || '').trim(),
@@ -4607,11 +4671,20 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
     labRoot,
     passRate: Number(payload.passRate || (status === 'fail' ? 0 : 100)),
     latencyMs: Number(payload.latencyMs || rawResult?.durationMs || 0),
-    repairDepth: Number(payload.repairDepth || rawResult?.repairDepth || 0),
-    approvalCount: Number(payload.approvalCount || (Array.isArray(rawResult?.approvalRequests) ? rawResult.approvalRequests.length : 0)),
+    repairDepth: Number(payload.repairDepth || rawResult?.repairDepth || rawResult?.finalEvent?.repairDepth || 0),
+    approvalCount: Number(
+      payload.approvalCount
+      || (Array.isArray(rawResult?.approvalRequests) ? rawResult.approvalRequests.length : 0)
+      || (Array.isArray(rawResult?.finalEvent?.approvalRequests) ? rawResult.finalEvent.approvalRequests.length : 0),
+    ),
     summary,
     artifactPaths,
-    rawResult: rawResult?.payload || rawResult || {},
+    validationResult,
+    rawResult: {
+      ...(rawResult?.payload && typeof rawResult.payload === 'object' ? rawResult.payload : {}),
+      ...(rawResult && typeof rawResult === 'object' ? rawResult : {}),
+      validationResult,
+    },
   });
   sendBenchmarkEvent({
     type: 'benchmark-recorded',

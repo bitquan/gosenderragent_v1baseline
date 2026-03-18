@@ -21808,18 +21808,7 @@
     threadReadMarkers: {},
     composerText: "",
     pendingAttachments: [],
-    gitStatus: null,
-    gitBranches: [],
-    gitDiff: "",
-    gitNotice: "",
-    activeGitPath: "",
-    gitCommitMessage: "",
-    gitBranchDraft: "codex/",
-    gitBusy: false,
-    monitorLoading: false,
-    monitorLoadingMessage: "",
     busyChat: false,
-    busyTaskLoop: false,
     busyAcceptance: false,
     busySafetyController: false,
     chatFocused: false,
@@ -21839,17 +21828,12 @@
     rightRailOpen: false
   };
   var store = createStore(initialState);
-  function normalizeChatModeValue(value) {
-    const mode = String(value || "ask").trim().toLowerCase();
-    return ["ask", "plan", "edit", "agent"].includes(mode) ? mode : "ask";
-  }
-  function createThread(title, chatMode = "ask") {
+  function createThread(title) {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
     return {
       id: makeId("thread"),
       title,
       changeSessionId: makeId("session"),
-      chatMode: normalizeChatModeValue(chatMode),
       createdAt,
       updatedAt: createdAt,
       messages: [{
@@ -21873,8 +21857,7 @@
       return parsed.map((thread) => ({
         ...thread,
         messages: Array.isArray(thread.messages) ? thread.messages : [],
-        changeSessionId: thread.changeSessionId || makeId("session"),
-        chatMode: normalizeChatModeValue(thread.chatMode)
+        changeSessionId: thread.changeSessionId || makeId("session")
       }));
     } catch (_error) {
       return [createThread("Main Thread")];
@@ -22157,67 +22140,6 @@
     }
     return suggestions.slice(0, 3);
   }
-  function normalizeWorkbenchMode(settings) {
-    const ui = settings?.ui && typeof settings.ui === "object" ? settings.ui : {};
-    const mode = String(settings?.chatWorkbenchMode || ui.chatWorkbenchMode || "focus").trim().toLowerCase();
-    return ["focus", "balanced", "control-room"].includes(mode) ? mode : "focus";
-  }
-  function resolveThreadChatMode(settings, thread) {
-    return normalizeChatModeValue(thread?.chatMode || settings?.chatMode || settings?.ui?.chatMode || "ask");
-  }
-  function formatChatModeLabel(mode) {
-    const normalized = normalizeChatModeValue(mode);
-    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-  }
-  function normalizeComposerSize(settings) {
-    const ui = settings?.ui && typeof settings.ui === "object" ? settings.ui : {};
-    const size = String(settings?.chatComposerSize || ui.chatComposerSize || "tall").trim().toLowerCase();
-    return ["comfortable", "tall"].includes(size) ? size : "tall";
-  }
-  function slugifyRuntimeToken(value, fallback = "item") {
-    const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    return normalized || fallback;
-  }
-  function buildEngineAssistPrompts(input) {
-    const prompts = [];
-    const objective = summarizeText(String(input.objective || input.task || "").trim(), 120);
-    const memoryPrompt = summarizeText(String(input.memoryPrompt || "").trim(), 120);
-    const nextActionPrompt = summarizeText(String(input.nextActionPrompt || "").trim(), 120);
-    const nextSafeAction = summarizeText(String(input.nextSafeAction || "").trim(), 120);
-    const recoveryStep = String(input.recoveryStep || "").trim().toLowerCase();
-    if (memoryPrompt) {
-      pushUniqueSuggestion(prompts, memoryPrompt);
-    }
-    if (nextActionPrompt) {
-      pushUniqueSuggestion(prompts, nextActionPrompt);
-    }
-    if (input.interruptActive || input.requiresManualReview) {
-      pushUniqueSuggestion(prompts, "Review the latest run and summarize the blockers.");
-    }
-    if (recoveryStep === "research-expansion") {
-      pushUniqueSuggestion(prompts, objective ? `Retry "${objective}" with more repo research first.` : "Retry the current objective with more repo research first.");
-    }
-    if (recoveryStep === "repair-oriented-route") {
-      pushUniqueSuggestion(prompts, "Repair the latest failed run and rerun validation.");
-    }
-    if (recoveryStep === "bridge-plan-retry") {
-      pushUniqueSuggestion(prompts, "Plan a smaller bounded retry for the current objective.");
-    }
-    if (recoveryStep === "sandbox-retry") {
-      pushUniqueSuggestion(prompts, "Try the next bounded retry in a sandbox or lab first.");
-    }
-    if (!input.interruptActive && input.canContinue) {
-      pushUniqueSuggestion(prompts, objective ? `Continue the current objective: ${objective}` : "Continue the current objective.");
-    }
-    if (nextSafeAction) {
-      pushUniqueSuggestion(prompts, nextSafeAction);
-    }
-    if (input.canOpenFiles) {
-      pushUniqueSuggestion(prompts, "Open the changed files and show me the diff.");
-    }
-    pushUniqueSuggestion(prompts, "Open AI settings and tune the chat workbench if you want a different helper density.");
-    return prompts.slice(0, 4);
-  }
   function appendRuntimeEvent(key, payload) {
     store.update((state) => ({
       ...state,
@@ -22229,7 +22151,7 @@
     const wantsFullSnapshot = mode === "full" || !window.gosAgent.bootstrapLite;
     const snapshot = wantsFullSnapshot ? await window.gosAgent.bootstrap({ captureLearning: true }) : await window.gosAgent.bootstrapLite({ captureLearning: false });
     const shouldLoadReview = wantsFullSnapshot || store.getState().rightRailOpen;
-    const [meta, tuning, labs, benchmarks, skills, automations, tools, aiStatus, learningStatus, learningChanges, reviewSnapshot, gitStatus, gitBranches] = await Promise.all([
+    const [meta, tuning, labs, benchmarks, skills, automations, tools, aiStatus, learningStatus, learningChanges, reviewSnapshot] = await Promise.all([
       window.gosAgent.getMeta(),
       window.gosAgent.getTuningStatus({ workspace: snapshot.workspaceRoot }),
       window.gosAgent.listLabs({ workspaceRoot: snapshot.workspaceRoot }),
@@ -22257,17 +22179,7 @@
         workspaceRoot: snapshot.workspaceRoot,
         targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
         labRoot: snapshot.selectedLabRoot || ""
-      }) : Promise.resolve(null),
-      window.gosAgent.getGitStatus ? window.gosAgent.getGitStatus({
-        workspaceRoot: snapshot.workspaceRoot,
-        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
-        labRoot: snapshot.selectedLabRoot || ""
-      }) : Promise.resolve(snapshot.git || null),
-      window.gosAgent.listGitBranches ? window.gosAgent.listGitBranches({
-        workspaceRoot: snapshot.workspaceRoot,
-        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
-        labRoot: snapshot.selectedLabRoot || ""
-      }) : Promise.resolve({ branches: [] })
+      }) : Promise.resolve(null)
     ]);
     const nextSnapshot = reviewSnapshot?.review ? {
       ...snapshot,
@@ -22288,57 +22200,9 @@
       automations: Array.isArray(automations) ? automations : Array.isArray(automations?.jobs) ? automations.jobs : [],
       tools: Array.isArray(tools?.tools) ? tools.tools : [],
       aiStatus,
-      gitStatus: gitStatus || nextSnapshot?.git || null,
-      gitBranches: Array.isArray(gitBranches?.branches) ? gitBranches.branches : [],
       learningStatus,
       learningChanges
     }));
-  }
-  async function loadMonitorData() {
-    if (!window.gosAgent.getMonitorStatus) {
-      await refreshData("lite");
-      return;
-    }
-    const state = store.getState();
-    store.update((current) => ({
-      ...current,
-      monitorLoading: true,
-      monitorLoadingMessage: "Loading control room… painting Monitor first, then hydrating runs, promotions, and review state.",
-      error: ""
-    }));
-    try {
-      const payload = await window.gosAgent.getMonitorStatus({
-        workspaceRoot: state.snapshot?.workspaceRoot || "",
-        targetWorkspaceRoot: state.snapshot?.targetWorkspaceRoot || "",
-        labRoot: state.snapshot?.selectedLabRoot || ""
-      });
-      const monitorSnapshot = payload?.snapshot && typeof payload.snapshot === "object" ? payload.snapshot : state.snapshot;
-      const monitorEvents = payload?.events && typeof payload.events === "object" ? payload.events : {};
-      store.update((current) => ({
-        ...current,
-        loading: false,
-        monitorLoading: false,
-        monitorLoadingMessage: "",
-        error: "",
-        snapshot: monitorSnapshot,
-        settings: monitorSnapshot?.settings || current.settings,
-        aiStatus: payload?.aiStatus || current.aiStatus,
-        tuning: payload?.tuning || current.tuning,
-        automations: Array.isArray(payload?.automations) ? payload.automations : current.automations,
-        learningStatus: monitorSnapshot?.learningJournal || current.learningStatus,
-        runtimeEvents: Array.isArray(monitorEvents.runtimeEvents) ? monitorEvents.runtimeEvents : current.runtimeEvents,
-        learningEvents: Array.isArray(monitorEvents.learningEvents) ? monitorEvents.learningEvents : current.learningEvents,
-        labEvents: Array.isArray(monitorEvents.labEvents) ? monitorEvents.labEvents : current.labEvents,
-        benchmarkEvents: Array.isArray(monitorEvents.benchmarkEvents) ? monitorEvents.benchmarkEvents : current.benchmarkEvents
-      }));
-    } catch (error) {
-      store.update((current) => ({
-        ...current,
-        monitorLoading: false,
-        monitorLoadingMessage: "",
-        error: error instanceof Error ? error.message : "Failed to load Monitor."
-      }));
-    }
   }
   async function loadShellData() {
     const snapshot = window.gosAgent.bootstrapLite ? await window.gosAgent.bootstrapLite({ captureLearning: false }) : await window.gosAgent.bootstrap({ captureLearning: false });
@@ -22349,8 +22213,7 @@
       error: "",
       snapshot,
       meta,
-      settings: snapshot.settings || current.settings,
-      gitStatus: snapshot.git || current.gitStatus
+      settings: snapshot.settings || current.settings
     }));
   }
   function shellStatus(snapshot) {
@@ -22475,7 +22338,6 @@
     const activeTaskRun = taskRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.runtimeState || item.status || "").toLowerCase())) || (Array.isArray(state.snapshot?.recentRuns) ? state.snapshot.recentRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.state || item.status || "").toLowerCase())) : null);
     const refreshTimerRef = import_react2.default.useRef(null);
     const refreshInFlightRef = import_react2.default.useRef(false);
-    const monitorRefreshInFlightRef = import_react2.default.useRef(false);
     const refreshApp = (0, import_react2.useEffectEvent)(async (mode = "lite") => {
       if (refreshInFlightRef.current) {
         return;
@@ -22491,17 +22353,6 @@
         }));
       } finally {
         refreshInFlightRef.current = false;
-      }
-    });
-    const refreshMonitor = (0, import_react2.useEffectEvent)(async () => {
-      if (monitorRefreshInFlightRef.current) {
-        return;
-      }
-      monitorRefreshInFlightRef.current = true;
-      try {
-        await loadMonitorData();
-      } finally {
-        monitorRefreshInFlightRef.current = false;
       }
     });
     const scheduleRefresh = (0, import_react2.useEffectEvent)((delay = 400) => {
@@ -22596,7 +22447,7 @@
       document.body.dataset.theme = ["codex", "obsidian"].includes(requestedTheme) ? requestedTheme : "codex";
     }, [state.snapshot?.settings?.theme]);
     const onNewThread = () => {
-      const nextThread = createThread(`Thread ${state.threads.length + 1}`, normalizeChatModeValue(state.settings?.chatMode || "ask"));
+      const nextThread = createThread(`Thread ${state.threads.length + 1}`);
       store.update((current) => ({
         ...current,
         threads: [nextThread, ...current.threads],
@@ -22621,22 +22472,6 @@
           [threadId]: latestAssistantMessageId(current.threads.find((entry) => entry.id === threadId)) || latestMessageId(current.threads.find((entry) => entry.id === threadId))
         }
       }));
-    };
-    const onSetChatMode = async (mode) => {
-      const normalizedMode = normalizeChatModeValue(mode);
-      const currentThread = activeThread(store.getState());
-      if (!currentThread) {
-        return;
-      }
-      store.update((current) => ({
-        ...current,
-        threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, chatMode: normalizedMode, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : entry),
-        settings: {
-          ...current.settings,
-          chatMode: normalizedMode
-        }
-      }));
-      await onUpdateSetting("chatMode", normalizedMode);
     };
     const onPickChatAttachments = async () => {
       const snapshot = store.getState().snapshot;
@@ -22694,37 +22529,16 @@
       if (!snapshot || !currentThread || store.getState().busyChat) {
         return;
       }
-      const rawText = store.getState().composerText.trim();
+      const text = store.getState().composerText.trim();
       const attachments = Array.isArray(store.getState().pendingAttachments) ? store.getState().pendingAttachments : [];
-      if (!rawText && attachments.length === 0) {
+      if (!text && attachments.length === 0) {
         return;
-      }
-      let text = rawText;
-      const modeDirective = rawText.match(/^\/(ask|plan|edit|agent)(?:\s+(.*))?$/i);
-      if (modeDirective) {
-        const nextMode = normalizeChatModeValue(modeDirective[1]);
-        const remainder = String(modeDirective[2] || "").trim();
-        if (nextMode !== resolveThreadChatMode(store.getState().settings, currentThread)) {
-          await onSetChatMode(nextMode);
-        }
-        text = remainder;
-        if (!text && attachments.length === 0) {
-          appendWorkbenchSystemMessage(`Switched to ${formatChatModeLabel(nextMode)} mode.`, {
-            suggestions: [`/${nextMode} explain the current repo state`, `/${nextMode} help me with the next step`]
-          });
-          store.update((current) => ({
-            ...current,
-            composerText: "",
-            pendingAttachments: []
-          }));
-          return;
-        }
       }
       const createdAt = (/* @__PURE__ */ new Date()).toISOString();
       const userMessage = {
         id: makeId("msg"),
         role: "user",
-        text: rawText,
+        text,
         createdAt,
         attachments
       };
@@ -22745,7 +22559,6 @@
           changeSessionId: currentThread.changeSessionId,
           history: currentThread.messages.slice(-8).map((entry) => ({ role: entry.role, text: entry.text })),
           attachments,
-          chatMode: resolveThreadChatMode(store.getState().settings, activeThread(store.getState())),
           chatContext: {
             activeView: store.getState().activeModuleId,
             activeFile: store.getState().inspector.selectedPath,
@@ -22754,8 +22567,7 @@
             activeRunId: snapshot.recentRuns?.[0]?.runId || snapshot.taskHub?.runs?.[0]?.runId || "",
             activeRunLabel: snapshot.recentRuns?.[0]?.label || "",
             worktree: snapshot.worktree?.scopeLabel || "",
-            modelProvisioning: store.getState().aiStatus?.provisioning || {},
-            chatMode: resolveThreadChatMode(store.getState().settings, activeThread(store.getState()))
+            modelProvisioning: store.getState().aiStatus?.provisioning || {}
           }
         });
         const assistantMessage = {
@@ -22805,152 +22617,14 @@
         composerText: command
       }));
     };
-    const appendWorkbenchSystemMessage = (text, extras = {}) => {
-      const currentThread = activeThread(store.getState());
-      if (!currentThread) {
-        return;
-      }
-      const createdAt = (/* @__PURE__ */ new Date()).toISOString();
-      const refs = Array.isArray(extras.refs) ? extras.refs.filter((item) => item && item.path) : [];
-      const suggestions = Array.isArray(extras.suggestions) ? extras.suggestions.filter(Boolean) : [];
-      const systemMessage = {
-        id: makeId("msg"),
-        role: "system",
-        text: String(text || "Dev-engine loop updated.").trim(),
-        createdAt,
-        refs,
-        suggestions
-      };
-      store.update((current) => ({
-        ...current,
-        activeModuleId: "workbench",
-        threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, updatedAt: createdAt, messages: [...entry.messages, systemMessage] } : entry),
-        threadReadMarkers: {
-          ...current.threadReadMarkers,
-          [currentThread.id]: systemMessage.id
-        }
-      }));
-    };
-    const readActiveTaskLoopContext = () => {
-      const current = store.getState();
-      const snapshot = current.snapshot;
-      const operatorLoop = snapshot?.operatorLoop && typeof snapshot.operatorLoop === "object" ? snapshot.operatorLoop : {};
-      const latestExecution = operatorLoop.latestExecution && typeof operatorLoop.latestExecution === "object" ? operatorLoop.latestExecution : {};
-      const latestRequest = operatorLoop.latestRequest && typeof operatorLoop.latestRequest === "object" ? operatorLoop.latestRequest : {};
-      const currentThread = activeThread(current);
-      const workspaceRoot = String(snapshot?.workspaceRoot || latestRequest.workspaceRoot || "").trim();
-      const targetWorkspaceRoot = String(snapshot?.targetWorkspaceRoot || latestRequest.targetWorkspaceRoot || workspaceRoot).trim();
-      const labRoot = String(snapshot?.selectedLabRoot || latestRequest.labRoot || "").trim();
-      const objective = String(latestExecution.taskObjective?.summary || latestExecution.task || latestRequest.task || "").trim();
-      return {
-        current,
-        snapshot,
-        currentThread,
-        latestExecution,
-        latestRequest,
-        workspaceRoot,
-        targetWorkspaceRoot,
-        labRoot,
-        objective
-      };
-    };
-    const buildTaskLoopThreadRefs = (payload = {}) => {
-      const execution = payload?.operatorExecution && typeof payload.operatorExecution === "object" ? payload.operatorExecution : payload;
-      const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles : [];
-      return changedFiles.slice(0, 2).map((item) => ({
-        label: shortPath(item.path) || String(item.path || "changed file"),
-        path: String(item.path || "").trim()
-      })).filter((item) => item.path);
-    };
-    const buildTaskLoopSuggestions = (payload = {}) => {
-      const execution = payload?.operatorExecution && typeof payload.operatorExecution === "object" ? payload.operatorExecution : payload;
-      const suggestions = [];
-      const pushSuggestion = (value) => {
-        const text = String(value || "").trim();
-        if (text && !suggestions.includes(text)) {
-          suggestions.push(text);
-        }
-      };
-      pushSuggestion(execution?.nextAction?.prompt);
-      if (execution?.retryAvailable) {
-        pushSuggestion("Continue the current dev-engine loop.");
-      }
-      if (execution?.repairAvailable || String(execution?.ticket || "").trim()) {
-        pushSuggestion("Repair the current dev-engine loop.");
-      }
-      if (String(execution?.task || execution?.taskObjective?.summary || "").trim()) {
-        pushSuggestion("Retry this task with research first.");
-      }
-      if ((execution?.interruptRequest?.active || execution?.reviewBundle?.requiresManualReview) && suggestions.length < 4) {
-        pushSuggestion("Open the inbox and review the pending interrupt.");
-      }
-      return suggestions.slice(0, 4);
-    };
-    const pickTraceArtifactPath = (execution = {}) => {
-      const artifacts = Array.isArray(execution?.workbenchArtifacts) ? execution.workbenchArtifacts : [];
-      const preferredArtifact = artifacts.find((item) => /trace|checkpoint|artifact|log/i.test(String(item?.kind || item?.label || "")) && item?.path) || artifacts.find((item) => item?.path) || null;
-      return String(execution?.checkpointRef?.path || execution?.artifactPaths?.[0] || preferredArtifact?.path || "").trim();
-    };
-    const pickChangedFilePath = (execution = {}) => {
-      const changedFile = Array.isArray(execution?.changedFiles) ? execution.changedFiles.find((item) => item?.path) : null;
-      if (changedFile?.path) {
-        return String(changedFile.path).trim();
-      }
-      const artifactFile = Array.isArray(execution?.workbenchArtifacts) ? execution.workbenchArtifacts.find((item) => /changed-file|file/i.test(String(item?.kind || "")) && item?.path) : null;
-      return String(artifactFile?.path || "").trim();
-    };
-    const runWorkbenchTaskLoopAction = async (label, runner) => {
-      let refreshMode = "lite";
-      store.update((current) => ({
-        ...current,
-        busyTaskLoop: true,
-        error: ""
-      }));
-      try {
-        const result = await runner();
-        const execution = result?.operatorExecution && typeof result.operatorExecution === "object" ? result.operatorExecution : result || {};
-        const summary = String(result?.message || execution?.resultSummary || `${label} finished.`).trim() || `${label} finished.`;
-        appendWorkbenchSystemMessage(summary, {
-          refs: buildTaskLoopThreadRefs(execution),
-          suggestions: buildTaskLoopSuggestions(execution)
-        });
-        const autoFollowup = await queueTaskLoopNextActionFollowup({
-          autoTrigger: true,
-          executionOverride: execution,
-          quietWhenSkipped: true
-        });
-        if (autoFollowup?.queued) {
-          refreshMode = "full";
-        }
-        return result;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : `${label} failed.`;
-        store.update((current) => ({
-          ...current,
-          error: message
-        }));
-        appendWorkbenchSystemMessage(message);
-        return null;
-      } finally {
-        store.update((current) => ({
-          ...current,
-          busyTaskLoop: false
-        }));
-        await refreshApp(refreshMode);
-      }
-    };
     const onOpenMonitorTab = (tab = "overview") => {
       store.update((current) => ({
         ...current,
         activeModuleId: "monitor",
         activeMonitorTab: tab,
-        chatFocused: false,
-        monitorLoading: true,
-        monitorLoadingMessage: "Loading control room… painting Monitor first, then hydrating runs, promotions, and review state."
+        chatFocused: false
       }));
-      window.setTimeout(() => {
-        void refreshMonitor();
-      }, 0);
+      void refreshApp("full");
     };
     const onStopRun = async () => {
       const runId = String(activeTaskRun?.runId || activeTaskRun?.id || "").trim();
@@ -23005,110 +22679,6 @@
       }));
       await refreshApp("full");
     };
-    const onContinueTaskLoop = async () => {
-      await runWorkbenchTaskLoopAction("Continue run", async () => {
-        const context = readActiveTaskLoopContext();
-        if (!context.snapshot || !context.latestRequest?.laneId) {
-          throw new Error("No prior dev-engine loop request is available to continue yet.");
-        }
-        return window.gosAgent.retryTaskLoop({
-          workspaceRoot: context.workspaceRoot,
-          targetWorkspaceRoot: context.targetWorkspaceRoot,
-          labRoot: context.labRoot,
-          laneId: context.latestRequest.laneId,
-          task: context.objective || context.latestRequest.task || ""
-        });
-      });
-    };
-    const onRetryTaskLoopResearch = async () => {
-      await runWorkbenchTaskLoopAction("Retry with research", async () => {
-        const context = readActiveTaskLoopContext();
-        if (!context.snapshot || !context.objective) {
-          throw new Error("No current objective is available to retry with research yet.");
-        }
-        return window.gosAgent.executeTaskLoop({
-          workspaceRoot: context.workspaceRoot,
-          targetWorkspaceRoot: context.targetWorkspaceRoot,
-          labRoot: context.labRoot,
-          laneId: "research-docs",
-          task: context.objective,
-          threadId: context.currentThread?.id || "",
-          changeSessionId: context.currentThread?.changeSessionId || ""
-        });
-      });
-    };
-    const onRepairTaskLoop = async () => {
-      await runWorkbenchTaskLoopAction("Repair loop", async () => {
-        const context = readActiveTaskLoopContext();
-        const ticket = String(context.latestExecution?.ticket || "").trim();
-        if (!context.snapshot || !ticket) {
-          throw new Error("Repair needs a ticket-backed failed run before the repair loop can start.");
-        }
-        return window.gosAgent.repairTaskLoop({
-          workspaceRoot: context.workspaceRoot,
-          targetWorkspaceRoot: context.targetWorkspaceRoot,
-          labRoot: context.labRoot,
-          task: context.objective || context.latestRequest.task || "",
-          ticket
-        });
-      });
-    };
-    const onOpenTaskLoopTrace = async () => {
-      const context = readActiveTaskLoopContext();
-      const tracePath = pickTraceArtifactPath(context.latestExecution);
-      if (!context.snapshot || !tracePath) {
-        store.update((current) => ({
-          ...current,
-          error: "No trace or checkpoint artifact is available yet."
-        }));
-        return;
-      }
-      const result = await window.gosAgent.openArtifactPath({
-        workspaceRoot: context.workspaceRoot,
-        targetWorkspaceRoot: context.targetWorkspaceRoot,
-        labRoot: context.labRoot,
-        path: tracePath
-      });
-      store.update((current) => ({
-        ...current,
-        error: result?.ok === false ? String(result?.message || "Unable to open the latest trace.") : ""
-      }));
-    };
-    const onOpenTaskLoopFiles = async () => {
-      const context = readActiveTaskLoopContext();
-      const selectedPath = pickChangedFilePath(context.latestExecution);
-      if (!selectedPath) {
-        store.update((current) => ({
-          ...current,
-          error: "No changed file is attached to the latest dev-engine run yet."
-        }));
-        return;
-      }
-      await onLoadInspectorPath(selectedPath, "task-loop");
-    };
-    const onOpenTaskLoopSandbox = async () => {
-      const context = readActiveTaskLoopContext();
-      const sandboxArtifact = Array.isArray(context.latestExecution?.workbenchArtifacts) ? context.latestExecution.workbenchArtifacts.find((item) => /sandbox|worktree|lab/i.test(String(item?.kind || item?.label || "")) && item?.path) : null;
-      const selectedPath = String(sandboxArtifact?.path || context.labRoot || (context.targetWorkspaceRoot && context.targetWorkspaceRoot !== context.workspaceRoot ? context.targetWorkspaceRoot : "")).trim();
-      if (!context.snapshot || !selectedPath) {
-        store.update((current) => ({
-          ...current,
-          error: "No sandbox or active lab is available for the latest dev-engine run."
-        }));
-        return;
-      }
-      const result = await window.gosAgent.openLocation({
-        workspaceRoot: context.workspaceRoot,
-        targetWorkspaceRoot: context.targetWorkspaceRoot,
-        labRoot: context.labRoot,
-        path: selectedPath,
-        line: 1
-      });
-      store.update((current) => ({
-        ...current,
-        error: result?.ok === false ? String(result?.message || "Unable to open the active sandbox location.") : ""
-      }));
-    };
     const onOpenInboxItem = async (item) => {
       if (item.backupId) {
         await onRollbackLatestBackup(item.backupId);
@@ -23127,121 +22697,6 @@
         rightRailOpen: true,
         activeInspectorTab: item.targetTab === "file" || item.targetTab === "diff" || item.targetTab === "learning" ? item.targetTab : "inbox"
       }));
-    };
-    const onReviewTaskLoopInterrupt = () => {
-      const context = readActiveTaskLoopContext();
-      const hasInterrupt = context.latestExecution?.interruptRequest?.active || context.latestExecution?.reviewBundle?.requiresManualReview || Number(context.latestExecution?.reviewBundle?.pendingCount || 0) > 0;
-      if (!hasInterrupt && inboxItems.length === 0) {
-        store.update((current) => ({
-          ...current,
-          error: "No interrupt or review hold is active right now."
-        }));
-        return;
-      }
-      onOpenInbox();
-    };
-    const onRollbackTaskLoopPass = async () => {
-      await onRollbackLatestBackup();
-    };
-    const onRunNextTaskLoopAction = async () => {
-      const context = readActiveTaskLoopContext();
-      const nextAction = context.latestExecution?.nextAction && typeof context.latestExecution.nextAction === "object" ? context.latestExecution.nextAction : {};
-      const command = String(nextAction.command || "").trim().toLowerCase();
-      if (!command) {
-        store.update((current) => ({
-          ...current,
-          error: "The engine has not chosen a next safe action for this run yet."
-        }));
-        return;
-      }
-      if (command === "continue-run") {
-        await onContinueTaskLoop();
-        return;
-      }
-      if (command === "retry-with-research") {
-        await onRetryTaskLoopResearch();
-        return;
-      }
-      if (command === "repair-loop") {
-        await onRepairTaskLoop();
-        return;
-      }
-      if (command === "review-interrupt") {
-        onReviewTaskLoopInterrupt();
-        return;
-      }
-      if (command === "open-files") {
-        await onOpenTaskLoopFiles();
-        return;
-      }
-      if (command === "open-trace") {
-        await onOpenTaskLoopTrace();
-        return;
-      }
-      if (command === "open-sandbox") {
-        await onOpenTaskLoopSandbox();
-        return;
-      }
-      store.update((current) => ({
-        ...current,
-        error: `The engine suggested "${command}", but that action is not wired in the shipped desktop workbench yet.`
-      }));
-    };
-    const queueTaskLoopNextActionFollowup = async ({ autoTrigger = false, executionOverride = null, quietWhenSkipped = false } = {}) => {
-      const context = readActiveTaskLoopContext();
-      const execution = executionOverride && typeof executionOverride === "object" ? executionOverride : context.latestExecution;
-      const result = await window.gosAgent.queueTaskLoopNextActionFollowup({
-        workspaceRoot: context.workspaceRoot,
-        targetWorkspaceRoot: context.targetWorkspaceRoot,
-        labRoot: context.labRoot,
-        threadId: context.currentThread?.id || "",
-        changeSessionId: context.currentThread?.changeSessionId || "",
-        execution,
-        autoTrigger
-      });
-      store.update((current) => ({
-        ...current,
-        error: !quietWhenSkipped && result?.ok === false ? String(result?.message || "Unable to queue the next safe task.") : current.error
-      }));
-      if (result?.queued) {
-        appendWorkbenchSystemMessage(
-          String(
-            result?.message
-            || (result?.run?.runId
-              ? "The engine queued and launched the next bounded task."
-              : "The engine queued the next bounded task.")
-          ).trim(),
-          {
-            suggestions: buildTaskLoopSuggestions({ operatorExecution: execution })
-          }
-        );
-      }
-      return result;
-    };
-    const onQueueNextTaskLoopFollowup = async () => {
-      const result = await queueTaskLoopNextActionFollowup({ autoTrigger: false });
-      if (result?.queued) {
-        await refreshApp("full");
-      }
-    };
-    const onRunSupervisedSelfImprove = async () => {
-      await runWorkbenchTaskLoopAction("Run supervised self-improvement", async () => {
-        const context = readActiveTaskLoopContext();
-        const repoRoot = String(context.snapshot?.workspaceRoot || "").trim();
-        if (!repoRoot) {
-          throw new Error("The desktop-agent repo root is not available for supervised self-improvement yet.");
-        }
-        return window.gosAgent.selfImprove({
-          workspaceRoot: repoRoot,
-          targetWorkspaceRoot: repoRoot,
-          workspace: repoRoot,
-          projectRoot: repoRoot,
-          labRoot: "",
-          threadId: context.currentThread?.id || "",
-          changeSessionId: context.currentThread?.changeSessionId || "",
-          selfImprove: true
-        });
-      });
     };
     const onSwitchWorkspace = async () => {
       await window.gosAgent.pickWorkspace();
@@ -23366,132 +22821,6 @@
         changeSessionId: thread?.changeSessionId || ""
       });
       await refreshApp("lite");
-    };
-    const readGitRoots = () => {
-      const snapshot = store.getState().snapshot;
-      return {
-        workspaceRoot: snapshot?.workspaceRoot || "",
-        targetWorkspaceRoot: snapshot?.targetWorkspaceRoot || snapshot?.workspaceRoot || "",
-        labRoot: snapshot?.selectedLabRoot || ""
-      };
-    };
-    const refreshGitState = async () => {
-      const roots = readGitRoots();
-      if (!roots.targetWorkspaceRoot) {
-        return;
-      }
-      const [gitStatus, gitBranches] = await Promise.all([
-        window.gosAgent.getGitStatus ? window.gosAgent.getGitStatus(roots) : Promise.resolve(null),
-        window.gosAgent.listGitBranches ? window.gosAgent.listGitBranches(roots) : Promise.resolve({ branches: [] })
-      ]);
-      store.update((current) => ({
-        ...current,
-        gitStatus: gitStatus || current.gitStatus,
-        gitBranches: Array.isArray(gitBranches?.branches) ? gitBranches.branches : current.gitBranches
-      }));
-    };
-    const runGitMutation = async (runner) => {
-      store.update((current) => ({ ...current, gitBusy: true, gitNotice: "", error: "" }));
-      try {
-        const result = await runner(readGitRoots());
-        store.update((current) => ({
-          ...current,
-          gitBusy: false,
-          gitNotice: String(result?.message || result?.blockedReason || (result?.ok ? "Git action complete." : "Git action failed.")).trim(),
-          error: result?.ok === false ? String(result?.message || result?.blockedReason || "Git action failed.") : "",
-          gitStatus: result?.status || current.gitStatus
-        }));
-        await refreshGitState();
-        await refreshApp("lite");
-        return result;
-      } catch (error) {
-        store.update((current) => ({
-          ...current,
-          gitBusy: false,
-          gitNotice: "",
-          error: error instanceof Error ? error.message : "Git action failed."
-        }));
-        return null;
-      }
-    };
-    const onOpenGitDiff = async (selectedPath, cached = false) => {
-      const roots = readGitRoots();
-      if (!selectedPath || !roots.targetWorkspaceRoot) {
-        return;
-      }
-      const diffResult = await window.gosAgent.getGitDiff({
-        ...roots,
-        path: selectedPath,
-        cached
-      });
-      store.update((current) => ({
-        ...current,
-        activeGitPath: selectedPath,
-        gitDiff: String(diffResult?.diff || diffResult?.message || ""),
-        gitNotice: diffResult?.ok === false ? String(diffResult?.message || "Unable to load git diff.") : current.gitNotice
-      }));
-    };
-    const onStageGitPaths = async (paths) => {
-      await runGitMutation((roots) => window.gosAgent.stageGitPaths({ ...roots, paths }));
-    };
-    const onUnstageGitPaths = async (paths) => {
-      await runGitMutation((roots) => window.gosAgent.unstageGitPaths({ ...roots, paths }));
-    };
-    const onStageAllGitPaths = async () => {
-      await runGitMutation((roots) => window.gosAgent.stageAllGitPaths(roots));
-    };
-    const onUnstageAllGitPaths = async () => {
-      await runGitMutation((roots) => window.gosAgent.unstageAllGitPaths(roots));
-    };
-    const onDiscardGitPaths = async (paths) => {
-      const selectedPaths = Array.isArray(paths) ? paths.filter(Boolean) : [];
-      if (!selectedPaths.length) {
-        return;
-      }
-      if (!window.confirm(`Discard unstaged changes for ${selectedPaths.join(", ")}?`)) {
-        return;
-      }
-      await runGitMutation((roots) => window.gosAgent.discardGitPaths({ ...roots, paths: selectedPaths }));
-      store.update((current) => ({
-        ...current,
-        gitDiff: current.activeGitPath && selectedPaths.includes(current.activeGitPath) ? "" : current.gitDiff
-      }));
-    };
-    const onCommitGitStaged = async () => {
-      const message = String(store.getState().gitCommitMessage || "").trim();
-      const result = await runGitMutation((roots) => window.gosAgent.commitGitStaged({ ...roots, message }));
-      if (result?.ok) {
-        store.update((current) => ({
-          ...current,
-          gitCommitMessage: ""
-        }));
-      }
-    };
-    const onPullGitBranch = async () => {
-      await runGitMutation((roots) => window.gosAgent.pullGitBranch(roots));
-    };
-    const onPushGitBranch = async () => {
-      await runGitMutation((roots) => window.gosAgent.pushGitBranch(roots));
-    };
-    const onPublishGitBranch = async () => {
-      await runGitMutation((roots) => window.gosAgent.publishGitBranch(roots));
-    };
-    const onCreateGitBranch = async () => {
-      const name = String(store.getState().gitBranchDraft || "").trim();
-      if (!name) {
-        store.update((current) => ({ ...current, error: "Enter a branch name first." }));
-        return;
-      }
-      const result = await runGitMutation((roots) => window.gosAgent.createGitBranch({ ...roots, name }));
-      if (result?.ok) {
-        store.update((current) => ({
-          ...current,
-          gitBranchDraft: result.branch || "codex/"
-        }));
-      }
-    };
-    const onSwitchGitBranch = async (name) => {
-      await runGitMutation((roots) => window.gosAgent.switchGitBranch({ ...roots, name }));
     };
     const onCreateSuggestedTask = async (candidate) => {
       const snapshot = store.getState().snapshot;
@@ -23760,18 +23089,6 @@
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "button",
-              {
-                className: `module-chip${state.activeModuleId === "git" ? " active" : ""}`,
-                "data-module-nav": "git",
-                onClick: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Git" }),
-                  state.activeModuleId === "git" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Branch, diff, stage, commit, and publish live here." }) : null
-                ]
-              }
-            ),
             [
               ["ai", "AI"],
               ["skills", "Skills"],
@@ -23849,15 +23166,6 @@
                 children: "Monitor"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
-              {
-                className: `toolbar-chip${state.activeModuleId === "git" ? " active" : ""}`,
-                "data-route-tab": "git",
-                onClick: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
-                children: "Git"
-              }
-            ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void refreshApp("full"), children: "Sync" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "button",
@@ -23898,13 +23206,11 @@
             {
               snapshot: state.snapshot,
               aiStatus: state.aiStatus,
-              gitStatus: state.gitStatus,
               learningStatus: state.learningStatus,
               thread,
               composerText: state.composerText,
               pendingAttachments: state.pendingAttachments,
               busyChat: state.busyChat,
-              busyTaskLoop: state.busyTaskLoop,
               chatSignalState,
               unreadCount: unreadThreadCount,
               safeMode,
@@ -23919,22 +23225,7 @@
               onSendChat,
               onQuickChat,
               onPickAttachments: onPickChatAttachments,
-              onUpdateSetting,
-              onSetChatMode,
-              onOpenSettingsTab,
-              onOpenGit: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
               onSelectPath: onLoadInspectorPath,
-              onContinueTaskLoop,
-              onRetryTaskLoopResearch,
-              onRepairTaskLoop,
-              onRunNextTaskLoopAction,
-              onQueueNextTaskLoopFollowup,
-              onRunSupervisedSelfImprove,
-              onOpenTaskLoopTrace,
-              onOpenTaskLoopFiles,
-              onOpenTaskLoopSandbox,
-              onReviewTaskLoopInterrupt,
-              onRollbackTaskLoopPass,
               onShowInspector: (tab) => {
                 store.update((current) => ({
                   ...current,
@@ -23947,35 +23238,6 @@
               },
               onOpenInbox,
               onRollbackLatestBackup
-            }
-          ) : null,
-          state.activeModuleId === "git" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            GitPanel,
-            {
-              snapshot: state.snapshot,
-              gitStatus: state.gitStatus,
-              gitBranches: state.gitBranches,
-              gitDiff: state.gitDiff,
-              gitNotice: state.gitNotice,
-              activeGitPath: state.activeGitPath,
-              gitCommitMessage: state.gitCommitMessage,
-              gitBranchDraft: state.gitBranchDraft,
-              gitBusy: state.gitBusy,
-              onOpenDiff: onOpenGitDiff,
-              onStagePaths: onStageGitPaths,
-              onUnstagePaths: onUnstageGitPaths,
-              onStageAll: onStageAllGitPaths,
-              onUnstageAll: onUnstageAllGitPaths,
-              onDiscardPaths: onDiscardGitPaths,
-              onCommit: onCommitGitStaged,
-              onPull: onPullGitBranch,
-              onPush: onPushGitBranch,
-              onPublish: onPublishGitBranch,
-              onCreateBranch: onCreateGitBranch,
-              onSwitchBranch: onSwitchGitBranch,
-              onCommitMessageChange: (value) => store.update((current) => ({ ...current, gitCommitMessage: value })),
-              onBranchDraftChange: (value) => store.update((current) => ({ ...current, gitBranchDraft: value })),
-              onRefresh: () => void refreshGitState()
             }
           ) : null,
           state.activeModuleId === "settings" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -24028,8 +23290,6 @@
               learningEvents: state.learningEvents,
               labEvents: state.labEvents,
               benchmarkEvents: state.benchmarkEvents,
-              monitorLoading: state.monitorLoading,
-              monitorLoadingMessage: state.monitorLoadingMessage,
               activeTab: state.activeMonitorTab,
               onSetActiveTab: (tab) => store.update((current) => ({ ...current, activeMonitorTab: tab, activeModuleId: "monitor" })),
               onCreateCandidate,
@@ -24043,7 +23303,7 @@
               onCreateSuggestedTask,
               onQueueSuggestedRecipe,
               onRecordOperatorFeedback,
-              onRefresh: () => void refreshMonitor(),
+              onRefresh: () => void refreshApp("full"),
               acceptanceBusy: state.busyAcceptance,
               safetyBusy: state.busySafetyController
             }
@@ -24107,152 +23367,13 @@
   }
   function WorkbenchPanel(props) {
     const settings = props.snapshot?.settings || {};
-    const workbenchMode = normalizeWorkbenchMode(settings);
-    const composerSize = normalizeComposerSize(settings);
-    const chatMode = resolveThreadChatMode(settings, props.thread);
-    const chatModeLabel = formatChatModeLabel(chatMode);
-    const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
     const messages = props.thread?.messages || [];
     const isFreshThread = !messages.some((message) => message.role !== "system");
     const latestGoal = props.goalList[0] || null;
     const latestTask = props.taskList[0] || null;
     const latestRun = props.taskRuns[0] || null;
-    const currentProfileLabel = String(
-      props.aiStatus?.profiles?.find?.((profile) => profile?.active)?.label || props.aiStatus?.profileId || settings.aiProfile || "hybrid-default"
-    ).trim() || "hybrid-default";
-    const currentModelLabel = String(
-      props.aiStatus?.current?.derivedModelLabel || props.aiStatus?.current?.ollamaModel || settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b"
-    ).trim() || "qwen2.5-coder:7b";
-    const currentRuntimeLabel = String(
-      props.aiStatus?.current?.provider || settings.runtime || "ollama"
-    ).trim() || "ollama";
-    const gitSummary = props.gitStatus || props.snapshot?.git || {};
-    const gitBranchLabel = String(gitSummary?.branch || "Detached HEAD").trim() || "Detached HEAD";
-    const gitSummaryText = String(
-      gitSummary?.summary || (gitSummary?.dirty ? "Repository has local changes." : "Repository is clean.")
-    ).trim() || "Git summary is warming up.";
-    const chatModeSummary = chatMode === "ask"
-      ? "Talk naturally, ask questions, and keep the thread conversational."
-      : chatMode === "plan"
-        ? "Scope the work, think through risks, and stop before edits."
-        : chatMode === "edit"
-          ? "Focus on code changes and diffs, but keep edit execution gated."
-          : "Let the engine queue and run the next bounded action when the current gates allow it.";
-    const pinnedAiProfiles = [...aiProfiles].sort((left, right) => Number(Boolean(right?.active)) - Number(Boolean(left?.active))).slice(0, 5);
-    const activeAiProfile = pinnedAiProfiles.find((profile) => profile?.active) || pinnedAiProfiles[0] || null;
-    const operatorLoop = props.snapshot?.operatorLoop && typeof props.snapshot.operatorLoop === "object" ? props.snapshot.operatorLoop : {};
-    const latestExecution = operatorLoop.latestExecution && typeof operatorLoop.latestExecution === "object" ? operatorLoop.latestExecution : {};
-    const latestRequest = operatorLoop.latestRequest && typeof operatorLoop.latestRequest === "object" ? operatorLoop.latestRequest : {};
-    const hasLatestExecution = Object.keys(latestExecution).length > 0;
-    const taskObjective = latestExecution.taskObjective && typeof latestExecution.taskObjective === "object" ? latestExecution.taskObjective : {};
-    const failureClass = latestExecution.failureClass && typeof latestExecution.failureClass === "object" ? latestExecution.failureClass : {};
-    const recoveryLadder = latestExecution.recoveryLadder && typeof latestExecution.recoveryLadder === "object" ? latestExecution.recoveryLadder : {};
-    const checkpointRef = latestExecution.checkpointRef && typeof latestExecution.checkpointRef === "object" ? latestExecution.checkpointRef : {};
-    const interruptRequest = latestExecution.interruptRequest && typeof latestExecution.interruptRequest === "object" ? latestExecution.interruptRequest : {};
-    const reviewBundle = latestExecution.reviewBundle && typeof latestExecution.reviewBundle === "object" ? latestExecution.reviewBundle : {};
-    const nextAction = latestExecution.nextAction && typeof latestExecution.nextAction === "object" ? latestExecution.nextAction : {};
-    const readiness = props.snapshot?.readiness && typeof props.snapshot.readiness === "object" ? props.snapshot.readiness : {};
-    const systemCheckRoadmap = props.snapshot?.systemCheck?.areas?.roadmap && typeof props.snapshot.systemCheck.areas.roadmap === "object" ? props.snapshot.systemCheck.areas.roadmap : {};
-    const systemCheckLearning = props.snapshot?.systemCheck?.areas?.learning && typeof props.snapshot.systemCheck.areas.learning === "object" ? props.snapshot.systemCheck.areas.learning : {};
-    const systemCheckMemoryHints = systemCheckLearning.memoryHints && typeof systemCheckLearning.memoryHints === "object" ? systemCheckLearning.memoryHints : {};
-    const executionMemoryHints = latestExecution.memoryHints && typeof latestExecution.memoryHints === "object" ? latestExecution.memoryHints : {};
-    const journalMemoryHints = props.learningStatus?.memoryHints && typeof props.learningStatus.memoryHints === "object" ? props.learningStatus.memoryHints : {};
-    const memoryHints = {
-      ...systemCheckMemoryHints,
-      ...executionMemoryHints,
-      ...journalMemoryHints
-    };
-    const selfHostProof = systemCheckLearning.selfHostProof && typeof systemCheckLearning.selfHostProof === "object" ? systemCheckLearning.selfHostProof : {};
-    const selfImprovementProof = systemCheckLearning.selfImprovementProof && typeof systemCheckLearning.selfImprovementProof === "object" ? systemCheckLearning.selfImprovementProof : readiness.selfImprovementProof && typeof readiness.selfImprovementProof === "object" ? readiness.selfImprovementProof : {};
-    const companionParity = systemCheckRoadmap.companionParity && typeof systemCheckRoadmap.companionParity === "object" ? systemCheckRoadmap.companionParity : readiness.companionParity && typeof readiness.companionParity === "object" ? readiness.companionParity : {};
-    const workbenchArtifacts = Array.isArray(latestExecution.workbenchArtifacts) ? latestExecution.workbenchArtifacts : [];
-    const changedArtifacts = Array.isArray(latestExecution.changedFiles) ? latestExecution.changedFiles.map((item) => ({
-      kind: "changed-file",
-      label: shortPath(item?.path || ""),
-      path: String(item?.path || ""),
-      summary: String(item?.status || "modified")
-    })).filter((item) => item.path) : [];
-    const visibleWorkbenchArtifacts = workbenchArtifacts.length > 0 ? workbenchArtifacts : changedArtifacts;
-    const latestRunTitle = hasLatestExecution ? latestExecution.task || latestRun?.runtimeLabel || latestRun?.label || "No run yet" : latestRun?.runtimeLabel || latestRun?.label || "No run yet";
-    const latestRunSummary = hasLatestExecution ? summarizeText([
-      latestExecution.runState || latestExecution.status || latestExecution.stageSummary?.currentStage || "idle",
-      latestExecution.modelRole ? `${latestExecution.modelRole} role` : "",
-      failureClass.code ? `failure ${failureClass.code}` : "",
-      latestExecution.resultSummary || latestExecution.stageSummary?.summary || ""
-    ].filter(Boolean).join(" • "), 140) : latestRun ? `${latestRun.runtimeState || latestRun.status || "idle"}${latestRun.blockedReason ? ` • ${summarizeText(latestRun.blockedReason, 80)}` : ""}` : "The first actionable prompt can launch a run automatically.";
-    const objectiveSummary = summarizeText(String(taskObjective.summary || latestExecution.task || latestRequest.task || latestRun?.runtimeLabel || "No objective captured yet."), 160);
-    const routeAndStageSummary = summarizeText([
-      latestExecution.laneLabel || latestRequest.laneLabel || "",
-      latestExecution.taskMode || latestRequest.taskMode || "",
-      latestExecution.stageSummary?.currentStage || ""
-    ].filter(Boolean).join(" • ") || "No active route is captured yet.", 160);
-    const failureSummary = summarizeText(String(failureClass.summary || failureClass.code || latestExecution.resultSummary || "No failure class is active."), 160);
-    const checkpointSummary = summarizeText([
-      checkpointRef.label || checkpointRef.summary || "",
-      checkpointRef.id || "",
-      checkpointRef.createdAt || checkpointRef.recordedAt || ""
-    ].filter(Boolean).join(" • ") || "No checkpoint recorded yet.", 160);
-    const recoverySummary = summarizeText(String(recoveryLadder.summary || latestExecution.stageSummary?.summary || "The current run has not entered the recovery ladder yet."), 160);
-    const reviewSummaryText = summarizeText(String(reviewBundle.summary || latestExecution.reviewSummary?.summary || "No review bundle captured yet."), 160);
-    const reviewDecisionText = summarizeText(String(reviewBundle.decisionLabel || reviewBundle.verdict || "No review verdict yet."), 160);
-    const reviewReasonText = summarizeText(String(reviewBundle.reason || reviewBundle.summary || latestExecution.reviewSummary?.summary || "No review reason captured yet."), 180);
-    const reviewHowToFixText = summarizeText(String(reviewBundle.howToFix || "No repair guidance captured yet."), 180);
-    const reviewChangeSummaryText = summarizeText(String(reviewBundle.changeSummary || "No change summary captured yet."), 180);
-    const learnedGuidanceText = summarizeText(String(memoryHints.summary || "No recurring reject or fix patterns are recorded yet."), 180);
-    const learnedRejectReasonText = summarizeText(String(memoryHints.topRejectReason || "No recurring reject reason recorded yet."), 180);
-    const learnedFixPatternText = summarizeText(String(memoryHints.topFixPattern || memoryHints.recommendedPrompt || "No recurring fix guidance recorded yet."), 180);
-    const learnedResponseText = summarizeText(String(memoryHints.recommendedResponse || "No preferred response recorded yet."), 140);
-    const learnedPhaseText = summarizeText(String(memoryHints.phaseSummary || memoryHints.topPhaseLabel || "No phase focus recorded yet."), 180);
-    const learnedPathEntry = Array.isArray(memoryHints.topPaths) && memoryHints.topPaths.length > 0 ? memoryHints.topPaths[0] : null;
-    const learnedPathText = summarizeText(String(learnedPathEntry?.value || learnedPathEntry || "No learned path recorded yet."), 160);
-    const selfHostProofText = summarizeText(String(selfHostProof.summary || "No self-host proof recorded yet."), 180);
-    const selfHostNextText = summarizeText(String(selfHostProof.nextAction || "Run the full self-host acceptance suite before widening self-work."), 180);
-    const selfImprovementProofText = summarizeText(String(selfImprovementProof.summary || "No supervised self-improvement proof is recorded yet."), 180);
-    const selfImprovementNextText = summarizeText(String(selfImprovementProof.nextAction || "Run one bounded supervised self-improvement task inside this repo before widening further."), 180);
-    const companionParityText = summarizeText(String(companionParity.summary || "Desktop and VS Code parity proof is still warming up."), 180);
-    const interruptSummary = summarizeText(String(interruptRequest.summary || interruptRequest.reason || "No interrupt is active."), 160);
-    const recoveryNextStep = String(recoveryLadder.nextStep || recoveryLadder.next_step || recoveryLadder.currentStep || recoveryLadder.current_step || "").trim().toLowerCase();
-    const nextActionLabel = String(nextAction.label || "").trim() || "Run next safe action";
-    const autoQueueTaskLoopFollowups = settings.autoQueueTaskLoopFollowups !== false;
-    const autoRunQueuedTaskLoopFollowups = settings.autoRunQueuedTaskLoopFollowups === true;
-    const canContinueTaskLoop = !props.busyTaskLoop && !!String(latestRequest.laneId || "").trim();
-    const canRetryTaskLoopResearch = !props.busyTaskLoop && !!String(taskObjective.summary || latestExecution.task || latestRequest.task || "").trim();
-    const canRepairTaskLoop = !props.busyTaskLoop && !!String(latestExecution.ticket || "").trim();
-    const canRunNextTaskLoopAction = !props.busyTaskLoop && !!String(nextAction.command || "").trim();
-    const canOpenTaskLoopTrace = !!String(checkpointRef.path || latestExecution.artifactPaths?.[0] || visibleWorkbenchArtifacts.find((item) => item.path)?.path || "").trim();
-    const canOpenTaskLoopFiles = !!String((latestExecution.changedFiles?.find((item) => item?.path) || {}).path || visibleWorkbenchArtifacts.find((item) => item.path)?.path || "").trim();
-    const canOpenTaskLoopSandbox = !!String(props.snapshot?.selectedLabRoot || latestRequest.labRoot || "").trim();
-    const canReviewTaskLoopInterrupt = !!(interruptRequest.active || reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0 || props.inboxItems.length > 0);
-    const canRunSupervisedSelfImprove = !props.busyTaskLoop && props.safeMode.active !== true && props.safeMode.watchOnly !== true && !reviewBundle.requiresManualReview && Number(reviewBundle.pendingCount || 0) === 0;
-    const loopActionStatus = props.busyTaskLoop ? "Executing the next dev-engine actionâ€¦ Monitor and chat will refresh when the run settles." : "Use the shared runtime controls to continue, research, repair, inspect, or roll back the latest dev-engine pass.";
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
-    const loopActionExplanation = props.busyTaskLoop
-      ? loopActionStatus
-      : autoQueueTaskLoopFollowups
-        ? autoRunQueuedTaskLoopFollowups
-          ? "The engine can queue the next bounded task for you and auto-run it only when review, safe-mode, and roadmap gates stay healthy."
-          : "The engine can queue the next bounded task for you after the run settles. Auto-run stays gated until you enable it."
-        : loopActionStatus;
     const docsContext = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
-    const hasLoopDetails = !!(String(failureClass.code || "").trim() || String(checkpointRef.refId || checkpointRef.id || checkpointRef.path || "").trim() || recoveryNextStep || interruptRequest.active || reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0 || String(reviewBundle.reason || reviewBundle.howToFix || reviewBundle.changeSummary || "").trim() || visibleWorkbenchArtifacts.length > 0);
-    const hasFocusBlockingState = !!(interruptRequest.active || reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0 || String(failureClass.code || reviewBundle.reason || reviewBundle.howToFix).trim());
-    const showStatusStrip = workbenchMode === "focus" || workbenchMode === "balanced" || workbenchMode === "control-room";
-    const showFocusRunStrip = (chatMode === "agent" || chatMode === "edit") && workbenchMode === "focus" && !isFreshThread && !!(hasLoopDetails || String(taskObjective.summary || latestExecution.task || latestRequest.task || latestRun?.runtimeLabel || latestRun?.label || "").trim());
-    const showFullLoopCards = (chatMode === "agent" || chatMode === "edit") && (workbenchMode === "control-room" ? !isFreshThread || hasLoopDetails : workbenchMode === "balanced" && hasLoopDetails);
-    const showWorkbenchLayoutBar = true;
-    const showFocusBlockingDetail = workbenchMode === "focus" && !isFreshThread && hasFocusBlockingState;
-    const showPinnedRunTasks = chatMode === "agent" || chatMode === "edit" || (isFreshThread && workbenchMode === "focus");
-    const compactPinnedRunTasks = isFreshThread || workbenchMode === "focus";
-    const showCompactHelperCard = (chatMode === "agent" || chatMode === "edit") && workbenchMode !== "focus" && !showFullLoopCards && (!isFreshThread || hasLoopDetails || hasFocusBlockingState);
-    const compactLoopSummary = summarizeText([
-      latestExecution.runState || latestExecution.status || latestExecution.stageSummary?.currentStage || latestRun?.runtimeState || latestRun?.status || "ready",
-      failureClass.code ? `failure ${failureClass.code}` : "",
-      interruptRequest.active ? "interrupt active" : "",
-      reviewBundle.requiresManualReview ? "manual review required" : ""
-    ].filter(Boolean).join(" â€¢ ") || "The latest run is healthy enough to keep chat focused.", 180);
-    const nextSafeActionSummary = summarizeText(String(
-      nextAction.summary || memoryHints.recommendedPrompt || (interruptRequest.active ? interruptRequest.summary || interruptRequest.reason || "" : recoveryNextStep ? `Next safe action: ${recoveryNextStep.replace(/-/g, " ")}.` : testBench?.nextSafeAction?.summary || latestExecution.resultSummary || "Keep the next prompt bounded and let the engine continue from the latest objective.")
-    ) || "Keep the next prompt bounded and let the engine continue from the latest objective.", 160);
     const composerSuggestions = buildComposerSuggestions({
       composerText: props.composerText,
       learningStatus: props.learningStatus,
@@ -24262,46 +23383,15 @@
       nextSafeAction: testBench?.nextSafeAction && typeof testBench.nextSafeAction === "object" ? testBench.nextSafeAction : {},
       safeRecipe: testBench?.safeRecipe && typeof testBench.safeRecipe === "object" ? testBench.safeRecipe : {}
     });
-    const engineAssistPrompts = buildEngineAssistPrompts({
-      objective: taskObjective.summary || latestExecution.task || latestRequest.task || latestRun?.runtimeLabel || "",
-      recoveryStep: recoveryNextStep,
-      nextSafeAction: nextSafeActionSummary,
-      memoryPrompt: memoryHints.recommendedPrompt || "",
-      nextActionPrompt: nextAction.prompt || "",
-      interruptActive: interruptRequest.active,
-      requiresManualReview: reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0,
-      canContinue: canContinueTaskLoop,
-      canOpenFiles: canOpenTaskLoopFiles
-    });
-    const inlineComposerSuggestions = [...(chatMode === "agent" || chatMode === "edit" ? engineAssistPrompts : []), ...composerSuggestions].filter((item, index, source) => item && source.indexOf(item) === index).slice(0, workbenchMode === "focus" ? 2 : 4);
-    const promptCards = chatMode === "ask"
-      ? [
-          `Help me understand the next safe step in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
-          "Review the current repo and explain what matters most right now.",
-          "Explain how the engine is set up and what I should do next."
-        ]
-      : chatMode === "plan"
-        ? [
-            `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
-            "Break this work into bounded implementation steps and risks.",
-            "Review the current repo and tell me what should happen next."
-          ]
-        : chatMode === "edit"
-          ? [
-              "Prepare the next code change and show me the safest edit path.",
-              "Review the current repo and tell me what needs fixing first.",
-              "Prepare the smallest repair for the latest failing path."
-            ]
-          : [
-              `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
-              "Review the current repo and tell me what needs fixing first.",
-              "Set up the coding model and verify the engine is ready."
-            ];
+    const promptCards = [
+      `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
+      "Review the current repo and tell me what needs fixing first.",
+      "Set up the coding model and verify the engine is ready."
+    ];
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel workbench-panel", "data-panel": "workbench", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-home", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
-        className: `chat-home-main mode-${workbenchMode}${isFreshThread ? " is-fresh-thread" : ""} signal-${props.chatSignalState}`,
-        "data-workbench-mode": workbenchMode,
+        className: `chat-home-main${isFreshThread ? " is-fresh-thread" : ""} signal-${props.chatSignalState}`,
         "data-chat-signal": props.chatSignalState,
         children: [
           props.safeMode.active || props.safeMode.watchOnly ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: `safety-banner${props.safeMode.active ? " is-alert" : ""}`, children: [
@@ -24342,88 +23432,7 @@
             message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
           ] }, message.id)) }) }),
           isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
-          showWorkbenchLayoutBar ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: `workbench-layout-bar${workbenchMode === "focus" ? " is-focus-mode" : ""}${isFreshThread ? " is-fresh-thread" : ""}`, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat view" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: workbenchMode === "focus" ? "Focus chat" : workbenchMode === "control-room" ? "Control room" : "Balanced" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: workbenchMode === "focus" ? "active" : "ghost", "data-workbench-mode-toggle": "focus", onClick: () => void props.onUpdateSetting("chatWorkbenchMode", "focus"), children: "Focus chat" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: workbenchMode === "balanced" ? "active" : "ghost", "data-workbench-mode-toggle": "balanced", onClick: () => void props.onUpdateSetting("chatWorkbenchMode", "balanced"), children: "Balanced" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: workbenchMode === "control-room" ? "active" : "ghost", "data-workbench-mode-toggle": "control-room", onClick: () => void props.onUpdateSetting("chatWorkbenchMode", "control-room"), children: "Control room" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("general"), children: "Chat settings" })
-            ] })
-          ] }) : null,
-          showPinnedRunTasks ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: `workbench-pinned-bar${workbenchMode !== "focus" && !compactPinnedRunTasks ? " is-sticky" : ""}${compactPinnedRunTasks ? " is-compact" : ""}`, "data-run-task-pins": "true", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card pinned-task-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Pinned run tasks" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: nextActionLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: loopActionExplanation }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onRunNextTaskLoopAction(), disabled: !canRunNextTaskLoopAction, children: nextActionLabel }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onQueueNextTaskLoopFollowup(), disabled: !canRunNextTaskLoopAction, children: "Queue next task" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onContinueTaskLoop(), disabled: !canContinueTaskLoop, children: "Continue run" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRetryTaskLoopResearch(), disabled: !canRetryTaskLoopResearch, children: "Retry with research" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRepairTaskLoop(), disabled: !canRepairTaskLoop, children: "Repair loop" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRunSupervisedSelfImprove(), disabled: !canRunSupervisedSelfImprove, children: "Run supervised self-improvement" })
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `metric-card pinned-profile-card${activeAiProfile?.active ? " active" : ""}`, "data-profile-pins": "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Pinned profiles" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeAiProfile?.label || currentProfileLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: `${currentModelLabel} • ${currentRuntimeLabel}` }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: pinnedAiProfiles.length > 0 ? pinnedAiProfiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "button",
-                {
-                  className: profile.active ? "active" : "ghost",
-                  onClick: () => {
-                    void props.onUpdateSetting("aiProfile", profile.id);
-                    void props.onUpdateSetting("aiRoutingPolicy", profile.routingPolicy || profile.id);
-                  },
-                  children: profile.label || profile.id
-                },
-                profile.id
-              )) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("ai"), children: "Open AI settings" }) }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("ai"), children: "AI settings" }) })
-            ] })
-          ] }) : null,
-          showFocusRunStrip ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-run-strip", "data-chat-primary-strip": "true", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-strip-grid", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-strip-pill", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Objective" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: objectiveSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-strip-pill", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Status" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: compactLoopSummary }),
-                reviewBundle.decisionLabel || reviewBundle.verdict ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: reviewDecisionText }) : null
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-strip-pill", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Next safe action" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: nextActionLabel }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: nextSafeActionSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-strip-pill", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Self-improvement" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(selfImprovementProof.label || "NOT RUN").trim() || "NOT RUN" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selfImprovementProofText })
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row drawer-chip-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onReviewTaskLoopInterrupt, disabled: !canReviewTaskLoopInterrupt, children: "Review" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopTrace(), disabled: !canOpenTaskLoopTrace, children: "Trace" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopFiles(), disabled: !canOpenTaskLoopFiles, children: "Files" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onShowInspector("learning"), children: "Learning" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenInbox, children: "Inbox" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("ai"), children: "Engine" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onRunNextTaskLoopAction(), disabled: !canRunNextTaskLoopAction, children: nextActionLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onQueueNextTaskLoopFollowup(), disabled: !canRunNextTaskLoopAction, children: "Queue next task" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRunSupervisedSelfImprove(), disabled: !canRunSupervisedSelfImprove, children: "Run supervised self-improvement" })
-            ] })
-          ] }) : null,
-          showStatusStrip ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Lane" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.aiStatus?.profileId || settings.aiProfile || "hybrid-default" }),
@@ -24441,8 +23450,8 @@
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest run" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestRunTitle }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestRunSummary })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestRun?.runtimeLabel || latestRun?.label || "No run yet" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestRun ? `${latestRun.runtimeState || latestRun.status || "idle"}${latestRun.blockedReason ? ` \u2022 ${summarizeText(latestRun.blockedReason, 80)}` : ""}` : "The first actionable prompt can launch a run automatically." })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Inbox" }),
@@ -24452,199 +23461,10 @@
                 props.safeMode.active ? "Safe mode needs review." : "Approvals, learning, and warnings stay in one place."
               ] })
             ] })
-          ] }) : null,
-          showFocusBlockingDetail ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card workbench-focus-detail", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Review and recovery" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Review verdict" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewDecisionText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Reason" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewReasonText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "How to fix" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewHowToFixText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onReviewTaskLoopInterrupt, disabled: !canReviewTaskLoopInterrupt, children: "Open review" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRepairTaskLoop(), disabled: !canRepairTaskLoop, children: "Repair loop" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRetryTaskLoopResearch(), disabled: !canRetryTaskLoopResearch, children: "Retry with research" })
-            ] })
-          ] }) : null,
-          showFullLoopCards ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", "data-dev-engine-loop": "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Dev-engine control loop" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Current objective" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: objectiveSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Route and stage" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: routeAndStageSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Failure class" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: failureSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Checkpoint" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: checkpointSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next safe action" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: nextSafeActionSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Learned guidance" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedGuidanceText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase focus" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedPhaseText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host proof" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selfHostProofText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-improvement proof" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selfImprovementProofText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: loopActionExplanation }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onRunNextTaskLoopAction(), disabled: !canRunNextTaskLoopAction, children: nextActionLabel }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onQueueNextTaskLoopFollowup(), disabled: !canRunNextTaskLoopAction, children: "Queue next task" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onContinueTaskLoop(), disabled: !canContinueTaskLoop, children: "Continue run" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRetryTaskLoopResearch(), disabled: !canRetryTaskLoopResearch, children: "Retry with research" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRepairTaskLoop(), disabled: !canRepairTaskLoop, children: "Repair loop" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRunSupervisedSelfImprove(), disabled: !canRunSupervisedSelfImprove, children: "Run supervised self-improvement" })
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recovery and review" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Recovery ladder" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: recoverySummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Review verdict" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewDecisionText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Review bundle" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewSummaryText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Review reason" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewReasonText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "How to fix" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewHowToFixText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Top reject pattern" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedRejectReasonText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Preferred response" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedResponseText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Change summary" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: reviewChangeSummaryText })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Interrupt request" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: interruptSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Workbench artifacts" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: visibleWorkbenchArtifacts.length > 0 ? visibleWorkbenchArtifacts.slice(0, 3).map((item) => String(item.label || item.path || item.kind || "artifact")).filter(Boolean).join(" • ") : "No workbench artifacts captured yet." })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopTrace(), disabled: !canOpenTaskLoopTrace, children: "Open trace" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopFiles(), disabled: !canOpenTaskLoopFiles, children: "Open files" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopSandbox(), disabled: !canOpenTaskLoopSandbox, children: "Open sandbox" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onReviewTaskLoopInterrupt, disabled: !canReviewTaskLoopInterrupt, children: "Review interrupt" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRollbackTaskLoopPass(), disabled: !props.safeMode.rollbackAvailable, children: "Rollback last pass" })
-              ] })
-            ] })
-          ] }) : showCompactHelperCard ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card workbench-helper-card", "data-dev-engine-loop": "compact", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Engine helper" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Current objective" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: objectiveSummary })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Status" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: compactLoopSummary })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next safe action" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: nextSafeActionSummary })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Learned guidance" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedGuidanceText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase focus" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedPhaseText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Learned path" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: learnedPathText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host proof" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selfHostProofText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host next step" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selfHostNextText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-improvement proof" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selfImprovementProofText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Companion parity" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: companionParityText })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onRunNextTaskLoopAction(), disabled: !canRunNextTaskLoopAction, children: nextActionLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onQueueNextTaskLoopFollowup(), disabled: !canRunNextTaskLoopAction, children: "Queue next task" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onOpenTaskLoopTrace(), disabled: !canOpenTaskLoopTrace, children: "Open trace" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onReviewTaskLoopInterrupt, disabled: !canReviewTaskLoopInterrupt, children: "Review interrupt" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onRunSupervisedSelfImprove(), disabled: !canRunSupervisedSelfImprove, children: "Run supervised self-improvement" })
-            ] })
-          ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: `composer chat-composer size-${composerSize}`, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar", "data-chat-mode-bar": "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-copy", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat mode" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: chatModeLabel }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: chatModeSummary })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-                [
-                  ["ask", "Ask"],
-                  ["plan", "Plan"],
-                  ["edit", "Edit"],
-                  ["agent", "Agent"]
-                ].map(([mode, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: chatMode === mode ? "active" : "ghost", "data-chat-mode-toggle": mode, onClick: () => void props.onSetChatMode(mode), children: label }, mode)),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: props.onOpenGit, children: [
-                  "Git: ",
-                  gitBranchLabel,
-                  gitSummary?.dirty ? " *" : ""
-                ] })
-              ] })
-            ] }),
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-toolbar", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: inlineComposerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPickAttachments, children: "Attach screenshot" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
@@ -24654,17 +23474,8 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("file"), children: [
                   "Files ",
                   props.changedItems.length ? `(${props.changedItems.length})` : ""
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: props.onOpenGit, children: [
-                  "Git ",
-                  gitSummary?.dirty ? `(dirty)` : "(clean)"
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("general"), children: "Chat settings" })
+                ] })
               ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-git-summary", "data-chat-git-summary": "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitBranchLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: gitSummaryText })
             ] }),
             props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -24736,12 +23547,6 @@
     const operatorSupervision = props.learningStatus?.operatorSupervision || {};
     const supervisionSignals = Array.isArray(operatorSupervision?.signals) ? operatorSupervision.signals : [];
     const trainingReadiness = props.learningStatus?.trainingReadiness || {};
-    const systemCheckLearning = props.snapshot?.systemCheck?.areas?.learning && typeof props.snapshot.systemCheck.areas.learning === "object" ? props.snapshot.systemCheck.areas.learning : {};
-    const memoryHints = {
-      ...(systemCheckLearning.memoryHints && typeof systemCheckLearning.memoryHints === "object" ? systemCheckLearning.memoryHints : {}),
-      ...(props.learningStatus?.memoryHints && typeof props.learningStatus.memoryHints === "object" ? props.learningStatus.memoryHints : {})
-    };
-    const selfHostProof = systemCheckLearning.selfHostProof && typeof systemCheckLearning.selfHostProof === "object" ? systemCheckLearning.selfHostProof : {};
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel", "data-panel": "learning", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
@@ -24795,41 +23600,6 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "These are the lean commands and prompts the engine should start favoring as your trusted patterns get stronger." })
         ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No reusable command patterns yet. Trusted prompts and operator supervision will condense into shortcuts here." })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Reject and fix patterns" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Summary" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(memoryHints.summary || "No recurring reject or fix patterns are recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Top reject reason" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(memoryHints.topRejectReason || "No recurring reject reason recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Reusable fix guidance" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(memoryHints.topFixPattern || memoryHints.recommendedPrompt || "No recurring fix guidance recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Preferred response" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(memoryHints.recommendedResponse || "No preferred response recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase focus" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(memoryHints.phaseSummary || memoryHints.topPhaseLabel || "No phase focus recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Learned path" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String((Array.isArray(memoryHints.topPaths) && memoryHints.topPaths.length > 0 ? memoryHints.topPaths[0]?.value || memoryHints.topPaths[0] : "") || "No learned path recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host proof" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(selfHostProof.summary || "No self-host proof recorded yet.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host next step" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(selfHostProof.nextAction || "Run the full self-host acceptance suite before widening self-work.") })
-        ] })
-      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Common targets" }),
@@ -24871,107 +23641,6 @@
       ] })
     ] });
   }
-  function GitPanel(props) {
-    const gitStatus = props.gitStatus && typeof props.gitStatus === "object" ? props.gitStatus : {};
-    const files = Array.isArray(gitStatus.files) ? gitStatus.files : [];
-    const stagedFiles = files.filter((item) => item.staged);
-    const unstagedFiles = files.filter((item) => item.unstaged && !item.untracked);
-    const untrackedFiles = files.filter((item) => item.untracked);
-    const currentBranch = String(gitStatus.branch || "Detached HEAD").trim() || "Detached HEAD";
-    const upstream = String(gitStatus.upstream || "").trim();
-    const branchDraft = String(props.gitBranchDraft || "codex/").trim() || "codex/";
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel", "data-panel": "git", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Desktop Git" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Branch, diff, commit, and publish without leaving the app" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.gitNotice || gitStatus.summary || gitStatus.blockedReason || "Use the Git workspace for branch status, staged changes, and safe publish flow.") })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, disabled: props.gitBusy, children: "Refresh" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPull, disabled: props.gitBusy || !gitStatus.canPull, children: "Pull" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPush, disabled: props.gitBusy || !gitStatus.canPush, children: "Push" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPublish, disabled: props.gitBusy || !gitStatus.canPublish, children: "Publish branch" })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current branch" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: currentBranch }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: upstream ? `${upstream} • ${Number(gitStatus.ahead || 0)} ahead • ${Number(gitStatus.behind || 0)} behind` : "No upstream published yet." })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace state" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitStatus.dirty ? "Dirty" : "Clean" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: `${Number(gitStatus.stagedCount || 0)} staged • ${Number(gitStatus.unstagedCount || 0)} unstaged • ${Number(gitStatus.untrackedCount || 0)} untracked` })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Last commit" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitStatus.lastCommit || "No commit summary yet" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "Pick a git workspace first." })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Branch draft" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: branchDraft, onChange: (event) => props.onBranchDraftChange(event.target.value), placeholder: "codex/my-branch" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", style: { marginTop: "10px" }, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onCreateBranch, disabled: props.gitBusy, children: "Create branch" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "empty-copy", children: "App-created branches are prefixed with codex/." })
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Commit staged changes" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { value: props.gitCommitMessage, onChange: (event) => props.onCommitMessageChange(event.target.value), placeholder: "feat: describe the staged change" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", style: { marginTop: "10px" }, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onCommit, disabled: props.gitBusy || !gitStatus.canCommit, children: "Commit staged" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onStageAll, disabled: props.gitBusy, children: "Stage all" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onUnstageAll, disabled: props.gitBusy || !stagedFiles.length, children: "Unstage all" })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Staged" }),
-          stagedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No staged files yet." }) : stagedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, true), children: "Diff" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onUnstagePaths([item.path]), disabled: props.gitBusy, children: "Unstage" })
-            ] })
-          ] }, `staged-${item.path}`))
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Unstaged" }),
-          unstagedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No unstaged files yet." }) : unstagedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, false), children: "Diff" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onStagePaths([item.path]), disabled: props.gitBusy, children: "Stage" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onDiscardPaths([item.path]), disabled: props.gitBusy, children: "Discard" })
-            ] })
-          ] }, `unstaged-${item.path}`))
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Untracked" }),
-          untrackedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No untracked files." }) : untrackedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onStagePaths([item.path]), disabled: props.gitBusy, children: "Stage" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, false), children: "Diff" })
-            ] })
-          ] }, `untracked-${item.path}`))
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Switch branch" }),
-        Array.isArray(props.gitBranches) && props.gitBranches.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: props.gitBranches.map((branch) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: branch.current ? "active" : "ghost", onClick: () => props.onSwitchBranch(branch.name), disabled: props.gitBusy || branch.current, children: branch.name }, branch.name)) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No branches available yet." })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Diff viewer" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.activeGitPath ? shortPath(props.activeGitPath) : "Pick a changed file" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("pre", { className: "code-block git-diff-viewer", children: props.gitDiff || "Select a staged, unstaged, or untracked file to inspect its git diff here." })
-      ] })
-    ] });
-  }
   function SettingsPanel(props) {
     const settings = props.settings || props.snapshot?.settings || {};
     const groupedWorkspace = settings.workspace || {};
@@ -24991,7 +23660,6 @@
     const aiLaneOverrides = normalizeLaneOverrides(settings.aiLaneOverrides || props.aiStatus?.current?.laneOverrides || {});
     const vscodeSetup = props.snapshot?.vscodeSetup || {};
     const extensionHealth = props.snapshot?.extensionHealth || {};
-    const companionInstall = vscodeSetup?.companionInstall && typeof vscodeSetup.companionInstall === "object" ? vscodeSetup.companionInstall : {};
     const modelFoundry = props.snapshot?.modelFoundry || {};
     const integrations = props.snapshot?.integrations || {};
     const integrationLibrary = Array.isArray(integrations?.library) ? integrations.library : [];
@@ -25008,18 +23676,11 @@
     const selectedRemoteProviderId = String(settings.aiRemoteProvider || props.aiStatus?.current?.remoteProvider || "openai");
     const selectedRemoteProvider = aiRemoteProviders.find((provider) => String(provider?.id || "") === selectedRemoteProviderId) || aiRemoteProviders[0] || null;
     const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || "");
-    const customCompatibleProvider = selectedRemoteProviderId === "custom-compatible";
-    const remoteKeySlot = String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY").trim() || "OPENAI_API_KEY";
-    const remoteBaseUrl = String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "compatible endpoint");
     const targetHardwareOptions = Array.isArray(props.tuning?.hardwareTargets) ? props.tuning.hardwareTargets : [];
     const selectedHardwareTarget = String(settings.trainingHardwareTarget || props.tuning?.settings?.trainingHardwareTarget || "auto");
     const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
     const recommendedInstallPresets = installPresets.filter((item) => item.hardwareRecommended);
     const [providerKeyBusy, setProviderKeyBusy] = import_react2.default.useState(false);
-    const [providerKeyDraft, setProviderKeyDraft] = import_react2.default.useState("");
-    const [providerKeyStatusMessage, setProviderKeyStatusMessage] = import_react2.default.useState("");
-    const [vscodeInstallBusy, setVsCodeInstallBusy] = import_react2.default.useState(false);
-    const [vscodeInstallMessage, setVsCodeInstallMessage] = import_react2.default.useState("");
     const visibleBridgeProfiles = (aiBridgeProfiles.length ? aiBridgeProfiles : [{ id: "llama-bridge", label: "Llama Bridge" }, { id: "gpt4all-bridge", label: "GPT4All Bridge" }, { id: "custom", label: "Custom" }]).filter((profile) => aiManualMode || String(profile?.id || "") !== "custom");
     const selectedBridgeProfile = visibleBridgeProfiles.find((profile) => String(profile?.id || "") === aiBridgeProfile) || visibleBridgeProfiles[0] || null;
     const nextFoundryCandidate = modelFoundry?.nextCandidate || (Array.isArray(modelFoundry?.suggested) ? modelFoundry.suggested[0] : null) || null;
@@ -25047,41 +23708,17 @@
       if (!selectedRemoteProvider) {
         return;
       }
-      const secretName = remoteKeySlot;
-      const nextValue = clear ? "" : String(providerKeyDraft || "").trim();
-      if (!clear && !nextValue) {
-        setProviderKeyStatusMessage(`Paste a ${selectedRemoteProvider.label || selectedRemoteProvider.id} key before saving.`);
+      const secretName = String(selectedRemoteProvider.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY").trim() || "OPENAI_API_KEY";
+      const nextValue = clear ? "" : window.prompt(`Paste the API key for ${selectedRemoteProvider.label || selectedRemoteProvider.id} (${secretName}).`, "");
+      if (nextValue === null) {
         return;
       }
       setProviderKeyBusy(true);
-      setProviderKeyStatusMessage(clear ? `Clearing ${selectedRemoteProvider.label || selectedRemoteProvider.id} key…` : `Saving ${selectedRemoteProvider.label || selectedRemoteProvider.id} key…`);
       try {
-        const result = await window.gosAgent.setSecret(secretName, nextValue);
-        if (result?.ok === false) {
-          setProviderKeyStatusMessage(result.message || `Could not update the ${selectedRemoteProvider.label || selectedRemoteProvider.id} key.`);
-          return;
-        }
-        setProviderKeyDraft("");
-        setProviderKeyStatusMessage(clear ? `${selectedRemoteProvider.label || selectedRemoteProvider.id} key cleared.` : `${selectedRemoteProvider.label || selectedRemoteProvider.id} key saved to secure storage.`);
-        await Promise.resolve(props.onRefresh());
+        await window.gosAgent.setSecret(secretName, String(nextValue || "").trim());
+        props.onRefresh();
       } finally {
         setProviderKeyBusy(false);
-      }
-    };
-    const installVsCodeCompanion = async () => {
-      setVsCodeInstallBusy(true);
-      setVsCodeInstallMessage("Installing the GoSenderr VS Code companion...");
-      try {
-        const result = await window.gosAgent.installWorkspaceVsCodeCompanion({
-          workspaceRoot: props.snapshot?.workspaceRoot,
-          targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
-        });
-        setVsCodeInstallMessage(result?.ok ? String(result?.message || "VS Code companion installed.") : String(result?.message || "Unable to install the VS Code companion."));
-        if (result?.ok) {
-          await Promise.resolve(props.onRefresh());
-        }
-      } finally {
-        setVsCodeInstallBusy(false);
       }
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel settings-panel-v2", "data-panel": "settings", children: [
@@ -25132,21 +23769,6 @@
             )
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Workbench view" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: ["focus", "balanced", "control-room"].includes(String(settings.chatWorkbenchMode || "").toLowerCase()) ? String(settings.chatWorkbenchMode || "").toLowerCase() : "focus", onChange: (event) => void props.onUpdateSetting("chatWorkbenchMode", event.target.value), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "focus", children: "Focus chat" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "balanced", children: "Balanced" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "control-room", children: "Control room" })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Composer height" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: ["comfortable", "tall"].includes(String(settings.chatComposerSize || "").toLowerCase()) ? String(settings.chatComposerSize || "").toLowerCase() : "tall", onChange: (event) => void props.onUpdateSetting("chatComposerSize", event.target.value), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "comfortable", children: "Comfortable" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "tall", children: "Tall" })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat inspector width" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "input",
@@ -25181,11 +23803,6 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat startup" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: settings.startInChatWorkspace === false ? "Custom" : "Chat first" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "The app opens directly into the chat canvas so the workbench stays simple by default." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workbench view" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(settings.chatWorkbenchMode || "focus").toLowerCase() === "focus" ? "Focus chat" : String(settings.chatWorkbenchMode || "focus").toLowerCase() === "control-room" ? "Control room" : "Balanced" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(settings.chatComposerSize || "tall").toLowerCase() === "tall" ? "A taller composer keeps long prompts and notes visible while you work." : "Balanced keeps engine helpers visible without taking over the whole thread." })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Learned chat guidance" }),
@@ -25225,18 +23842,8 @@
               children: "Bootstrap VS Code"
             }
           ) : null,
-          vscodeSetup?.ok ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              className: "ghost",
-              onClick: () => void installVsCodeCompanion(),
-              disabled: vscodeInstallBusy,
-              children: companionInstall?.installed ? "Reinstall companion" : "Install companion"
-            }
-          ) : null,
           groupedWorkspace.selectedLabRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onClearLab, children: "Leave active lab" }) : null
         ] }),
-        vscodeInstallMessage ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: vscodeInstallMessage }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code workspace" }),
@@ -25257,11 +23864,6 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension health" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? extensionHealth?.status === "ready" ? "Ready" : "Needs attention" : "Not detected" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(extensionHealth?.summary || "Check the VS Code extension path here so the desktop app and editor flow do not drift.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion install" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: companionInstall?.available ? companionInstall?.installed ? "Installed" : "Not installed" : "Unavailable" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: companionInstall?.available ? companionInstall?.installed ? `Installed in ${shortPath(companionInstall.installRoot) || "the VS Code extensions folder"}.` : "Install the real GoSenderr companion into your local VS Code profile from here." : "The workspace does not expose a companion package yet." })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Goals" }),
@@ -25297,27 +23899,6 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingTaskLabels) ? vscodeSetup.missingTaskLabels : []).join(", ") })
           ] }) : null,
           Number(vscodeSetup?.missingFiles?.length || 0) === 0 && Number(vscodeSetup?.missingRecommendations?.length || 0) === 0 && Number(vscodeSetup?.missingTaskLabels?.length || 0) === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "VS Code workspace files are already ready for this target." }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion install" }),
-          companionInstall?.available ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Status" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: companionInstall?.installed ? "Installed for this user profile." : "Not installed yet." })
-            ] }),
-            companionInstall?.extensionsRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Extensions root" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(companionInstall.extensionsRoot) || companionInstall.extensionsRoot })
-            ] }) : null,
-            companionInstall?.installRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Installed path" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(companionInstall.installRoot) || companionInstall.installRoot })
-            ] }) : null,
-            companionInstall?.cliCommand ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "VS Code CLI" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: companionInstall.cliCommand })
-            ] }) : null
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No installable companion package was detected for this workspace." })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension alignment" }),
@@ -25381,7 +23962,7 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
               selectedRemoteProvider?.available ? "API key configured" : "API key missing",
               " \u2022 ",
-              remoteBaseUrl
+              String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "compatible endpoint")
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
@@ -25492,15 +24073,11 @@
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
-              customCompatibleProvider ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteBaseUrl || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteBaseUrl", event.target.value), placeholder: "https://provider.example/v1" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteBaseUrl, readOnly: true })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteBaseUrl || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteBaseUrl", event.target.value), placeholder: "https://provider.example/v1" })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: customCompatibleProvider ? "Remote API key slot" : "Remote API key slot" }),
-              customCompatibleProvider ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteApiKeyName || remoteKeySlot), onChange: (event) => void props.onUpdateSetting("aiRemoteApiKeyName", event.target.value), placeholder: "OPENAI_COMPAT_API_KEY" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteKeySlot, readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "password", value: providerKeyDraft, onChange: (event) => setProviderKeyDraft(event.target.value), placeholder: selectedRemoteProvider?.available ? "Paste a new key to replace the stored secret" : `Paste the ${selectedRemoteProvider?.label || "provider"} key here`, autoComplete: "off", spellCheck: false })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key name" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteApiKeyName || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteApiKeyName", event.target.value), placeholder: "OPENAI_COMPAT_API_KEY" })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Local AI command" }),
@@ -25525,15 +24102,11 @@
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteBaseUrl || "Use the provider default", readOnly: true })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "Use the provider default"), readOnly: true })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key slot" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteKeySlot, readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "password", value: providerKeyDraft, onChange: (event) => setProviderKeyDraft(event.target.value), placeholder: selectedRemoteProvider?.available ? "Paste a new key to replace the stored secret" : `Paste the ${selectedRemoteProvider?.label || "provider"} key here`, autoComplete: "off", spellCheck: false })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY"), readOnly: true })
             ] })
           ] })
         ] }),
@@ -25543,7 +24116,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh), children: "Import selected model" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Import all stored models" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", "data-run-benchmark": "true", onClick: props.onRunBenchmark, children: "Run benchmark" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy, onClick: () => void configureSelectedRemoteKey(false), children: providerKeyBusy ? "Saving key\u2026" : `Save ${selectedRemoteProvider?.label || "remote"} key` }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy, onClick: () => void configureSelectedRemoteKey(false), children: providerKeyBusy ? "Saving key\u2026" : `Set ${selectedRemoteProvider?.label || "remote"} key` }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy, onClick: () => void configureSelectedRemoteKey(true), children: "Clear key" }),
           nextFoundryCandidate ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
@@ -25558,7 +24131,6 @@
           ) : null,
           activeLaneOverrideCount > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("aiLaneOverrides", {}), children: "Reset lane overrides" }) : null
         ] }),
-        providerKeyStatusMessage ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: providerKeyStatusMessage }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Guardrails" }),
@@ -25791,11 +24363,6 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Autonomy mode" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutonomy.profileId || "supervised-auto" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selectedSafetyLevel === "custom" ? "Custom safety leaves the autonomy profile editable." : "Autonomy follows the selected safety level unless you switch to Custom." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Task-loop follow-ups" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutonomy.autoQueueTaskLoopFollowups === false ? "Manual only" : groupedAutonomy.autoRunQueuedTaskLoopFollowups === true ? "Queue + gated auto-run" : "Queue for review" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedAutonomy.autoQueueTaskLoopFollowups === false ? "The engine will recommend the next bounded task, but it will wait for you to queue it manually." : groupedAutonomy.autoRunQueuedTaskLoopFollowups === true ? "The engine may auto-run the queued follow-up only when review, safe-mode, workspace-scope, and roadmap gates stay healthy." : "The engine can queue the next bounded task for you, but it will stop short of auto-running it." })
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toggle-grid", children: [
@@ -25804,8 +24371,6 @@
           ["autoBrainstormOnFailure", "Brainstorm repair options on failure", groupedAutonomy.autoBrainstormOnFailure],
           ["autoApproveLowRisk", "Auto approve low-risk patches", groupedAutonomy.autoApproveLowRisk],
           ["supervisedAutoRunRecipes", "Auto-run first step of safe supervised recipes", groupedAutonomy.supervisedAutoRunRecipes],
-          ["autoQueueTaskLoopFollowups", "Auto-queue bounded next task after the run settles", groupedAutonomy.autoQueueTaskLoopFollowups],
-          ["autoRunQueuedTaskLoopFollowups", "Auto-run queued next task when safe", groupedAutonomy.autoRunQueuedTaskLoopFollowups],
           ["humanApprovalProtectedOnly", "Gate protected paths only", groupedAutonomy.humanApprovalProtectedOnly],
           ["sandboxRequired", "Require sandboxed execution", groupedAutonomy.sandboxRequired]
         ].map(([field, label, checked]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
@@ -25989,10 +24554,6 @@
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
     const acceptanceState = props.snapshot?.acceptance && typeof props.snapshot.acceptance === "object" ? props.snapshot.acceptance : {};
     const acceptance = acceptanceState?.report && typeof acceptanceState.report === "object" ? acceptanceState.report : {};
-    const acceptanceControl = acceptanceState?.controlSummary && typeof acceptanceState.controlSummary === "object" ? acceptanceState.controlSummary : {};
-    const acceptanceBlockers = Array.isArray(acceptanceControl.blockers) ? acceptanceControl.blockers : [];
-    const acceptanceCardLabel = acceptanceControl?.smokeLabel && acceptanceControl?.smokeStatus !== "missing" ? `${acceptanceControl.acceptanceLabel || String(acceptance?.overallStatus || "not run yet").toUpperCase()} | smoke ${acceptanceControl.smokeLabel}` : acceptanceControl.acceptanceLabel || (acceptance?.overallStatus ? String(acceptance.overallStatus).toUpperCase() : "Not run yet");
-    const acceptanceCardSummary = acceptanceControl?.nextDaySummary || acceptance?.summary || "Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result.";
     const readiness = props.snapshot?.readiness && typeof props.snapshot.readiness === "object" ? props.snapshot.readiness : {};
     const candidates = Array.isArray(promotions.candidates) ? promotions.candidates : [];
     const backups = Array.isArray(promotions.backups) ? promotions.backups : [];
@@ -26003,19 +24564,10 @@
     const modelProvisioning = props.aiStatus?.provisioning && typeof props.aiStatus.provisioning === "object" ? props.aiStatus.provisioning : {};
     const resourcePolicy = props.aiStatus?.resourcePolicy || {};
     const pausedSystems = Array.isArray(safeMode.controller?.pausedSystems) ? safeMode.controller.pausedSystems : Array.isArray(safeMode.pausedSystems) ? safeMode.pausedSystems : [];
-    const readinessPhaseCards = Array.isArray(readiness.phaseScorecards) ? readiness.phaseScorecards : Array.isArray(readiness.phases) ? readiness.phases : [];
-    const currentRoadmapPhase = readiness.currentPhase && typeof readiness.currentPhase === "object" ? readiness.currentPhase : {};
-    const readinessPhaseGate = readiness.phaseGate && typeof readiness.phaseGate === "object" ? readiness.phaseGate : {};
+    const readinessMilestones = Array.isArray(readiness.milestones) ? readiness.milestones : [];
     const currentRoadmapMonth = readiness.currentMonth && typeof readiness.currentMonth === "object" ? readiness.currentMonth : {};
     const readinessHardGate = readiness.hardGate && typeof readiness.hardGate === "object" ? readiness.hardGate : {};
-    const readinessInternalAudit = readiness.internalAudit && typeof readiness.internalAudit === "object" ? readiness.internalAudit : {};
-    const readinessPhaseCloseout = readiness.phaseCloseout && typeof readiness.phaseCloseout === "object" ? readiness.phaseCloseout : {};
-    const readinessNextPhasePreview = readiness.nextPhasePreview && typeof readiness.nextPhasePreview === "object" ? readiness.nextPhasePreview : {};
-    const readinessSelfHostExpansion = readiness.selfHostExpansion && typeof readiness.selfHostExpansion === "object" ? readiness.selfHostExpansion : {};
-    const readinessSelfHostExpansionProgress = readiness.selfHostExpansionProgress && typeof readiness.selfHostExpansionProgress === "object" ? readiness.selfHostExpansionProgress : {};
     const docsVault = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
-    const systemCheckLearning = props.snapshot?.systemCheck?.areas?.learning && typeof props.snapshot.systemCheck.areas.learning === "object" ? props.snapshot.systemCheck.areas.learning : {};
-    const selfHostProof = systemCheckLearning.selfHostProof && typeof systemCheckLearning.selfHostProof === "object" ? systemCheckLearning.selfHostProof : {};
     const operatorSupervision = props.learningStatus?.operatorSupervision && typeof props.learningStatus.operatorSupervision === "object" ? props.learningStatus.operatorSupervision : {};
     const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
     const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
@@ -26082,11 +24634,10 @@
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Monitor" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "One place to watch the engine, learning loop, and promotion rings" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Safe mode, runs, benchmarks, promotions, and debug exports stay here so chat can stay clean." }),
-          props.monitorLoading ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: props.monitorLoadingMessage || "Loading control room..." }) : null
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Safe mode, runs, benchmarks, promotions, and debug exports stay here so chat can stay clean." })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, disabled: props.monitorLoading, children: props.monitorLoading ? "Loading..." : "Refresh" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, children: "Refresh" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onSetManualSafeMode(true), disabled: props.safetyBusy || safeMode.controller?.manualSafeMode === true, children: props.safetyBusy && safeMode.controller?.manualSafeMode !== true ? "Stabilizing\u2026" : "Pause risky work" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onSetManualSafeMode(false), disabled: props.safetyBusy || safeMode.controller?.manualSafeMode !== true, children: props.safetyBusy && safeMode.controller?.manualSafeMode === true ? "Releasing\u2026" : "Release safe mode" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRunAcceptance, disabled: props.acceptanceBusy, children: props.acceptanceBusy ? "Running acceptance\u2026" : "Run acceptance" }),
@@ -26119,13 +24670,13 @@
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Acceptance" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptanceCardLabel }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: acceptanceCardSummary })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptance?.overallStatus ? String(acceptance.overallStatus).toUpperCase() : "Not run yet" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: acceptance?.summary || "Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result." })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "5-phase MVP" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: typeof readiness.phasePercent === "number" ? `${readiness.phasePercent}%${currentRoadmapPhase.number ? ` \u2022 Phase ${Number(currentRoadmapPhase.number)}` : ""}` : "Not scored yet" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(readiness.phaseSummary || readiness.summary || "Readiness scoring will appear once the monitor snapshot is fully available.") })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "12-month baseline" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: typeof readiness.percent === "number" ? `${readiness.percent}%${currentRoadmapMonth.number ? ` \u2022 Month ${Number(currentRoadmapMonth.number)}` : ""}` : "Not scored yet" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(readiness.summary || "Readiness scoring will appear once the monitor snapshot is fully available.") })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Paused systems" }),
@@ -26155,34 +24706,13 @@
         acceptanceState?.exists ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Latest engine acceptance" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptanceControl?.acceptanceSummary || acceptance?.summary || "Acceptance report ready" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptance?.summary || "Acceptance report ready" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              formatStamp(acceptanceControl?.lastAcceptanceAt || acceptance?.completedAt || acceptance?.startedAt),
+              formatStamp(acceptance?.completedAt || acceptance?.startedAt),
               " \u2022 ",
-              acceptanceControl?.nextSafeAction || acceptance?.nextAction || "No follow-up guidance recorded."
+              acceptance?.nextAction || "No follow-up guidance recorded."
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Latest smoke" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              acceptanceControl?.smokeLabel || "NOT RUN",
-              " \u2022 ",
-              acceptanceControl?.smokeSummary || "The latest acceptance report does not include a recorded smoke result.",
-              acceptanceControl?.lastSmokeAt ? ` \u2022 ${formatStamp(acceptanceControl.lastSmokeAt)}` : ""
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next day gate" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              acceptanceControl?.nextDayLabel || "BLOCKED",
-              " \u2022 ",
-              acceptanceControl?.nextDaySummary || "Run acceptance before the next day’s bounded engine work."
-            ] })
-          ] }),
-          acceptanceBlockers.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Blocking checks" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: acceptanceBlockers.slice(0, 3).map((check) => `${check.label || check.id}: ${summarizeText(check.summary || "", 120)}`).join(" \u2022 ") })
-          ] }) : null,
           Array.isArray(acceptance?.checks) ? acceptance.checks.slice(0, 6).map((check) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: check.label || check.id || "check" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
@@ -26248,68 +24778,19 @@
           ] }, `${reason}-${index}`)) : null
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "5-phase MVP readiness" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "12-month baseline readiness" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: typeof readiness.phasePercent === "number" ? `${readiness.phasePercent}% \u2022 ${String(readiness.phaseStatus || "warming-up")}` : "Scoring unavailable" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.phaseSummary || readiness.summary || "Readiness scoring will appear after the next snapshot refresh.") })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: typeof readiness.percent === "number" ? `${readiness.percent}% \u2022 ${String(readiness.status || "warming-up")}` : "Scoring unavailable" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.summary || "Readiness scoring will appear after the next snapshot refresh.") })
           ] }),
-          currentRoadmapPhase.label ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(currentRoadmapPhase.label || "Current phase") }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(currentRoadmapPhase.summary || "Current phase goal not recorded yet.") })
+          currentRoadmapMonth.label ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(currentRoadmapMonth.label || "Current month") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(currentRoadmapMonth.layer || "Primary layer not recorded yet.") })
           ] }) : null,
-          readinessPhaseGate.label ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(readinessPhaseGate.label || "Phase gate") }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessPhaseGate.summary || "Phase gate detail not recorded yet.") })
+          readinessHardGate.label ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(readinessHardGate.label || "Hard gate") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessHardGate.summary || "Hard gate detail not recorded yet.") })
           ] }) : null,
-          String(readiness.phaseProof || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase proof" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.phaseProof || "") })
-          ] }) : null,
-          String(readiness.recommendedNextSafeAction || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next phase-safe action" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.recommendedNextSafeAction || "") })
-          ] }) : null,
-          String(readinessSelfHostExpansion.summary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `Self-host expansion • ${String(readinessSelfHostExpansion.label || readinessSelfHostExpansion.status || "unknown")}` }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessSelfHostExpansion.summary || "") })
-          ] }) : null,
-          String(readinessSelfHostExpansionProgress.summary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `Self-host expansion outcome • ${String(readinessSelfHostExpansionProgress.label || readinessSelfHostExpansionProgress.status || "unknown")}` }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessSelfHostExpansionProgress.summary || "") })
-          ] }) : null,
-          String(readinessSelfHostExpansionProgress.nextAction || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Self-host expansion next step" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessSelfHostExpansionProgress.nextAction || "") })
-          ] }) : null,
-          String(readinessPhaseCloseout.summary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase closeout" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessPhaseCloseout.summary || "") })
-          ] }) : null,
-          Array.isArray(readinessPhaseCloseout.blockers) && readinessPhaseCloseout.blockers.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Closeout blockers" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: readinessPhaseCloseout.blockers.join(" • ") })
-          ] }) : null,
-          readinessNextPhasePreview.label ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next phase preview" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessNextPhasePreview.summary || readinessNextPhasePreview.gateSummary || "") })
-          ] }) : null,
-          String(selfHostProof.summary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `Self-host proof \u2022 ${String(selfHostProof.label || selfHostProof.status || "unknown")}` }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(selfHostProof.summary || "") })
-          ] }) : null,
-          (readinessInternalAudit.summary || currentRoadmapMonth.label) ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Internal audit" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readinessInternalAudit.summary || `${String(currentRoadmapMonth.label || "Current month")} \u2022 ${String(readinessHardGate.label || "unknown")} \u2022 ${String(readinessHardGate.summary || currentRoadmapMonth.layer || "")}`) })
-          ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Phase scorecard" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              String(readiness.phasePercent || 0),
-              "% active \u2022 roadmap ",
-              String(readiness.roadmapPercent || 0),
-              "%"
-            ] })
-          ] }),
           readiness.dailyTargets ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `Daily targets \u2022 auto ${Number(readiness.dailyTargets?.autonomous?.safeCount || 0)}/${Number(readiness.dailyTargets?.autonomous?.target || 0)} \u2022 self ${Number(readiness.dailyTargets?.selfImprovement?.safeCount || 0)}/${Number(readiness.dailyTargets?.selfImprovement?.target || 0)}` }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.recommendedNextSafeAction || "The next safe action will appear here when the roadmap is scored.") })
@@ -26326,14 +24807,12 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(readiness.nextMilestone.label || "Next milestone") }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(readiness.nextMilestone.summary || "No extra detail recorded yet.") })
           ] }) : null,
-          readinessPhaseCards.slice(0, 5).map((milestone) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(milestone.label || milestone.id || "Phase") }),
+          readinessMilestones.slice(0, 5).map((milestone) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(milestone.label || milestone.id || "Milestone") }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
               String(milestone.completion || 0),
               "% \u2022 ",
-              String(milestone.gateLabel || milestone.status || "unknown"),
-              " \u2022 ",
-              String(milestone.gateSummary || milestone.summary || "")
+              String(milestone.summary || "")
             ] })
           ] }, String(milestone.id || milestone.label)))
         ] })

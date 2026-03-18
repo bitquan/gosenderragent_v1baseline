@@ -40,4 +40,50 @@ autopilot_synthesize_followups: true
 autopilot_auto_train: false
 autopilot_refresh_engine: false
 
+assistant_model_profile_id: gs-dev-1-default
+
+assistant_model_display_name: GS-Dev-1 Default
+
+assistant_model_base_model: qwen2.5-coder:14b
+
+assistant_model_base_provider: ollama
+
+assistant_model_provider_source: ollama
+
+assistant_workspace_model_profile_id: gs-dev-1-default
+
+assistant_workspace_model_display_name: GS-Dev-1 Default
+
+assistant_workspace_model_base_model: qwen2.5-coder:14b
+
+assistant_workspace_model_base_provider: ollama
+
+assistant_workspace_model_provider_source: ollama
+
+assistant_engine_model_profile_id: gse-1-engine
+
+assistant_engine_model_display_name: GSE-1 Engine
+
+assistant_engine_model_base_model: gpt-4o-mini
+
+assistant_engine_model_base_provider: openai
+
+assistant_engine_model_provider_source: openai
+
+assistant_task_mode_planner_provider: openai
+
+assistant_task_mode_planner_model: gpt-4o-mini
+
+assistant_task_mode_coder_provider: ollama
+
+assistant_task_mode_coder_model: qwen2.5-coder:14b
+
+assistant_task_mode_validator_provider: openai
+
+assistant_task_mode_validator_model: gpt-4o-mini
+
+assistant_task_mode_summarizer_provider: openai
+
+assistant_task_mode_summarizer_model: gpt-4o-mini
+
 
