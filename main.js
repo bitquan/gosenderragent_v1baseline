@@ -189,6 +189,23 @@ const {
 } = require('./core/autonomy');
 const { applySafetyModeToRequest, buildSafetyStatus } = require('./core/safety-controller');
 const { runPreflight } = require('./core/preflight');
+const {
+  getGitSummary,
+  getGitStatus,
+  getGitDiff,
+  stagePaths,
+  unstagePaths,
+  stageAll,
+  unstageAll,
+  discardPaths,
+  commitStaged,
+  pullTrackedBranch,
+  pushTrackedBranch,
+  publishBranch,
+  listBranches,
+  createBranch,
+  switchBranch,
+} = require('./core/git-service');
 const { sanitizeRelativePath } = require('./core/utils');
 const { handleAssistantChat } = require('./core/chat');
 const { buildStorageSnapshot, cleanupStorageArtifacts } = require('./core/storage');
@@ -532,6 +549,9 @@ function normalizeSettingsUpdatePayload(payload = {}) {
   if (payload?.ui?.chatInstructionMode !== undefined && normalized.chatInstructionMode === undefined) {
     normalized.chatInstructionMode = payload.ui.chatInstructionMode;
   }
+  if (payload?.ui?.chatMode !== undefined && normalized.chatMode === undefined) {
+    normalized.chatMode = payload.ui.chatMode;
+  }
   if (payload?.ui?.chatCustomInstructions !== undefined && normalized.chatCustomInstructions === undefined) {
     normalized.chatCustomInstructions = payload.ui.chatCustomInstructions;
   }
@@ -580,6 +600,7 @@ function getDesktopSettingsPayload(workspaceRoot) {
     chatInspectorWidth: Math.max(320, Math.min(620, Math.round(Number(store.get('chatInspectorWidth') || 380)))),
     chatUtilityMode: String(store.get('chatUtilityMode') || 'context'),
     showLiveWork: !!store.get('showLiveWork'),
+    chatMode: String(store.get('chatMode') || 'ask').trim().toLowerCase() || 'ask',
     chatInstructionMode: String(store.get('chatInstructionMode') || 'auto').trim().toLowerCase() || 'auto',
     chatCustomInstructions: String(store.get('chatCustomInstructions') || ''),
     chatWorkbenchMode: String(store.get('chatWorkbenchMode') || 'focus').trim().toLowerCase() || 'focus',
@@ -612,6 +633,7 @@ function getDesktopSettingsPayload(workspaceRoot) {
     aiProfile,
     aiRoutingPolicy,
     aiLaneOverrides,
+    chatMode: ['ask', 'plan', 'edit', 'agent'].includes(ui.chatMode) ? ui.chatMode : 'ask',
     chatInstructionMode: ['off', 'auto', 'custom'].includes(ui.chatInstructionMode) ? ui.chatInstructionMode : 'auto',
     chatCustomInstructions: ui.chatCustomInstructions,
     chatWorkbenchMode: ['focus', 'balanced', 'control-room'].includes(ui.chatWorkbenchMode) ? ui.chatWorkbenchMode : 'focus',
@@ -736,6 +758,56 @@ function nextActionableTodoBat(workspaceRoot) {
   return bats.find((item) => item.safeActionable) || bats.find((item) => String(item.status || '').includes('TODO')) || null;
 }
 
+function readGitSummary(workspaceRoot) {
+  const root = String(workspaceRoot || '').trim();
+  if (!root) {
+    return {
+      ok: false,
+      branch: '',
+      upstream: '',
+      ahead: 0,
+      behind: 0,
+      dirty: false,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      lastCommit: '',
+      files: [],
+      canCommit: false,
+      canPull: false,
+      canPush: false,
+      canPublish: false,
+      blockedReason: 'Pick a workspace to inspect git state.',
+      label: 'No workspace',
+      summary: 'Open a git workspace to enable the desktop Git controls.',
+    };
+  }
+  try {
+    return getGitSummary(root);
+  } catch (error) {
+    return {
+      ok: false,
+      branch: '',
+      upstream: '',
+      ahead: 0,
+      behind: 0,
+      dirty: false,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      lastCommit: '',
+      files: [],
+      canCommit: false,
+      canPull: false,
+      canPush: false,
+      canPublish: false,
+      blockedReason: error instanceof Error ? error.message : 'Git summary is unavailable.',
+      label: 'Git unavailable',
+      summary: error instanceof Error ? error.message : 'Git summary is unavailable.',
+    };
+  }
+}
+
 const store = createResilientStore(Store, {
   userDataRoot: app.getPath('userData'),
   name: 'desktop-agent-settings',
@@ -753,6 +825,7 @@ const store = createResilientStore(Store, {
     chatInspectorWidth: 380,
     chatUtilityMode: 'context',
     showLiveWork: true,
+    chatMode: 'ask',
     chatInstructionMode: 'auto',
     chatCustomInstructions: '',
     chatWorkbenchMode: 'focus',
@@ -2457,6 +2530,8 @@ function normalizeChatHistoryPayload(history) {
 
 function buildAssistantChatContext(workspaceRoot, payload = {}) {
   const incoming = payload && typeof payload === 'object' ? payload : {};
+  const chatMode = resolveChatModeValue(incoming.chatMode || store.get('chatMode'));
+  const modeState = inferChatModeRouting(chatMode, incoming.message || '');
   const editorContext = buildDesktopEditorContext(workspaceRoot);
   const modelProvisioning = incoming.modelProvisioning && typeof incoming.modelProvisioning === 'object'
     ? {
@@ -2489,6 +2564,11 @@ function buildAssistantChatContext(workspaceRoot, payload = {}) {
     : buildChatRecentWorkContext(workspaceRoot, incoming);
   return {
     ...incoming,
+    chatMode,
+    suggestedTaskMode: modeState.suggestedTaskMode,
+    suggestedLaneId: modeState.suggestedLaneId,
+    modeAllowsExecution: modeState.modeAllowsExecution,
+    modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
     activeFile,
     selectionLine,
     changedFiles: Number(incoming.changedFiles || 0) || 0,
@@ -2525,8 +2605,68 @@ function buildTrustedDocReferences(workspaceRoot) {
   }].filter((item) => item.url || item.title);
 }
 
+function resolveChatModeValue(value) {
+  const mode = String(value || 'ask').trim().toLowerCase();
+  return ['ask', 'plan', 'edit', 'agent'].includes(mode) ? mode : 'ask';
+}
+
+function parseChatModeDirective(value) {
+  const message = String(value || '').trim();
+  const match = message.match(/^\/(ask|plan|edit|agent)(?:\s+(.*))?$/i);
+  if (!match) {
+    return { mode: '', message };
+  }
+  return {
+    mode: resolveChatModeValue(match[1]),
+    message: String(match[2] || '').trim(),
+  };
+}
+
+function inferChatModeRouting(chatMode, message = '') {
+  const mode = resolveChatModeValue(chatMode);
+  const lower = String(message || '').trim().toLowerCase();
+  const hasOpsIntent = /(status|summary|health|why|what happened|what is happening|what's happening|inbox|review)/.test(lower);
+  const hasResearchIntent = /(docs|document|research|reference|why|how)/.test(lower);
+  if (mode === 'plan') {
+    return {
+      suggestedTaskMode: 'planner',
+      suggestedLaneId: hasResearchIntent ? 'research-docs' : 'plan-reasoning',
+      modeAllowsExecution: false,
+      modeRequiresEditConfirmation: false,
+      suggestedNextAction: 'Talk through the plan, risks, and next bounded step before changing code.',
+    };
+  }
+  if (mode === 'edit') {
+    return {
+      suggestedTaskMode: /(review|diff|verify|validate)/.test(lower) ? 'validator' : 'coder',
+      suggestedLaneId: /(review|diff|verify|validate)/.test(lower) ? 'review-verify' : /repair|fix|failed|failing/.test(lower) ? 'repair-fast' : 'code-main',
+      modeAllowsExecution: false,
+      modeRequiresEditConfirmation: true,
+      suggestedNextAction: 'Prepare the edit path and confirm before running code changes.',
+    };
+  }
+  if (mode === 'agent') {
+    return {
+      suggestedTaskMode: hasResearchIntent ? 'research' : hasOpsIntent ? 'summarizer' : 'coder',
+      suggestedLaneId: hasResearchIntent ? 'research-docs' : hasOpsIntent ? 'ops-summary' : 'code-main',
+      modeAllowsExecution: true,
+      modeRequiresEditConfirmation: false,
+      suggestedNextAction: 'Use the bounded engine loop and only act when the current gates are healthy.',
+    };
+  }
+  return {
+    suggestedTaskMode: hasResearchIntent ? 'research' : hasOpsIntent ? 'summarizer' : 'chat',
+    suggestedLaneId: hasResearchIntent ? 'research-docs' : hasOpsIntent ? 'ops-summary' : 'chat-fast',
+    modeAllowsExecution: false,
+    modeRequiresEditConfirmation: false,
+    suggestedNextAction: 'Answer naturally, keep the thread conversational, and avoid mutating work from Ask mode.',
+  };
+}
+
 function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
   const mode = String(store.get('chatInstructionMode') || 'auto').trim().toLowerCase() || 'auto';
+  const chatMode = resolveChatModeValue(context.chatMode || store.get('chatMode'));
+  const modeState = inferChatModeRouting(chatMode, context.message || '');
   const customInstructions = String(store.get('chatCustomInstructions') || '').trim();
   const learningStatus = learningJournal.getStatus();
   const styleProfile = learningStatus?.styleProfile && typeof learningStatus.styleProfile === 'object'
@@ -2548,6 +2688,18 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
     : {};
   if (preferredVerbs.length > 0) {
     autoInstructionsParts.push(`Prefer ${preferredVerbs.join(', ')} style task phrasing.`);
+  }
+  if (chatMode === 'ask') {
+    autoInstructionsParts.unshift('Stay conversational, helpful, and plain-English. Do not auto-launch edits or coding runs from Ask mode.');
+  }
+  if (chatMode === 'plan') {
+    autoInstructionsParts.unshift('Prefer scoped plans, risks, and next steps. Do not launch edit work directly from Plan mode.');
+  }
+  if (chatMode === 'edit') {
+    autoInstructionsParts.unshift('Focus on code changes, diffs, and repair paths. Prepare edit work carefully and require confirmation before executing it.');
+  }
+  if (chatMode === 'agent') {
+    autoInstructionsParts.unshift('Act through the existing engine loop only when the current safety, review, and autonomy gates allow it.');
   }
   if (commonTargets.length > 0) {
     autoInstructionsParts.push(`Common target areas: ${commonTargets.slice(0, 3).join(', ')}.`);
@@ -2605,6 +2757,13 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
     autoInstructionsParts.push(String(provisioning.recommendedAction || '').trim());
   }
   return {
+    chatMode,
+    modeLabel: chatMode.charAt(0).toUpperCase() + chatMode.slice(1),
+    suggestedTaskMode: modeState.suggestedTaskMode,
+    suggestedLaneId: modeState.suggestedLaneId,
+    modeAllowsExecution: modeState.modeAllowsExecution,
+    modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
+    suggestedNextAction: modeState.suggestedNextAction,
     mode,
     customInstructions: mode === 'custom' ? customInstructions : '',
     autoInstructions: mode === 'off' ? '' : autoInstructionsParts.join(' '),
@@ -2646,6 +2805,8 @@ function buildAssistantReplySuggestions(message, reply) {
     push('/workers');
   }
   if (suggestions.length === 0) {
+    push('/ask');
+    push('/plan');
     push('/next');
     push('/approvals');
     push('/health');
@@ -3357,6 +3518,7 @@ function workspaceSnapshot() {
   });
   const promotions = listPromotionState(statusWorkspaceRoot, { labRoot: selectedLabRoot });
   const settings = getDesktopSettingsPayload(workspaceRoot);
+  const gitSummary = readGitSummary(targetWorkspaceRoot || workspaceRoot);
   const assistantConfig = readAssistantConfig(workspaceRoot, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
   const selfImprovement = buildSelfImprovementSummary(statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE, '', {
     dailyTarget: Number(assistantConfig.dailySelfImprovementTarget || 5),
@@ -3411,6 +3573,7 @@ function workspaceSnapshot() {
     latestSprint,
     changedFiles,
     worktree,
+    git: gitSummary,
     runtimeContext: sharedRuntimeContext,
     editorContext: buildDesktopEditorContext(targetWorkspaceRoot),
     review: reviewWithSmokeFixture,
@@ -3456,6 +3619,7 @@ function workspaceSnapshotLite() {
   const targetWorkspaceRoot = getTargetWorkspaceRoot();
   const selectedLabRoot = getSelectedLabRoot();
   const settings = getDesktopSettingsPayload(workspaceRoot);
+  const gitSummary = readGitSummary(targetWorkspaceRoot || workspaceRoot);
   const assistantConfig = readAssistantConfig(workspaceRoot, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
   const selfImprovement = buildSelfImprovementSummary(statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE, '', {
     dailyTarget: Number(assistantConfig.dailySelfImprovementTarget || 5),
@@ -3559,6 +3723,7 @@ function workspaceSnapshotLite() {
     workspaceRoot,
     targetWorkspaceRoot,
     selectedLabRoot,
+    git: gitSummary,
     bats: [],
     summary: summarizeBats([]),
     recentRuns: [],
@@ -4608,6 +4773,10 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.chatInstructionMode !== undefined) {
     const mode = String(payload.chatInstructionMode || 'auto').trim().toLowerCase();
     store.set('chatInstructionMode', ['off', 'auto', 'custom'].includes(mode) ? mode : 'auto');
+  }
+  if (payload.chatMode !== undefined) {
+    const chatMode = String(payload.chatMode || 'ask').trim().toLowerCase();
+    store.set('chatMode', ['ask', 'plan', 'edit', 'agent'].includes(chatMode) ? chatMode : 'ask');
   }
   if (payload.chatCustomInstructions !== undefined) {
     store.set('chatCustomInstructions', String(payload.chatCustomInstructions || '').trim());
@@ -6844,12 +7013,27 @@ function importChatAttachments(workspaceRoot, payload = {}) {
 ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
   let text = String(payload.text || '').trim();
+  const modeDirective = parseChatModeDirective(text);
+  let chatMode = resolveChatModeValue(payload.chatMode || payload.chatContext?.chatMode || store.get('chatMode'));
+  if (modeDirective.mode) {
+    chatMode = modeDirective.mode;
+    store.set('chatMode', chatMode);
+    text = modeDirective.message;
+  }
   const chatHistory = normalizeChatHistoryPayload(payload.history);
   const attachments = Array.isArray(payload.attachments)
     ? payload.attachments.map((item) => (item && typeof item === 'object' ? item : null)).filter(Boolean)
     : [];
   const trustedDocs = buildTrustedDocReferences(targetWorkspaceRoot);
   if (!text && attachments.length === 0) {
+    if (modeDirective.mode) {
+      return {
+        ok: true,
+        reply: `Switched to ${chatMode.charAt(0).toUpperCase() + chatMode.slice(1)} mode. Talk to me naturally and I’ll stay inside that mode until you switch again.`,
+        chatMode,
+        modeState: inferChatModeRouting(chatMode, ''),
+      };
+    }
     return { ok: true, reply: 'Please enter a message.' };
   }
   if (!text && attachments.length > 0) {
@@ -6868,18 +7052,22 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     : {};
   const chatGuidance = buildChatGuidancePayload(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
+    chatMode,
     modelProvisioning,
     message: text,
   });
   const chatContext = buildAssistantChatContext(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
+    chatMode,
     attachments,
     trustedDocs,
     chatGuidance,
     modelProvisioning,
   });
+  const modeState = inferChatModeRouting(chatMode, text);
   learningJournal.recordEvent('chat-prompt', {
     text,
+    chatMode,
     threadId: payload.threadId || '',
     changeSessionId: payload.changeSessionId || '',
     attachmentCount: attachments.length,
@@ -6892,7 +7080,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   });
 
   const explicitTicket = String(text.match(/(?:BAT<)?(\d+)>?/i)?.[1] || '').trim();
-  if (!text.startsWith('/') && explicitTicket) {
+  if (!text.startsWith('/') && explicitTicket && chatMode !== 'ask' && chatMode !== 'plan') {
     const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
     const explicitAction = /\bplan\b/i.test(text)
       ? 'plan'
@@ -6915,6 +7103,11 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         workspaceRoot,
         targetWorkspaceRoot,
         activeView: payload.chatContext?.activeView || '',
+        chatMode,
+        suggestedTaskMode: modeState.suggestedTaskMode,
+        suggestedLaneId: modeState.suggestedLaneId,
+        modeAllowsExecution: modeState.modeAllowsExecution,
+        modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
         compatSource: 'bat-board',
         batTicket: explicitTicket,
         batStatus: batEntry?.status || '',
@@ -6942,7 +7135,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       source: 'chat',
       batTicket: explicitTicket,
     });
-    const run = task
+    const run = task && chatMode === 'agent'
       ? await launchUniversalTaskRun({
         workspaceRoot,
         targetWorkspaceRoot,
@@ -6971,9 +7164,12 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       : blockedByModelFit
         ? ['Rescope the queued task to fit the current model.', 'Open AI settings and verify the model routing before retrying.']
         : ['Run the newest task now.', 'Open the engine backlog in settings and verify the target.'];
+    const finalCreatedTaskReply = chatMode === 'edit' && !run?.runId
+      ? `Prepared a queued edit task for BAT<${explicitTicket}>${ticketSummary ? ` - ${ticketSummary}` : ''}. I kept it queued because Edit mode does not auto-run code changes.`
+      : createdTaskReply;
     return {
       ok: true,
-      reply: createdTaskReply,
+      reply: finalCreatedTaskReply,
       intentType: run?.runId ? 'launched-run' : 'created-task',
       goal,
       task,
@@ -6982,6 +7178,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       refs: [],
       targetWorkspaceRoot,
       labRoot,
+      chatMode,
+      modeState,
     };
     return {
       ok: true,
@@ -7001,7 +7199,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     };
   }
 
-  if (!text.startsWith('/') && isActionablePrompt(text)) {
+  if (!text.startsWith('/') && isActionablePrompt(text) && chatMode !== 'ask' && chatMode !== 'plan') {
     const bundle = createGoalAndTask(workspaceRoot, {
       source: payload.source || 'chat',
       objective: text,
@@ -7014,6 +7212,11 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         workspaceRoot,
         targetWorkspaceRoot,
         activeView: payload.chatContext?.activeView || '',
+        chatMode,
+        suggestedTaskMode: modeState.suggestedTaskMode,
+        suggestedLaneId: modeState.suggestedLaneId,
+        modeAllowsExecution: modeState.modeAllowsExecution,
+        modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
         attachments,
         referenceAttachments: attachments,
         trustedDocs,
@@ -7037,7 +7240,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     });
 
     const intentType = inferIntentType(text);
-    if (intentType === 'launched-run' && task) {
+    if (intentType === 'launched-run' && task && chatMode === 'agent') {
       const run = await launchUniversalTaskRun({
         workspaceRoot,
         targetWorkspaceRoot,
@@ -7075,6 +7278,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         refs: [],
         targetWorkspaceRoot,
         labRoot,
+        chatMode,
+        modeState,
       };
       return {
         ok: true,
@@ -7094,9 +7299,12 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       };
     }
 
+    const queuedTaskReply = chatMode === 'edit'
+      ? `Prepared goal "${goal?.title || 'Untitled goal'}" and queued edit task "${task?.title || 'Untitled task'}". I kept it queued because Edit mode needs confirmation before executing changes.`
+      : `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task?.title || 'Untitled task'}".`;
     return {
       ok: true,
-      reply: `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task?.title || 'Untitled task'}".`,
+      reply: queuedTaskReply,
       intentType: 'created-task',
       goal,
       task,
@@ -7105,6 +7313,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       refs: [],
       targetWorkspaceRoot,
       labRoot,
+      chatMode,
+      modeState,
     };
   }
 
@@ -7112,6 +7322,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     chatHistory,
     chatContext: {
       ...chatContext,
+      chatMode,
       attachments: attachments.map((item) => ({
         kind: item.kind || '',
         name: item.originalName || item.name || '',
@@ -7372,6 +7583,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     refs: buildAssistantReplyRefs(chatContext),
     targetWorkspaceRoot,
     labRoot,
+    chatMode,
+    modeState,
   };
 });
 
@@ -7628,6 +7841,81 @@ ipcMain.handle('review:copyText', async (_event, payload = {}) => {
 ipcMain.handle('review:openInVsCode', async (_event, payload = {}) => {
   const { targetWorkspaceRoot } = resolveRequestRoots(payload);
   return openInVsCode(targetWorkspaceRoot, payload.path, payload.line || 1);
+});
+
+ipcMain.handle('git:getSummary', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return readGitSummary(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:getStatus', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return getGitStatus(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:getDiff', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return getGitDiff(targetWorkspaceRoot, payload.path, { cached: payload.cached === true });
+});
+
+ipcMain.handle('git:stage', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return stagePaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
+});
+
+ipcMain.handle('git:unstage', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return unstagePaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
+});
+
+ipcMain.handle('git:stageAll', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return stageAll(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:unstageAll', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return unstageAll(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:discardPaths', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return discardPaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
+});
+
+ipcMain.handle('git:commit', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return commitStaged(targetWorkspaceRoot, payload.message);
+});
+
+ipcMain.handle('git:pull', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return pullTrackedBranch(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:push', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return pushTrackedBranch(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:listBranches', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return listBranches(targetWorkspaceRoot);
+});
+
+ipcMain.handle('git:createBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return createBranch(targetWorkspaceRoot, payload.name);
+});
+
+ipcMain.handle('git:switchBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return switchBranch(targetWorkspaceRoot, payload.name);
+});
+
+ipcMain.handle('git:publishBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return publishBranch(targetWorkspaceRoot);
 });
 
 ipcMain.handle('skills:list', async () => {

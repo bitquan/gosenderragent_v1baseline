@@ -1,0 +1,137 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - desktop-v*
+  workflow_dispatch:
+
+jobs:
+  build-unsigned:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            artifact_name: desktop-mac-unsigned
+          - os: windows-latest
+            platform: win
+            artifact_name: desktop-win-unsigned
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build unsigned release artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
+        run: npm run dist:${{ matrix.platform }}
+
+      - name: Upload unsigned artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-mac-signed:
+    if: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.MAC_CSC_LINK != '' && secrets.MAC_CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build signed mac release artifacts
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
+        run: npm run dist:mac
+
+      - name: Upload signed mac artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac-signed
+          path: dist/*
+          if-no-files-found: error
+
+  build-win-signed:
+    if: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Build signed windows release artifacts
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
+        run: npm run dist:win
+
+      - name: Upload signed windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win-signed
+          path: dist/*
+          if-no-files-found: error
+
+  publish-release:
+    if: ${{ startsWith(github.ref, 'refs/tags/desktop-v') }}
+    needs:
+      - build-unsigned
+      - build-mac-signed
+      - build-win-signed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**
+          generate_release_notes: true

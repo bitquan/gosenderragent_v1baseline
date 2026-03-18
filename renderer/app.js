@@ -21808,6 +21808,14 @@
     threadReadMarkers: {},
     composerText: "",
     pendingAttachments: [],
+    gitStatus: null,
+    gitBranches: [],
+    gitDiff: "",
+    gitNotice: "",
+    activeGitPath: "",
+    gitCommitMessage: "",
+    gitBranchDraft: "codex/",
+    gitBusy: false,
     monitorLoading: false,
     monitorLoadingMessage: "",
     busyChat: false,
@@ -21831,12 +21839,17 @@
     rightRailOpen: false
   };
   var store = createStore(initialState);
-  function createThread(title) {
+  function normalizeChatModeValue(value) {
+    const mode = String(value || "ask").trim().toLowerCase();
+    return ["ask", "plan", "edit", "agent"].includes(mode) ? mode : "ask";
+  }
+  function createThread(title, chatMode = "ask") {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
     return {
       id: makeId("thread"),
       title,
       changeSessionId: makeId("session"),
+      chatMode: normalizeChatModeValue(chatMode),
       createdAt,
       updatedAt: createdAt,
       messages: [{
@@ -21860,7 +21873,8 @@
       return parsed.map((thread) => ({
         ...thread,
         messages: Array.isArray(thread.messages) ? thread.messages : [],
-        changeSessionId: thread.changeSessionId || makeId("session")
+        changeSessionId: thread.changeSessionId || makeId("session"),
+        chatMode: normalizeChatModeValue(thread.chatMode)
       }));
     } catch (_error) {
       return [createThread("Main Thread")];
@@ -22148,6 +22162,13 @@
     const mode = String(settings?.chatWorkbenchMode || ui.chatWorkbenchMode || "focus").trim().toLowerCase();
     return ["focus", "balanced", "control-room"].includes(mode) ? mode : "focus";
   }
+  function resolveThreadChatMode(settings, thread) {
+    return normalizeChatModeValue(thread?.chatMode || settings?.chatMode || settings?.ui?.chatMode || "ask");
+  }
+  function formatChatModeLabel(mode) {
+    const normalized = normalizeChatModeValue(mode);
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
   function normalizeComposerSize(settings) {
     const ui = settings?.ui && typeof settings.ui === "object" ? settings.ui : {};
     const size = String(settings?.chatComposerSize || ui.chatComposerSize || "tall").trim().toLowerCase();
@@ -22208,7 +22229,7 @@
     const wantsFullSnapshot = mode === "full" || !window.gosAgent.bootstrapLite;
     const snapshot = wantsFullSnapshot ? await window.gosAgent.bootstrap({ captureLearning: true }) : await window.gosAgent.bootstrapLite({ captureLearning: false });
     const shouldLoadReview = wantsFullSnapshot || store.getState().rightRailOpen;
-    const [meta, tuning, labs, benchmarks, skills, automations, tools, aiStatus, learningStatus, learningChanges, reviewSnapshot] = await Promise.all([
+    const [meta, tuning, labs, benchmarks, skills, automations, tools, aiStatus, learningStatus, learningChanges, reviewSnapshot, gitStatus, gitBranches] = await Promise.all([
       window.gosAgent.getMeta(),
       window.gosAgent.getTuningStatus({ workspace: snapshot.workspaceRoot }),
       window.gosAgent.listLabs({ workspaceRoot: snapshot.workspaceRoot }),
@@ -22236,7 +22257,17 @@
         workspaceRoot: snapshot.workspaceRoot,
         targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
         labRoot: snapshot.selectedLabRoot || ""
-      }) : Promise.resolve(null)
+      }) : Promise.resolve(null),
+      window.gosAgent.getGitStatus ? window.gosAgent.getGitStatus({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || ""
+      }) : Promise.resolve(snapshot.git || null),
+      window.gosAgent.listGitBranches ? window.gosAgent.listGitBranches({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || ""
+      }) : Promise.resolve({ branches: [] })
     ]);
     const nextSnapshot = reviewSnapshot?.review ? {
       ...snapshot,
@@ -22257,6 +22288,8 @@
       automations: Array.isArray(automations) ? automations : Array.isArray(automations?.jobs) ? automations.jobs : [],
       tools: Array.isArray(tools?.tools) ? tools.tools : [],
       aiStatus,
+      gitStatus: gitStatus || nextSnapshot?.git || null,
+      gitBranches: Array.isArray(gitBranches?.branches) ? gitBranches.branches : [],
       learningStatus,
       learningChanges
     }));
@@ -22316,7 +22349,8 @@
       error: "",
       snapshot,
       meta,
-      settings: snapshot.settings || current.settings
+      settings: snapshot.settings || current.settings,
+      gitStatus: snapshot.git || current.gitStatus
     }));
   }
   function shellStatus(snapshot) {
@@ -22562,7 +22596,7 @@
       document.body.dataset.theme = ["codex", "obsidian"].includes(requestedTheme) ? requestedTheme : "codex";
     }, [state.snapshot?.settings?.theme]);
     const onNewThread = () => {
-      const nextThread = createThread(`Thread ${state.threads.length + 1}`);
+      const nextThread = createThread(`Thread ${state.threads.length + 1}`, normalizeChatModeValue(state.settings?.chatMode || "ask"));
       store.update((current) => ({
         ...current,
         threads: [nextThread, ...current.threads],
@@ -22587,6 +22621,22 @@
           [threadId]: latestAssistantMessageId(current.threads.find((entry) => entry.id === threadId)) || latestMessageId(current.threads.find((entry) => entry.id === threadId))
         }
       }));
+    };
+    const onSetChatMode = async (mode) => {
+      const normalizedMode = normalizeChatModeValue(mode);
+      const currentThread = activeThread(store.getState());
+      if (!currentThread) {
+        return;
+      }
+      store.update((current) => ({
+        ...current,
+        threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, chatMode: normalizedMode, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : entry),
+        settings: {
+          ...current.settings,
+          chatMode: normalizedMode
+        }
+      }));
+      await onUpdateSetting("chatMode", normalizedMode);
     };
     const onPickChatAttachments = async () => {
       const snapshot = store.getState().snapshot;
@@ -22644,16 +22694,37 @@
       if (!snapshot || !currentThread || store.getState().busyChat) {
         return;
       }
-      const text = store.getState().composerText.trim();
+      const rawText = store.getState().composerText.trim();
       const attachments = Array.isArray(store.getState().pendingAttachments) ? store.getState().pendingAttachments : [];
-      if (!text && attachments.length === 0) {
+      if (!rawText && attachments.length === 0) {
         return;
+      }
+      let text = rawText;
+      const modeDirective = rawText.match(/^\/(ask|plan|edit|agent)(?:\s+(.*))?$/i);
+      if (modeDirective) {
+        const nextMode = normalizeChatModeValue(modeDirective[1]);
+        const remainder = String(modeDirective[2] || "").trim();
+        if (nextMode !== resolveThreadChatMode(store.getState().settings, currentThread)) {
+          await onSetChatMode(nextMode);
+        }
+        text = remainder;
+        if (!text && attachments.length === 0) {
+          appendWorkbenchSystemMessage(`Switched to ${formatChatModeLabel(nextMode)} mode.`, {
+            suggestions: [`/${nextMode} explain the current repo state`, `/${nextMode} help me with the next step`]
+          });
+          store.update((current) => ({
+            ...current,
+            composerText: "",
+            pendingAttachments: []
+          }));
+          return;
+        }
       }
       const createdAt = (/* @__PURE__ */ new Date()).toISOString();
       const userMessage = {
         id: makeId("msg"),
         role: "user",
-        text,
+        text: rawText,
         createdAt,
         attachments
       };
@@ -22674,6 +22745,7 @@
           changeSessionId: currentThread.changeSessionId,
           history: currentThread.messages.slice(-8).map((entry) => ({ role: entry.role, text: entry.text })),
           attachments,
+          chatMode: resolveThreadChatMode(store.getState().settings, activeThread(store.getState())),
           chatContext: {
             activeView: store.getState().activeModuleId,
             activeFile: store.getState().inspector.selectedPath,
@@ -22682,7 +22754,8 @@
             activeRunId: snapshot.recentRuns?.[0]?.runId || snapshot.taskHub?.runs?.[0]?.runId || "",
             activeRunLabel: snapshot.recentRuns?.[0]?.label || "",
             worktree: snapshot.worktree?.scopeLabel || "",
-            modelProvisioning: store.getState().aiStatus?.provisioning || {}
+            modelProvisioning: store.getState().aiStatus?.provisioning || {},
+            chatMode: resolveThreadChatMode(store.getState().settings, activeThread(store.getState()))
           }
         });
         const assistantMessage = {
@@ -23294,6 +23367,132 @@
       });
       await refreshApp("lite");
     };
+    const readGitRoots = () => {
+      const snapshot = store.getState().snapshot;
+      return {
+        workspaceRoot: snapshot?.workspaceRoot || "",
+        targetWorkspaceRoot: snapshot?.targetWorkspaceRoot || snapshot?.workspaceRoot || "",
+        labRoot: snapshot?.selectedLabRoot || ""
+      };
+    };
+    const refreshGitState = async () => {
+      const roots = readGitRoots();
+      if (!roots.targetWorkspaceRoot) {
+        return;
+      }
+      const [gitStatus, gitBranches] = await Promise.all([
+        window.gosAgent.getGitStatus ? window.gosAgent.getGitStatus(roots) : Promise.resolve(null),
+        window.gosAgent.listGitBranches ? window.gosAgent.listGitBranches(roots) : Promise.resolve({ branches: [] })
+      ]);
+      store.update((current) => ({
+        ...current,
+        gitStatus: gitStatus || current.gitStatus,
+        gitBranches: Array.isArray(gitBranches?.branches) ? gitBranches.branches : current.gitBranches
+      }));
+    };
+    const runGitMutation = async (runner) => {
+      store.update((current) => ({ ...current, gitBusy: true, gitNotice: "", error: "" }));
+      try {
+        const result = await runner(readGitRoots());
+        store.update((current) => ({
+          ...current,
+          gitBusy: false,
+          gitNotice: String(result?.message || result?.blockedReason || (result?.ok ? "Git action complete." : "Git action failed.")).trim(),
+          error: result?.ok === false ? String(result?.message || result?.blockedReason || "Git action failed.") : "",
+          gitStatus: result?.status || current.gitStatus
+        }));
+        await refreshGitState();
+        await refreshApp("lite");
+        return result;
+      } catch (error) {
+        store.update((current) => ({
+          ...current,
+          gitBusy: false,
+          gitNotice: "",
+          error: error instanceof Error ? error.message : "Git action failed."
+        }));
+        return null;
+      }
+    };
+    const onOpenGitDiff = async (selectedPath, cached = false) => {
+      const roots = readGitRoots();
+      if (!selectedPath || !roots.targetWorkspaceRoot) {
+        return;
+      }
+      const diffResult = await window.gosAgent.getGitDiff({
+        ...roots,
+        path: selectedPath,
+        cached
+      });
+      store.update((current) => ({
+        ...current,
+        activeGitPath: selectedPath,
+        gitDiff: String(diffResult?.diff || diffResult?.message || ""),
+        gitNotice: diffResult?.ok === false ? String(diffResult?.message || "Unable to load git diff.") : current.gitNotice
+      }));
+    };
+    const onStageGitPaths = async (paths) => {
+      await runGitMutation((roots) => window.gosAgent.stageGitPaths({ ...roots, paths }));
+    };
+    const onUnstageGitPaths = async (paths) => {
+      await runGitMutation((roots) => window.gosAgent.unstageGitPaths({ ...roots, paths }));
+    };
+    const onStageAllGitPaths = async () => {
+      await runGitMutation((roots) => window.gosAgent.stageAllGitPaths(roots));
+    };
+    const onUnstageAllGitPaths = async () => {
+      await runGitMutation((roots) => window.gosAgent.unstageAllGitPaths(roots));
+    };
+    const onDiscardGitPaths = async (paths) => {
+      const selectedPaths = Array.isArray(paths) ? paths.filter(Boolean) : [];
+      if (!selectedPaths.length) {
+        return;
+      }
+      if (!window.confirm(`Discard unstaged changes for ${selectedPaths.join(", ")}?`)) {
+        return;
+      }
+      await runGitMutation((roots) => window.gosAgent.discardGitPaths({ ...roots, paths: selectedPaths }));
+      store.update((current) => ({
+        ...current,
+        gitDiff: current.activeGitPath && selectedPaths.includes(current.activeGitPath) ? "" : current.gitDiff
+      }));
+    };
+    const onCommitGitStaged = async () => {
+      const message = String(store.getState().gitCommitMessage || "").trim();
+      const result = await runGitMutation((roots) => window.gosAgent.commitGitStaged({ ...roots, message }));
+      if (result?.ok) {
+        store.update((current) => ({
+          ...current,
+          gitCommitMessage: ""
+        }));
+      }
+    };
+    const onPullGitBranch = async () => {
+      await runGitMutation((roots) => window.gosAgent.pullGitBranch(roots));
+    };
+    const onPushGitBranch = async () => {
+      await runGitMutation((roots) => window.gosAgent.pushGitBranch(roots));
+    };
+    const onPublishGitBranch = async () => {
+      await runGitMutation((roots) => window.gosAgent.publishGitBranch(roots));
+    };
+    const onCreateGitBranch = async () => {
+      const name = String(store.getState().gitBranchDraft || "").trim();
+      if (!name) {
+        store.update((current) => ({ ...current, error: "Enter a branch name first." }));
+        return;
+      }
+      const result = await runGitMutation((roots) => window.gosAgent.createGitBranch({ ...roots, name }));
+      if (result?.ok) {
+        store.update((current) => ({
+          ...current,
+          gitBranchDraft: result.branch || "codex/"
+        }));
+      }
+    };
+    const onSwitchGitBranch = async (name) => {
+      await runGitMutation((roots) => window.gosAgent.switchGitBranch({ ...roots, name }));
+    };
     const onCreateSuggestedTask = async (candidate) => {
       const snapshot = store.getState().snapshot;
       if (!snapshot) {
@@ -23561,6 +23760,18 @@
                 ]
               }
             ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "button",
+              {
+                className: `module-chip${state.activeModuleId === "git" ? " active" : ""}`,
+                "data-module-nav": "git",
+                onClick: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Git" }),
+                  state.activeModuleId === "git" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Branch, diff, stage, commit, and publish live here." }) : null
+                ]
+              }
+            ),
             [
               ["ai", "AI"],
               ["skills", "Skills"],
@@ -23638,6 +23849,15 @@
                 children: "Monitor"
               }
             ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                className: `toolbar-chip${state.activeModuleId === "git" ? " active" : ""}`,
+                "data-route-tab": "git",
+                onClick: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
+                children: "Git"
+              }
+            ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void refreshApp("full"), children: "Sync" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
               "button",
@@ -23678,6 +23898,7 @@
             {
               snapshot: state.snapshot,
               aiStatus: state.aiStatus,
+              gitStatus: state.gitStatus,
               learningStatus: state.learningStatus,
               thread,
               composerText: state.composerText,
@@ -23699,7 +23920,9 @@
               onQuickChat,
               onPickAttachments: onPickChatAttachments,
               onUpdateSetting,
+              onSetChatMode,
               onOpenSettingsTab,
+              onOpenGit: () => store.update((current) => ({ ...current, activeModuleId: "git" })),
               onSelectPath: onLoadInspectorPath,
               onContinueTaskLoop,
               onRetryTaskLoopResearch,
@@ -23724,6 +23947,35 @@
               },
               onOpenInbox,
               onRollbackLatestBackup
+            }
+          ) : null,
+          state.activeModuleId === "git" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            GitPanel,
+            {
+              snapshot: state.snapshot,
+              gitStatus: state.gitStatus,
+              gitBranches: state.gitBranches,
+              gitDiff: state.gitDiff,
+              gitNotice: state.gitNotice,
+              activeGitPath: state.activeGitPath,
+              gitCommitMessage: state.gitCommitMessage,
+              gitBranchDraft: state.gitBranchDraft,
+              gitBusy: state.gitBusy,
+              onOpenDiff: onOpenGitDiff,
+              onStagePaths: onStageGitPaths,
+              onUnstagePaths: onUnstageGitPaths,
+              onStageAll: onStageAllGitPaths,
+              onUnstageAll: onUnstageAllGitPaths,
+              onDiscardPaths: onDiscardGitPaths,
+              onCommit: onCommitGitStaged,
+              onPull: onPullGitBranch,
+              onPush: onPushGitBranch,
+              onPublish: onPublishGitBranch,
+              onCreateBranch: onCreateGitBranch,
+              onSwitchBranch: onSwitchGitBranch,
+              onCommitMessageChange: (value) => store.update((current) => ({ ...current, gitCommitMessage: value })),
+              onBranchDraftChange: (value) => store.update((current) => ({ ...current, gitBranchDraft: value })),
+              onRefresh: () => void refreshGitState()
             }
           ) : null,
           state.activeModuleId === "settings" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -23857,6 +24109,8 @@
     const settings = props.snapshot?.settings || {};
     const workbenchMode = normalizeWorkbenchMode(settings);
     const composerSize = normalizeComposerSize(settings);
+    const chatMode = resolveThreadChatMode(settings, props.thread);
+    const chatModeLabel = formatChatModeLabel(chatMode);
     const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
     const messages = props.thread?.messages || [];
     const isFreshThread = !messages.some((message) => message.role !== "system");
@@ -23872,6 +24126,18 @@
     const currentRuntimeLabel = String(
       props.aiStatus?.current?.provider || settings.runtime || "ollama"
     ).trim() || "ollama";
+    const gitSummary = props.gitStatus || props.snapshot?.git || {};
+    const gitBranchLabel = String(gitSummary?.branch || "Detached HEAD").trim() || "Detached HEAD";
+    const gitSummaryText = String(
+      gitSummary?.summary || (gitSummary?.dirty ? "Repository has local changes." : "Repository is clean.")
+    ).trim() || "Git summary is warming up.";
+    const chatModeSummary = chatMode === "ask"
+      ? "Talk naturally, ask questions, and keep the thread conversational."
+      : chatMode === "plan"
+        ? "Scope the work, think through risks, and stop before edits."
+        : chatMode === "edit"
+          ? "Focus on code changes and diffs, but keep edit execution gated."
+          : "Let the engine queue and run the next bounded action when the current gates allow it.";
     const pinnedAiProfiles = [...aiProfiles].sort((left, right) => Number(Boolean(right?.active)) - Number(Boolean(left?.active))).slice(0, 5);
     const activeAiProfile = pinnedAiProfiles.find((profile) => profile?.active) || pinnedAiProfiles[0] || null;
     const operatorLoop = props.snapshot?.operatorLoop && typeof props.snapshot.operatorLoop === "object" ? props.snapshot.operatorLoop : {};
@@ -23971,13 +24237,13 @@
     const hasLoopDetails = !!(String(failureClass.code || "").trim() || String(checkpointRef.refId || checkpointRef.id || checkpointRef.path || "").trim() || recoveryNextStep || interruptRequest.active || reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0 || String(reviewBundle.reason || reviewBundle.howToFix || reviewBundle.changeSummary || "").trim() || visibleWorkbenchArtifacts.length > 0);
     const hasFocusBlockingState = !!(interruptRequest.active || reviewBundle.requiresManualReview || Number(reviewBundle.pendingCount || 0) > 0 || String(failureClass.code || reviewBundle.reason || reviewBundle.howToFix).trim());
     const showStatusStrip = workbenchMode === "focus" || workbenchMode === "balanced" || workbenchMode === "control-room";
-    const showFocusRunStrip = workbenchMode === "focus" && !isFreshThread && !!(hasLoopDetails || String(taskObjective.summary || latestExecution.task || latestRequest.task || latestRun?.runtimeLabel || latestRun?.label || "").trim());
-    const showFullLoopCards = workbenchMode === "control-room" ? !isFreshThread || hasLoopDetails : workbenchMode === "balanced" && hasLoopDetails;
+    const showFocusRunStrip = (chatMode === "agent" || chatMode === "edit") && workbenchMode === "focus" && !isFreshThread && !!(hasLoopDetails || String(taskObjective.summary || latestExecution.task || latestRequest.task || latestRun?.runtimeLabel || latestRun?.label || "").trim());
+    const showFullLoopCards = (chatMode === "agent" || chatMode === "edit") && (workbenchMode === "control-room" ? !isFreshThread || hasLoopDetails : workbenchMode === "balanced" && hasLoopDetails);
     const showWorkbenchLayoutBar = true;
     const showFocusBlockingDetail = workbenchMode === "focus" && !isFreshThread && hasFocusBlockingState;
-    const showPinnedRunTasks = !isFreshThread || workbenchMode === "focus";
+    const showPinnedRunTasks = chatMode === "agent" || chatMode === "edit" || (isFreshThread && workbenchMode === "focus");
     const compactPinnedRunTasks = isFreshThread || workbenchMode === "focus";
-    const showCompactHelperCard = workbenchMode !== "focus" && !showFullLoopCards && (!isFreshThread || hasLoopDetails || hasFocusBlockingState);
+    const showCompactHelperCard = (chatMode === "agent" || chatMode === "edit") && workbenchMode !== "focus" && !showFullLoopCards && (!isFreshThread || hasLoopDetails || hasFocusBlockingState);
     const compactLoopSummary = summarizeText([
       latestExecution.runState || latestExecution.status || latestExecution.stageSummary?.currentStage || latestRun?.runtimeState || latestRun?.status || "ready",
       failureClass.code ? `failure ${failureClass.code}` : "",
@@ -24007,12 +24273,30 @@
       canContinue: canContinueTaskLoop,
       canOpenFiles: canOpenTaskLoopFiles
     });
-    const inlineComposerSuggestions = [...engineAssistPrompts, ...composerSuggestions].filter((item, index, source) => item && source.indexOf(item) === index).slice(0, workbenchMode === "focus" ? 2 : 4);
-    const promptCards = [
-      `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
-      "Review the current repo and tell me what needs fixing first.",
-      "Set up the coding model and verify the engine is ready."
-    ];
+    const inlineComposerSuggestions = [...(chatMode === "agent" || chatMode === "edit" ? engineAssistPrompts : []), ...composerSuggestions].filter((item, index, source) => item && source.indexOf(item) === index).slice(0, workbenchMode === "focus" ? 2 : 4);
+    const promptCards = chatMode === "ask"
+      ? [
+          `Help me understand the next safe step in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
+          "Review the current repo and explain what matters most right now.",
+          "Explain how the engine is set up and what I should do next."
+        ]
+      : chatMode === "plan"
+        ? [
+            `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
+            "Break this work into bounded implementation steps and risks.",
+            "Review the current repo and tell me what should happen next."
+          ]
+        : chatMode === "edit"
+          ? [
+              "Prepare the next code change and show me the safest edit path.",
+              "Review the current repo and tell me what needs fixing first.",
+              "Prepare the smallest repair for the latest failing path."
+            ]
+          : [
+              `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
+              "Review the current repo and tell me what needs fixing first.",
+              "Set up the coding model and verify the engine is ready."
+            ];
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel workbench-panel", "data-panel": "workbench", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-home", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -24339,6 +24623,26 @@
             ] })
           ] }) : null,
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: `composer chat-composer size-${composerSize}`, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar", "data-chat-mode-bar": "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-copy", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: chatModeLabel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: chatModeSummary })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
+                [
+                  ["ask", "Ask"],
+                  ["plan", "Plan"],
+                  ["edit", "Edit"],
+                  ["agent", "Agent"]
+                ].map(([mode, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: chatMode === mode ? "active" : "ghost", "data-chat-mode-toggle": mode, onClick: () => void props.onSetChatMode(mode), children: label }, mode)),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: props.onOpenGit, children: [
+                  "Git: ",
+                  gitBranchLabel,
+                  gitSummary?.dirty ? " *" : ""
+                ] })
+              ] })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-toolbar", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: inlineComposerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
@@ -24351,8 +24655,16 @@
                   "Files ",
                   props.changedItems.length ? `(${props.changedItems.length})` : ""
                 ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: props.onOpenGit, children: [
+                  "Git ",
+                  gitSummary?.dirty ? `(dirty)` : "(clean)"
+                ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("general"), children: "Chat settings" })
               ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-git-summary", "data-chat-git-summary": "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitBranchLabel }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: gitSummaryText })
             ] }),
             props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -24556,6 +24868,107 @@
           ] })
         ] }, `${entry.recordedAt || index}-${entry.type || "event"}`)),
         entries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No learning journal entries yet." }) : null
+      ] })
+    ] });
+  }
+  function GitPanel(props) {
+    const gitStatus = props.gitStatus && typeof props.gitStatus === "object" ? props.gitStatus : {};
+    const files = Array.isArray(gitStatus.files) ? gitStatus.files : [];
+    const stagedFiles = files.filter((item) => item.staged);
+    const unstagedFiles = files.filter((item) => item.unstaged && !item.untracked);
+    const untrackedFiles = files.filter((item) => item.untracked);
+    const currentBranch = String(gitStatus.branch || "Detached HEAD").trim() || "Detached HEAD";
+    const upstream = String(gitStatus.upstream || "").trim();
+    const branchDraft = String(props.gitBranchDraft || "codex/").trim() || "codex/";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel", "data-panel": "git", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Desktop Git" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Branch, diff, commit, and publish without leaving the app" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.gitNotice || gitStatus.summary || gitStatus.blockedReason || "Use the Git workspace for branch status, staged changes, and safe publish flow.") })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, disabled: props.gitBusy, children: "Refresh" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPull, disabled: props.gitBusy || !gitStatus.canPull, children: "Pull" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPush, disabled: props.gitBusy || !gitStatus.canPush, children: "Push" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPublish, disabled: props.gitBusy || !gitStatus.canPublish, children: "Publish branch" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current branch" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: currentBranch }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: upstream ? `${upstream} • ${Number(gitStatus.ahead || 0)} ahead • ${Number(gitStatus.behind || 0)} behind` : "No upstream published yet." })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace state" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitStatus.dirty ? "Dirty" : "Clean" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: `${Number(gitStatus.stagedCount || 0)} staged • ${Number(gitStatus.unstagedCount || 0)} unstaged • ${Number(gitStatus.untrackedCount || 0)} untracked` })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Last commit" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: gitStatus.lastCommit || "No commit summary yet" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "Pick a git workspace first." })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Branch draft" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: branchDraft, onChange: (event) => props.onBranchDraftChange(event.target.value), placeholder: "codex/my-branch" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", style: { marginTop: "10px" }, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onCreateBranch, disabled: props.gitBusy, children: "Create branch" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "empty-copy", children: "App-created branches are prefixed with codex/." })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Commit staged changes" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("textarea", { value: props.gitCommitMessage, onChange: (event) => props.onCommitMessageChange(event.target.value), placeholder: "feat: describe the staged change" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", style: { marginTop: "10px" }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onCommit, disabled: props.gitBusy || !gitStatus.canCommit, children: "Commit staged" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onStageAll, disabled: props.gitBusy, children: "Stage all" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onUnstageAll, disabled: props.gitBusy || !stagedFiles.length, children: "Unstage all" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Staged" }),
+          stagedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No staged files yet." }) : stagedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, true), children: "Diff" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onUnstagePaths([item.path]), disabled: props.gitBusy, children: "Unstage" })
+            ] })
+          ] }, `staged-${item.path}`))
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Unstaged" }),
+          unstagedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No unstaged files yet." }) : unstagedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, false), children: "Diff" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onStagePaths([item.path]), disabled: props.gitBusy, children: "Stage" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onDiscardPaths([item.path]), disabled: props.gitBusy, children: "Discard" })
+            ] })
+          ] }, `unstaged-${item.path}`))
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Untracked" }),
+          untrackedFiles.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No untracked files." }) : untrackedFiles.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(item.path) || item.path }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onStagePaths([item.path]), disabled: props.gitBusy, children: "Stage" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenDiff(item.path, false), children: "Diff" })
+            ] })
+          ] }, `untracked-${item.path}`))
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Switch branch" }),
+        Array.isArray(props.gitBranches) && props.gitBranches.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: props.gitBranches.map((branch) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: branch.current ? "active" : "ghost", onClick: () => props.onSwitchBranch(branch.name), disabled: props.gitBusy || branch.current, children: branch.name }, branch.name)) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No branches available yet." })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Diff viewer" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.activeGitPath ? shortPath(props.activeGitPath) : "Pick a changed file" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("pre", { className: "code-block git-diff-viewer", children: props.gitDiff || "Select a staged, unstaged, or untracked file to inspect its git diff here." })
       ] })
     ] });
   }

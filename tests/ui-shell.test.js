@@ -175,6 +175,27 @@ test('shell keeps model, labs, learning, and file-edit actions connected to prel
   assert.match(appJs, /window\.gosAgent\.queueFollowupRecipe/);
 });
 
+test('chat shell keeps the human-first mode bar and desktop git workspace visible', () => {
+  assert.match(appJs, /data-route-tab": "git"/);
+  assert.match(appJs, /data-chat-mode-bar/);
+  assert.match(appJs, /\["ask", "Ask"\]/);
+  assert.match(appJs, /\["plan", "Plan"\]/);
+  assert.match(appJs, /\["edit", "Edit"\]/);
+  assert.match(appJs, /\["agent", "Agent"\]/);
+  assert.match(appJs, /"data-chat-mode-toggle": mode/);
+  assert.match(appJs, /data-chat-git-summary/);
+  assert.match(appJs, /Git: /);
+  assert.match(appJs, /Desktop Git/);
+  assert.match(appJs, /Commit staged/);
+  assert.match(appJs, /Publish branch/);
+  assert.match(appJs, /Create branch/);
+  assert.match(appJs, /Switch branch/);
+  assert.match(appJs, /Diff viewer/);
+  assert.match(stylesCss, /\.chat-mode-bar/);
+  assert.match(stylesCss, /\.workbench-git-summary/);
+  assert.match(stylesCss, /\.git-diff-viewer/);
+});
+
 test('styles define the codex-style workbench shell and theme system', () => {
   assert.match(stylesCss, /\.workbench-shell \{/);
   assert.match(stylesCss, /\.left-rail \{/);

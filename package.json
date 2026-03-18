@@ -1,7 +1,7 @@
 {
   "name": "gosenderr-desktop-agent-pc",
   "productName": "GoSenderr Desktop Agent PC",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Windows-ready sibling of the standalone GoSenderr Desktop Agent.",
   "private": true,
   "main": "main.js",

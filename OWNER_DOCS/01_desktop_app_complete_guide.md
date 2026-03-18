@@ -16,6 +16,8 @@ Top navigation:
 
 - `Chat`
   Primary work surface. Start here.
+- `Git`
+  Branch status, staged changes, commit, publish, and safe rollback helpers.
 - `Monitor`
   Dense operational view for readiness, acceptance, learning, promotions, and safety.
 - `Sync`
@@ -42,9 +44,11 @@ The app now defaults to `Focus chat`.
 What you see:
 
 - a centered intro state for a new thread
+- a visible mode bar for `Ask`, `Plan`, `Edit`, and `Agent`
 - prompt cards for common starting actions
 - pinned run tasks so the core engine actions stay in one place
 - pinned model profiles so you can switch lanes without opening Settings
+- a compact git summary with a quick jump into the Git workspace
 - compact status cards
 - a larger composer
 - advanced engine and recovery detail only when it matters
@@ -67,15 +71,41 @@ You can change this in either place:
 
 From Chat, use one of these:
 
+- choose the chat mode that matches what you want
 - type your task directly into the composer
 - click a prompt card
 - click one of the quick suggestions above the composer
 
 Good examples:
 
+- `Ask`: `Can you explain why this smoke check is failing?`
+- `Plan`: `Plan the next safe coding task in this workspace.`
+- `Edit`: `Prepare the smallest fix for the failing smoke path.`
+- `Agent`: `Run the next safe action and keep it bounded.`
 - `Review the repo and tell me what needs fixing first.`
 - `Plan the next safe coding task in this workspace.`
 - `Fix the failing smoke path and explain the risk.`
+
+## Git workspace
+
+Use `Git` in the top nav when you want git-native work without leaving the app.
+
+What you can do there:
+
+- inspect current branch, upstream, ahead/behind, and dirty state
+- review staged, unstaged, and untracked files
+- open diffs for changed files
+- stage, unstage, or discard unstaged file changes
+- commit staged changes only
+- pull with fast-forward only
+- push the current tracked branch
+- publish a new branch when it has no upstream
+- create and switch `codex/*` branches
+
+Practical rule:
+
+- use Chat for conversation and engine work
+- use Git for branch, diff, commit, and publish flow
 
 ## The bounded engine loop
 

@@ -2,7 +2,7 @@
   "name": "gosenderr-vscode-companion",
   "displayName": "GoSenderr VS Code Companion",
   "description": "Coding workbench companion for the GoSenderr desktop agent runtime.",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -23,7 +23,9 @@
     "onCommand:gosenderr.openTaskHub",
     "onCommand:gosenderr.openProblems",
     "onCommand:gosenderr.openSandbox",
-    "onCommand:gosenderr.openProviderSettings"
+    "onCommand:gosenderr.openProviderSettings",
+    "onCommand:gosenderr.openSourceControl",
+    "onCommand:gosenderr.openGitHistory"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -97,6 +99,14 @@
       {
         "command": "gosenderr.openProviderSettings",
         "title": "GoSenderr: Open Provider Settings"
+      },
+      {
+        "command": "gosenderr.openSourceControl",
+        "title": "GoSenderr: Open Source Control"
+      },
+      {
+        "command": "gosenderr.openGitHistory",
+        "title": "GoSenderr: Open Git History"
       }
     ],
     "menus": {

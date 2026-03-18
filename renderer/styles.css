@@ -786,6 +786,31 @@ textarea {
   gap: 10px;
 }
 
+.chat-mode-bar,
+.workbench-git-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-mode-copy p,
+.workbench-git-summary span {
+  margin: 0;
+  color: var(--muted);
+}
+
 .chat-composer {
   margin-top: auto;
   padding: 14px 16px 12px;
@@ -860,6 +885,10 @@ textarea {
   padding: 16px 18px 14px;
   background: #191919;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+}
+
+.chat-home-main.mode-focus .chat-mode-bar {
+  align-items: flex-start;
 }
 
 .chat-home-main.mode-focus .composer-toolbar {
@@ -944,6 +973,11 @@ textarea {
   border-radius: 16px;
   background: #1f1f1f;
   border: 1px solid var(--line);
+}
+
+.git-diff-viewer {
+  max-height: 420px;
+  overflow: auto;
 }
 
 .metric-card.active {

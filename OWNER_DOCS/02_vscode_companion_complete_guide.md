@@ -22,6 +22,7 @@ Core actions:
 - open sandbox
 - open provider settings
 - inspect review verdict, reason, how to fix, learned guidance, and queued follow-up
+- inspect compact git status and hand off to native Source Control/history
 
 ## Install and verify
 
@@ -39,6 +40,11 @@ Inside VS Code:
 4. Click it to open the `Workbench` view in the side bar
 5. If you do not see it yet, open the command palette
 6. Run `GoSenderr: Open Workbench`
+
+Git handoff inside VS Code:
+
+- `Open Source Control`
+- `Open Git history`
 
 ## Daily use
 
@@ -70,6 +76,8 @@ Use VS Code for:
 - editor-side run visibility
 - quick continue and repair actions
 - jumping to changed files and problems
+- seeing branch/dirty state without leaving the companion
+- handing off to native VS Code git views
 - staying in the coding loop without losing the shared run state
 
 ## If the companion looks out of sync

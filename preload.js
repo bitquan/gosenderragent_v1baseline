@@ -58,6 +58,24 @@ const reviewApi = {
   openInVsCode: wrapInvoke('review:openInVsCode'),
 };
 
+const gitApi = {
+  getSummary: wrapInvoke('git:getSummary'),
+  getStatus: wrapInvoke('git:getStatus'),
+  getDiff: wrapInvoke('git:getDiff'),
+  stage: wrapInvoke('git:stage'),
+  unstage: wrapInvoke('git:unstage'),
+  stageAll: wrapInvoke('git:stageAll'),
+  unstageAll: wrapInvoke('git:unstageAll'),
+  discardPaths: wrapInvoke('git:discardPaths'),
+  commit: wrapInvoke('git:commit'),
+  pull: wrapInvoke('git:pull'),
+  push: wrapInvoke('git:push'),
+  listBranches: wrapInvoke('git:listBranches'),
+  createBranch: wrapInvoke('git:createBranch'),
+  switchBranch: wrapInvoke('git:switchBranch'),
+  publishBranch: wrapInvoke('git:publishBranch'),
+};
+
 const skillsApi = {
   list: wrapInvoke('skills:list'),
   run: wrapInvoke('skills:run'),
@@ -248,6 +266,7 @@ contextBridge.exposeInMainWorld('gosAgent', {
   app: appApi,
   agent: agentApi,
   review: reviewApi,
+  git: gitApi,
   skills: skillsApi,
   goals: goalsApi,
   tasks: tasksApi,
@@ -317,6 +336,22 @@ contextBridge.exposeInMainWorld('gosAgent', {
   setReviewDecision: reviewApi.setDecision,
   copyReviewText: reviewApi.copyText,
   openInVsCode: reviewApi.openInVsCode,
+
+  getGitSummary: gitApi.getSummary,
+  getGitStatus: gitApi.getStatus,
+  getGitDiff: gitApi.getDiff,
+  stageGitPaths: gitApi.stage,
+  unstageGitPaths: gitApi.unstage,
+  stageAllGitPaths: gitApi.stageAll,
+  unstageAllGitPaths: gitApi.unstageAll,
+  discardGitPaths: gitApi.discardPaths,
+  commitGitStaged: gitApi.commit,
+  pullGitBranch: gitApi.pull,
+  pushGitBranch: gitApi.push,
+  listGitBranches: gitApi.listBranches,
+  createGitBranch: gitApi.createBranch,
+  switchGitBranch: gitApi.switchBranch,
+  publishGitBranch: gitApi.publishBranch,
 
   listSkills: skillsApi.list,
   runSkill: skillsApi.run,

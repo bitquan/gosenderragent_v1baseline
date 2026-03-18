@@ -161,7 +161,24 @@ function summarizeChatContext(chatContext) {
     }
   }
   const chatGuidance = context.chatGuidance && typeof context.chatGuidance === 'object' ? context.chatGuidance : {};
+  if (context.chatMode) {
+    lines.push(`Chat mode: ${String(context.chatMode).trim()}`);
+  }
+  if (context.suggestedLaneId || context.suggestedTaskMode) {
+    lines.push(
+      `Mode route: ${[String(context.suggestedLaneId || '').trim(), String(context.suggestedTaskMode || '').trim()].filter(Boolean).join(' • ')}`,
+    );
+  }
+  if (context.modeAllowsExecution === false) {
+    lines.push('Execution: stay conversational unless the operator explicitly switches to an execution-capable mode.');
+  }
+  if (context.modeRequiresEditConfirmation) {
+    lines.push('Edit safety: do not execute code changes until the operator explicitly confirms them.');
+  }
   if (chatGuidance.mode && chatGuidance.mode !== 'off') {
+    if (chatGuidance.chatMode) {
+      lines.push(`Mode guidance: ${String(chatGuidance.chatMode).trim()}`);
+    }
     if (chatGuidance.customInstructions) {
       lines.push(`Custom instructions: ${String(chatGuidance.customInstructions).trim()}`);
     }
@@ -300,8 +317,9 @@ function buildConversationalPrompt({
 
   return [
     'You are the GoSenderr desktop coding workbench inside the local desktop app for this software workspace.',
-    'Act like a strong coding copilot: direct, calm, practical, and grounded in the current repo state.',
-    'Prefer a natural answer in short paragraphs or a compact bullet list.',
+    'Act like a warm, capable pair-programming partner: clear, calm, practical, and grounded in the current repo state.',
+    'Answer the way a strong human collaborator would: understand the request, reply directly, and suggest the next step naturally.',
+    'Prefer short paragraphs by default. Use bullets only when the content is clearly list-shaped.',
     'Respect the operator guidance and learned prompt patterns when they are present, but do not overfit or become repetitive.',
     'If a slash command or in-app action would help, mention it briefly at the end.',
     'Do not invent completed work, test results, or file edits.',

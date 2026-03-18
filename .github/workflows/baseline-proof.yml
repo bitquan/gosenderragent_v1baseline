@@ -1,15 +1,13 @@
-name: Desktop Agent CI
+name: Baseline Proof
 
 on:
-  pull_request:
   push:
     branches:
       - main
-      - codex/**
   workflow_dispatch:
 
 jobs:
-  desktop-ci:
+  baseline-proof:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,29 +24,28 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci
 
-      - name: Unit and integration tests
+      - name: Run engine acceptance
         env:
           DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
-        run: npm test
+        run: npm run engine:acceptance -- --full-self-host
 
-      - name: Smoke checks
-        env:
-          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
-        run: npm run smoke
-
-      - name: UI smoke checks
-        env:
-          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
-        run: xvfb-run -a npm run smoke:ui
-
-      - name: Packaged smoke checks
-        env:
-          DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
-        run: xvfb-run -a npm run packaged:smoke
-
-      - name: Baseline checks
+      - name: Run baseline system checks
         env:
           DESKTOP_AGENT_TARGET_WORKSPACE: ${{ github.workspace }}
         run: |
+          npm run system:check -- --area acceptance
+          npm run system:check -- --area autonomy
           npm run system:check -- --area roadmap
           npm run system:check -- --area trust
+          npm run system:check -- --area learning
+          npm run system:check -- --area promotion
+
+      - name: Upload proof artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-proof
+          path: |
+            artifacts/**
+            logs/**
+            app_backup_archive/**
+          if-no-files-found: ignore

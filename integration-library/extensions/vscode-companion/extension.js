@@ -214,6 +214,36 @@ function buildSelfImprovementProofViewModel(value = {}) {
   };
 }
 
+function readCompanionGitSummary(repoRoot, workspaceRoot) {
+  const root = String(repoRoot || '').trim();
+  const targetRoot = String(workspaceRoot || '').trim();
+  if (!root || !targetRoot) {
+    return {
+      label: 'No repo yet',
+      meta: 'Open the desktop-agent workspace to load git status.',
+      branch: '',
+      dirty: false,
+    };
+  }
+  try {
+    const { getGitSummary } = require(path.join(root, 'core', 'git-service.js'));
+    const summary = getGitSummary(targetRoot);
+    return {
+      label: clipText(summary.branch || 'Detached HEAD', 80),
+      meta: clipText(summary.summary || summary.blockedReason || 'Git summary unavailable.', 180),
+      branch: String(summary.branch || '').trim(),
+      dirty: summary.dirty === true,
+    };
+  } catch (error) {
+    return {
+      label: 'Git unavailable',
+      meta: clipText(error instanceof Error ? error.message : 'Git summary unavailable.', 180),
+      branch: '',
+      dirty: false,
+    };
+  }
+}
+
 function buildTaskObjective(objective, options = {}) {
   return {
     summary: String(objective || '').trim(),
@@ -410,6 +440,41 @@ function buildQueuedFollowupViewModel(value = {}) {
   };
 }
 
+function inferChatModeFromSnapshot(snapshot = {}) {
+  const explicit = String(snapshot.chatMode || '').trim().toLowerCase();
+  if (['ask', 'plan', 'edit', 'agent'].includes(explicit)) {
+    return explicit;
+  }
+  const laneId = String(snapshot.laneId || '').trim().toLowerCase();
+  const taskMode = String(snapshot.taskMode || '').trim().toLowerCase();
+  if (laneId.includes('plan') || taskMode.includes('plan') || laneId.includes('research') || taskMode.includes('research')) {
+    return 'plan';
+  }
+  if (laneId.includes('code') || laneId.includes('repair') || laneId.includes('review') || taskMode.includes('code') || taskMode.includes('repair') || taskMode.includes('review')) {
+    return 'edit';
+  }
+  if (snapshot?.nextAction?.command || snapshot?.queuedFollowup?.exists) {
+    return 'agent';
+  }
+  return 'ask';
+}
+
+function buildChatModeViewModel(snapshot = {}) {
+  const mode = inferChatModeFromSnapshot(snapshot);
+  const label = mode.charAt(0).toUpperCase() + mode.slice(1);
+  const metaByMode = {
+    ask: 'Human-style help, explanation, and repo guidance only.',
+    plan: 'Scoped planning, risks, and next steps without launching edits.',
+    edit: 'Code-focused changes and repair flow, with confirmation before execution.',
+    agent: 'Bounded next-safe actions through the supervised engine loop.',
+  };
+  return {
+    mode,
+    label,
+    meta: metaByMode[mode] || metaByMode.ask,
+  };
+}
+
 function queueNextTaskLoopFollowupInWorkspace({ repoRoot = '', workspaceRoot = '', snapshot = null, context = {} } = {}) {
   const root = String(repoRoot || '').trim();
   const targetRoot = String(workspaceRoot || '').trim();
@@ -466,6 +531,8 @@ function buildStatePayload(controller) {
     snapshot?.memoryHints,
     readCompanionLearningMemoryHints(controller.repoRoot, controller.workspaceRoot),
   );
+  const gitSummaryView = readCompanionGitSummary(controller.repoRoot, controller.workspaceRoot);
+  const chatModeView = buildChatModeViewModel(snapshot || {});
   const selfHostProof = readCompanionSelfHostProof(controller.repoRoot, controller.workspaceRoot);
   const selfImprovementProof = readCompanionSelfImprovementProof(controller.repoRoot);
   return {
@@ -480,6 +547,8 @@ function buildStatePayload(controller) {
     queuedFollowupView: buildQueuedFollowupViewModel(queuedFollowup || {}),
     reviewBundleView: buildReviewBundleViewModel(snapshot || {}),
     memoryHintsView: buildMemoryHintsViewModel(memoryHints),
+    chatModeView,
+    gitSummaryView,
     selfHostProofView: buildSelfHostProofViewModel(selfHostProof),
     selfImprovementProofView: buildSelfImprovementProofViewModel(selfImprovementProof),
     snapshot: snapshot ? {
@@ -509,6 +578,7 @@ function buildStatePayload(controller) {
       checkpointRef: snapshot.checkpointRef || {},
       interruptRequest: snapshot.interruptRequest || {},
       reviewBundle: snapshot.reviewBundle || {},
+      chatMode: chatModeView.mode,
       nextAction: snapshot.nextAction || {},
       queuedFollowup: snapshot.queuedFollowup || {},
       memoryHints,
@@ -613,6 +683,8 @@ function buildWorkbenchHtml() {
         <div class="row" style="margin-top:8px;">
           <button id="runNextAction" class="primary">Run next safe action</button>
           <button id="queueNextTask">Queue next task</button>
+          <button id="openSourceControl">Open Source Control</button>
+          <button id="openGitHistory">Open Git history</button>
           <button id="openTrace">Open trace</button>
           <button id="openFiles">Open files</button>
           <button id="openTaskHub">Open task hub</button>
@@ -622,6 +694,16 @@ function buildWorkbenchHtml() {
         </div>
       </section>
       <section class="grid">
+        <div class="card">
+          <div class="eyebrow">Chat mode</div>
+          <h3 id="chatModeLabel">Ask</h3>
+          <p id="chatModeMeta" class="meta" style="margin-top:8px;"></p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Git</div>
+          <h3 id="gitLabel">No git summary yet</h3>
+          <p id="gitMeta" class="meta" style="margin-top:8px;"></p>
+        </div>
         <div class="card">
           <div class="eyebrow">Runtime</div>
           <h3 id="runtimeLabel">Waiting for workspace</h3>
@@ -708,6 +790,10 @@ function buildWorkbenchHtml() {
       const summary = document.getElementById('summary');
       const runtimeLabel = document.getElementById('runtimeLabel');
       const runtimeMeta = document.getElementById('runtimeMeta');
+      const chatModeLabel = document.getElementById('chatModeLabel');
+      const chatModeMeta = document.getElementById('chatModeMeta');
+      const gitLabel = document.getElementById('gitLabel');
+      const gitMeta = document.getElementById('gitMeta');
       const reviewLabel = document.getElementById('reviewLabel');
       const reviewMeta = document.getElementById('reviewMeta');
       const trustLabel = document.getElementById('trustLabel');
@@ -740,6 +826,8 @@ function buildWorkbenchHtml() {
         retryResearch: document.getElementById('retryResearch'),
         runNextAction: document.getElementById('runNextAction'),
         queueNextTask: document.getElementById('queueNextTask'),
+        openSourceControl: document.getElementById('openSourceControl'),
+        openGitHistory: document.getElementById('openGitHistory'),
         openTrace: document.getElementById('openTrace'),
         openFiles: document.getElementById('openFiles'),
         openTaskHub: document.getElementById('openTaskHub'),
@@ -780,6 +868,12 @@ function buildWorkbenchHtml() {
         runtimeMeta.textContent = snapshot
           ? [snapshot.laneLabel || snapshot.laneId, snapshot.taskMode, snapshot.modelDisplayName || snapshot.modelProfileId, snapshot.baseModel, snapshot.providerSource].filter(Boolean).join(' • ')
           : [state.workspaceRoot || 'No workspace', state.repoRoot || 'No repo root'].filter(Boolean).join(' • ');
+        const chatModeView = state.chatModeView || { label: 'Ask', meta: 'Human-style help, explanation, and repo guidance only.' };
+        chatModeLabel.textContent = chatModeView.label || 'Ask';
+        chatModeMeta.textContent = chatModeView.meta || '';
+        const gitSummaryView = state.gitSummaryView || { label: 'No git summary yet', meta: '' };
+        gitLabel.textContent = gitSummaryView.label || 'No git summary yet';
+        gitMeta.textContent = gitSummaryView.meta || '';
         const reviewBundleView = state.reviewBundleView || { label: 'No review bundle yet', meta: '', decisionLabel: '', summary: '' };
         reviewLabel.textContent = reviewBundleView.decisionLabel || snapshot?.reviewSummary?.summary || 'No review verdict yet';
         reviewMeta.textContent = [reviewBundleView.summary, snapshot?.runSummary?.summary || ''].filter(Boolean).join(' • ');
@@ -807,9 +901,6 @@ function buildWorkbenchHtml() {
         const selfImprovementProofView = state.selfImprovementProofView || { label: 'No self-improvement proof yet', meta: '' };
         selfImproveLabel.textContent = selfImprovementProofView.label || 'No self-improvement proof yet';
         selfImproveMeta.textContent = selfImprovementProofView.meta || '';
-        const selfImprovementProofView = state.selfImprovementProofView || { label: 'No self-improvement proof yet', meta: '' };
-        selfImproveLabel.textContent = selfImprovementProofView.label || 'No self-improvement proof yet';
-        selfImproveMeta.textContent = selfImprovementProofView.meta || '';
         setList(files, snapshot?.changedFiles || [], 'No changed files captured yet.');
         setList(artifacts, snapshot?.workbenchArtifacts || [], 'No workbench artifacts captured yet.');
         setList(actions, [snapshot?.nextAction?.summary, ...(snapshot?.recommendedActions || [])].filter(Boolean), 'No follow-up actions recorded yet.');
@@ -823,6 +914,8 @@ function buildWorkbenchHtml() {
         buttons.runNextAction.disabled = !ready || running || !snapshot?.nextAction?.command;
         buttons.runNextAction.textContent = snapshot?.nextAction?.label || 'Run next safe action';
         buttons.queueNextTask.disabled = !ready || running || !(snapshot?.queuedFollowup?.exists || snapshot?.nextAction?.command);
+        buttons.openSourceControl.disabled = !state.repoRoot;
+        buttons.openGitHistory.disabled = !state.repoRoot;
         buttons.openTrace.disabled = !snapshot;
         buttons.openFiles.disabled = !snapshot || !Array.isArray(snapshot.changedFiles) || snapshot.changedFiles.length === 0;
         buttons.openTaskHub.disabled = !queuedFollowupView.hubPath;
@@ -835,6 +928,8 @@ function buildWorkbenchHtml() {
       buttons.retryResearch.addEventListener('click', () => vscode.postMessage({ type: 'retry-with-research' }));
       buttons.runNextAction.addEventListener('click', () => vscode.postMessage({ type: 'run-next-action' }));
       buttons.queueNextTask.addEventListener('click', () => vscode.postMessage({ type: 'queue-next-task' }));
+      buttons.openSourceControl.addEventListener('click', () => vscode.postMessage({ type: 'open-source-control' }));
+      buttons.openGitHistory.addEventListener('click', () => vscode.postMessage({ type: 'open-git-history' }));
       buttons.openTrace.addEventListener('click', () => vscode.postMessage({ type: 'open-trace' }));
       buttons.openFiles.addEventListener('click', () => vscode.postMessage({ type: 'open-files' }));
       buttons.openTaskHub.addEventListener('click', () => vscode.postMessage({ type: 'open-task-hub' }));
@@ -929,6 +1024,14 @@ function getWorkbenchMessageHandler(controller) {
       await openProviderSettings(controller);
       return;
     }
+    if (type === 'open-source-control') {
+      await openSourceControlView();
+      return;
+    }
+    if (type === 'open-git-history') {
+      await openGitHistoryView();
+      return;
+    }
     if (type === 'open-panel') {
       await openWorkbenchPanel(controller.context);
     }
@@ -997,6 +1100,25 @@ async function openTouchedFiles(controller) {
   if (choice?.candidate) {
     await openPathInEditor(choice.candidate);
   }
+}
+
+async function openSourceControlView() {
+  const vscode = getVsCode();
+  await vscode.commands.executeCommand('workbench.view.scm');
+}
+
+async function openGitHistoryView() {
+  const vscode = getVsCode();
+  const availableCommands = typeof vscode.commands.getCommands === 'function'
+    ? await vscode.commands.getCommands(true)
+    : [];
+  const preferredCommands = [
+    'git.viewHistory',
+    'git.openRepository',
+    'workbench.view.scm',
+  ];
+  const command = preferredCommands.find((entry) => availableCommands.includes(entry)) || 'workbench.view.scm';
+  await vscode.commands.executeCommand(command);
 }
 
 async function openSandboxArtifact(controller) {
@@ -1345,6 +1467,12 @@ function activate(context) {
       const controller = workbenchController || await ensureWorkbench(context);
       await openProviderSettings(controller);
     }),
+    vscode.commands.registerCommand('gosenderr.openSourceControl', async () => {
+      await openSourceControlView();
+    }),
+    vscode.commands.registerCommand('gosenderr.openGitHistory', async () => {
+      await openGitHistoryView();
+    }),
   ];
 
   context.subscriptions.push(
@@ -1375,6 +1503,7 @@ module.exports = {
   buildSelfImprovementProofViewModel,
   buildReviewBundleViewModel,
   buildQueuedFollowupViewModel,
+  buildChatModeViewModel,
   collectWorkspaceFileCandidates,
   queueNextTaskLoopFollowupInWorkspace,
   resolveNextActionCommand,

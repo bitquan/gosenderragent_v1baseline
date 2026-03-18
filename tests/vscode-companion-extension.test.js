@@ -12,6 +12,7 @@ const {
   buildSelfHostProofViewModel,
   buildSelfImprovementProofViewModel,
   buildQueuedFollowupViewModel,
+  buildChatModeViewModel,
   buildRepairObjective,
   buildReviewBundleViewModel,
   buildTaskObjective,
@@ -24,6 +25,10 @@ const {
   WORKBENCH_VIEW_CONTAINER_ID,
   WORKBENCH_VIEW_ID,
 } = require('../integration-library/extensions/vscode-companion/extension.js');
+const extensionSource = fs.readFileSync(
+  path.join(__dirname, '..', 'integration-library', 'extensions', 'vscode-companion', 'extension.js'),
+  'utf8',
+);
 
 function makeRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-vscode-companion-'));
@@ -65,12 +70,16 @@ test('package contributes the GoSenderr activity-bar container and sidebar workb
     : [];
   const workbenchView = views.find((entry) => entry.id === WORKBENCH_VIEW_ID);
 
-  assert.equal(pkg.version, '0.1.1');
+  assert.equal(pkg.version, '0.1.3');
   assert.ok(pkg.activationEvents.includes(`onView:${WORKBENCH_VIEW_ID}`));
+  assert.ok(pkg.activationEvents.includes('onCommand:gosenderr.openSourceControl'));
+  assert.ok(pkg.activationEvents.includes('onCommand:gosenderr.openGitHistory'));
   assert.equal(workbenchContainer?.title, 'GoSenderr');
   assert.equal(workbenchContainer?.icon, 'resources/activitybar-icon.svg');
   assert.equal(workbenchView?.type, 'webview');
   assert.equal(workbenchView?.name, 'Workbench');
+  assert.ok(pkg.contributes.commands.some((entry) => entry.command === 'gosenderr.openSourceControl'));
+  assert.ok(pkg.contributes.commands.some((entry) => entry.command === 'gosenderr.openGitHistory'));
 });
 
 test('buildOrchestrateRequest uses the current orchestrate action and workspace root', () => {
@@ -189,6 +198,33 @@ test('buildSelfImprovementProofViewModel exposes one readable supervised self-im
 
   assert.equal(view.label, 'PROVEN');
   assert.match(view.meta, /next: Open at most one more bounded self-improvement task/i);
+});
+
+test('buildChatModeViewModel maps the shared runtime lane into a readable companion mode summary', () => {
+  const planView = buildChatModeViewModel({
+    laneId: 'plan-reasoning',
+    taskMode: 'plan-reasoning',
+  });
+  const editView = buildChatModeViewModel({
+    laneId: 'code-main',
+    taskMode: 'code-main',
+  });
+
+  assert.equal(planView.mode, 'plan');
+  assert.match(planView.meta, /Scoped planning/i);
+  assert.equal(editView.mode, 'edit');
+  assert.match(editView.meta, /confirmation before execution/i);
+});
+
+test('companion workbench includes git handoff controls and mode visibility', () => {
+  assert.match(extensionSource, /Chat mode/);
+  assert.match(extensionSource, /Git/);
+  assert.match(extensionSource, /Open Source Control/);
+  assert.match(extensionSource, /Open Git history/);
+  assert.match(extensionSource, /type: 'open-source-control'/);
+  assert.match(extensionSource, /type: 'open-git-history'/);
+  assert.match(extensionSource, /gosenderr\.openSourceControl/);
+  assert.match(extensionSource, /gosenderr\.openGitHistory/);
 });
 
 test('queueNextTaskLoopFollowupInWorkspace uses the shared task-hub queue path', () => {

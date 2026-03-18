@@ -278,3 +278,35 @@ test('free-form ai prompt includes recommended docs guidance when present', asyn
   assert.match(receivedPrompt, /Model provisioning: Workspace role expects Ollama, but no ready local model is available yet\./);
   assert.match(receivedPrompt, /Model route next step: Import or select a ready Ollama model before asking for local coding work\./);
 });
+
+test('free-form ai prompt keeps the default voice human-first and includes chat mode context', async () => {
+  let receivedPrompt = '';
+  const reply = await handleAssistantChat('/workspace', 'Can you help me think through the next step?', {
+    hasAiKey: async () => true,
+    getSummary: async () => ({ total: 2, todo: 1, done: 1, tested: 1 }),
+    runAi: async (_workspaceRoot, prompt) => {
+      receivedPrompt = prompt;
+      return 'Yes. Start with the smallest safe check, then we can decide whether this needs a wider fix.';
+    },
+    chatContext: {
+      activeView: 'workbench',
+      chatMode: 'ask',
+      suggestedTaskMode: 'chat-fast',
+      suggestedLaneId: 'chat-fast',
+      modeAllowsExecution: false,
+      modeRequiresEditConfirmation: false,
+      chatGuidance: {
+        chatMode: 'ask',
+        modeLabel: 'Ask',
+      },
+    },
+  });
+
+  assert.equal(reply, 'Yes. Start with the smallest safe check, then we can decide whether this needs a wider fix.');
+  assert.match(receivedPrompt, /warm, capable pair-programming partner/i);
+  assert.match(receivedPrompt, /Answer the way a strong human collaborator would/i);
+  assert.match(receivedPrompt, /Prefer short paragraphs by default/i);
+  assert.match(receivedPrompt, /Chat mode: ask/i);
+  assert.match(receivedPrompt, /Mode route: chat-fast/i);
+  assert.match(receivedPrompt, /Execution: stay conversational unless the operator explicitly switches to an execution-capable mode\./i);
+});
