@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { getAssistantRunsDir } = require('./assistant-paths');
+const { getAssistantRunsDir, getAssistantRuntimeStatePath } = require('./assistant-paths');
 const { parseBatBoard } = require('./board');
 const { deriveWorkspaceStyleProfile, improveTitleWithStyleProfile } = require('./style-profile');
 
@@ -340,6 +340,328 @@ function deriveTaskStatusFromRunStatus(status = '', reviewSummary = {}) {
   return '';
 }
 
+function taskStatusRank(status = '') {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'running') {
+    return 6;
+  }
+  if (normalized === 'review') {
+    return 5;
+  }
+  if (normalized === 'queued' || normalized === 'ready') {
+    return 4;
+  }
+  if (normalized === 'blocked' || normalized === 'needs-rescope' || normalized === 'needs-repair') {
+    return 3;
+  }
+  if (normalized === 'completed') {
+    return 2;
+  }
+  if (isClosedTaskStatus(normalized)) {
+    return 1;
+  }
+  return 0;
+}
+
+function dedupeRunLinks(runLinks = []) {
+  const buckets = new Map();
+  for (const entry of Array.isArray(runLinks) ? runLinks : []) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    const runId = String(entry.runId || '').trim();
+    const id = String(entry.id || '').trim();
+    const dedupeKey = runId || id;
+    if (!dedupeKey) {
+      continue;
+    }
+    const current = buckets.get(dedupeKey);
+    if (!current || parseIsoTimestamp(entry.updatedAt) >= parseIsoTimestamp(current.updatedAt)) {
+      buckets.set(dedupeKey, entry);
+    }
+  }
+  return Array.from(buckets.values());
+}
+
+function buildOpenTaskDedupeKey(task = {}) {
+  const metadata = task?.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const signature = String(metadata.followupSignature || '').trim().toLowerCase();
+  const scopeRoots = collectPreferredEntityWorkspaceRoots(task).join('|');
+  const candidateId = String(task?.candidateId || '').trim().toLowerCase();
+  if (signature) {
+    if (candidateId.startsWith('repair-failed-run:')) {
+      const repairObjective = clipText(task.objective || task.title || '', 220).toLowerCase();
+      if (repairObjective) {
+        return `repair-run:${repairObjective}|${scopeRoots}`;
+      }
+    }
+    return `sig:${signature}|${scopeRoots}`;
+  }
+  const objective = clipText(task.objective || task.title || '', 220).toLowerCase();
+  if (!objective) {
+    return '';
+  }
+  return `task:${objective}|${scopeRoots}|${String(task.intentType || '').trim().toLowerCase()}`;
+}
+
+function buildClosedTaskDedupeKey(task = {}, linkedRun = null) {
+  if (!task || typeof task !== 'object') {
+    return '';
+  }
+  const status = String(task.status || '').trim().toLowerCase();
+  if (status !== 'completed') {
+    return '';
+  }
+  const metadata = task?.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const linkedRunReviewSummary = linkedRun?.metadata && typeof linkedRun.metadata === 'object'
+    ? linkedRun.metadata.reviewSummary || {}
+    : {};
+  const builderProof = metadata.builderProof === true || linkedRun?.metadata?.builderProof === true;
+  const recipeId = String(metadata.recipeId || linkedRun?.metadata?.recipeId || '').trim().toLowerCase();
+  const cleanPass = String(linkedRun?.status || metadata.lastRunState || '').trim().toLowerCase() === 'pass';
+  const requiresManualReview = Boolean(
+    metadata.requiresManualReview
+    || linkedRunReviewSummary?.requiresManualReview
+    || Number(metadata.reviewPendingCount || 0) > 0,
+  );
+  if (!builderProof || !recipeId || !cleanPass || requiresManualReview) {
+    return '';
+  }
+  const stableScopeRoots = Array.from(new Set([
+    task?.targetWorkspaceRoot,
+    task?.projectRoot,
+    task?.sourceRoot,
+    task?.workspaceRoot,
+    metadata?.targetWorkspaceRoot,
+    metadata?.projectRoot,
+    metadata?.sourceRoot,
+    metadata?.workspaceScopeRoot,
+    metadata?.workspace_scope_root,
+  ].map((item) => normalizeWorkspacePath(item)).filter(Boolean))).join('|');
+  return `completed:builder-proof:${recipeId}|${stableScopeRoots}`;
+}
+
+function looksInfrastructureFailure(...values) {
+  const haystack = values.map((value) => String(value || '').trim()).filter(Boolean).join('\n').toLowerCase();
+  if (!haystack) {
+    return false;
+  }
+  return /could not start the python runtime|spawn .*py\.exe enonent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+}
+
+function readRuntimeRunMap(workspaceRoot) {
+  try {
+    const runtimePath = getAssistantRuntimeStatePath(workspaceRoot);
+    if (!runtimePath || !fs.existsSync(runtimePath)) {
+      return new Map();
+    }
+    const payload = JSON.parse(fs.readFileSync(runtimePath, 'utf8'));
+    const runs = Array.isArray(payload?.runs)
+      ? payload.runs
+      : (Array.isArray(payload?.latest) ? payload.latest : []);
+    return new Map(
+      runs
+        .filter((item) => item && typeof item === 'object' && String(item.runId || '').trim())
+        .map((item) => [String(item.runId || '').trim(), item]),
+    );
+  } catch (_error) {
+    return new Map();
+  }
+}
+
+function parseRepairCandidateRunId(candidateId = '') {
+  const normalized = String(candidateId || '').trim();
+  if (!normalized.toLowerCase().startsWith('repair-failed-run:')) {
+    return '';
+  }
+  return normalized.slice('repair-failed-run:'.length).trim();
+}
+
+function shouldArchiveInfrastructureRepairTask(task = {}, linkedRun = null, runtimeRun = null, runtimeRunById = null) {
+  if (!task || typeof task !== 'object') {
+    return false;
+  }
+  const status = String(task.status || '').trim().toLowerCase();
+  if (isClosedTaskStatus(status)) {
+    return false;
+  }
+  const metadata = task?.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const followupSignature = String(metadata.followupSignature || '').trim().toLowerCase();
+  const candidateId = String(task.candidateId || '').trim().toLowerCase();
+  const objective = clipText(task.objective || task.title || '', 220).toLowerCase();
+  const isGeneratedRepairFollowup = candidateId.startsWith('repair-failed-run:')
+    || followupSignature.startsWith('monitor-followup:repair-failed-run:')
+    || /repair the latest failed validation path and rerun the relevant checks/.test(objective);
+  if (!isGeneratedRepairFollowup) {
+    return false;
+  }
+  const candidateRunId = parseRepairCandidateRunId(candidateId);
+  const candidateRuntimeRun = candidateRunId && runtimeRunById instanceof Map
+    ? (runtimeRunById.get(candidateRunId) || null)
+    : null;
+  const effectiveRuntimeRun = runtimeRun || candidateRuntimeRun;
+  const linkedStatus = String(linkedRun?.status || effectiveRuntimeRun?.state || '').trim().toLowerCase();
+  if (linkedStatus !== 'fail' && linkedStatus !== 'failed') {
+    return false;
+  }
+  return looksInfrastructureFailure(
+    effectiveRuntimeRun?.stderrTail,
+    effectiveRuntimeRun?.stdoutTail,
+    effectiveRuntimeRun?.logTail,
+    effectiveRuntimeRun?.blockedReason,
+    linkedRun?.summary,
+    linkedRun?.label,
+  );
+}
+
+function choosePreferredTask(candidate = null, current = null) {
+  if (!current) {
+    return candidate;
+  }
+  const candidateRank = taskStatusRank(candidate?.status);
+  const currentRank = taskStatusRank(current?.status);
+  if (candidateRank !== currentRank) {
+    return candidateRank > currentRank ? candidate : current;
+  }
+  return parseIsoTimestamp(candidate?.updatedAt) >= parseIsoTimestamp(current?.updatedAt) ? candidate : current;
+}
+
+function runWorkspaceHygiene(workspaceRoot, payload = {}) {
+  const hub = readHub(workspaceRoot);
+  const workspaceScope = normalizeWorkspaceScope({ workspaceRoot, ...payload });
+  const runtimeRunById = readRuntimeRunMap(workspaceRoot);
+  const stats = {
+    duplicateRunLinksRemoved: 0,
+    duplicateTasksArchived: 0,
+    staleTaskStatusesSettled: 0,
+    infrastructureRepairTasksArchived: 0,
+  };
+
+  const dedupedRunLinks = dedupeRunLinks(hub.runLinks);
+  stats.duplicateRunLinksRemoved = Math.max(0, hub.runLinks.length - dedupedRunLinks.length);
+  hub.runLinks = dedupedRunLinks;
+
+  const runLinkByRunId = new Map(
+    hub.runLinks
+      .filter((item) => String(item?.runId || '').trim())
+      .map((item) => [String(item.runId || '').trim(), item]),
+  );
+
+  const chosenTasks = new Map();
+  const chosenClosedTasks = new Map();
+  for (const task of hub.tasks) {
+    if (!task || typeof task !== 'object') {
+      continue;
+    }
+    if (!entityMatchesWorkspaceScope(task, workspaceScope)) {
+      continue;
+    }
+    const linkedRun = runLinkByRunId.get(String(task.lastRunId || '').trim());
+    if (!isClosedTaskStatus(task.status)) {
+      const dedupeKey = buildOpenTaskDedupeKey(task);
+      if (!dedupeKey) {
+        continue;
+      }
+      chosenTasks.set(dedupeKey, choosePreferredTask(task, chosenTasks.get(dedupeKey)));
+      continue;
+    }
+    const closedDedupeKey = buildClosedTaskDedupeKey(task, linkedRun);
+    if (!closedDedupeKey) {
+      continue;
+    }
+    chosenClosedTasks.set(closedDedupeKey, choosePreferredTask(task, chosenClosedTasks.get(closedDedupeKey)));
+  }
+
+  const updatedAt = nowIso();
+  hub.tasks = hub.tasks.map((task) => {
+    if (!task || typeof task !== 'object') {
+      return task;
+    }
+    let nextTask = task;
+    if (!isClosedTaskStatus(task.status) && entityMatchesWorkspaceScope(task, workspaceScope)) {
+      const dedupeKey = buildOpenTaskDedupeKey(task);
+      const chosen = dedupeKey ? chosenTasks.get(dedupeKey) : null;
+      if (chosen && String(chosen.id || '').trim() !== String(task.id || '').trim()) {
+        stats.duplicateTasksArchived += 1;
+        nextTask = {
+          ...task,
+          status: 'archived',
+          updatedAt,
+          metadata: {
+            ...(task.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
+            hygieneArchivedAt: updatedAt,
+            hygieneReason: 'duplicate-open-task',
+            duplicateOfTaskId: String(chosen.id || '').trim(),
+          },
+        };
+      }
+    } else if (String(task.status || '').trim().toLowerCase() === 'completed' && entityMatchesWorkspaceScope(task, workspaceScope)) {
+      const linkedRun = runLinkByRunId.get(String(task.lastRunId || '').trim());
+      const dedupeKey = buildClosedTaskDedupeKey(task, linkedRun);
+      const chosen = dedupeKey ? chosenClosedTasks.get(dedupeKey) : null;
+      if (chosen && String(chosen.id || '').trim() !== String(task.id || '').trim()) {
+        stats.duplicateTasksArchived += 1;
+        nextTask = {
+          ...task,
+          status: 'archived',
+          updatedAt,
+          metadata: {
+            ...(task.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
+            hygieneArchivedAt: updatedAt,
+            hygieneReason: 'duplicate-completed-proof-task',
+            duplicateOfTaskId: String(chosen.id || '').trim(),
+          },
+        };
+      }
+    }
+
+    const linkedRun = runLinkByRunId.get(String(nextTask.lastRunId || '').trim());
+    const runtimeRun = runtimeRunById.get(String(nextTask.lastRunId || '').trim()) || null;
+    if (String(nextTask.status || '').trim().toLowerCase() === 'archived') {
+      return nextTask;
+    }
+    if (shouldArchiveInfrastructureRepairTask(nextTask, linkedRun, runtimeRun, runtimeRunById)) {
+      stats.infrastructureRepairTasksArchived += 1;
+      return {
+        ...nextTask,
+        status: 'archived',
+        updatedAt,
+        metadata: {
+          ...(nextTask.metadata && typeof nextTask.metadata === 'object' ? nextTask.metadata : {}),
+          hygieneArchivedAt: updatedAt,
+          hygieneReason: 'infrastructure-run-failure',
+          archivedFromRunId: String(nextTask.lastRunId || '').trim(),
+        },
+      };
+    }
+    if (!linkedRun) {
+      return nextTask;
+    }
+    const reviewSummary = linkedRun?.metadata && typeof linkedRun.metadata === 'object'
+      ? linkedRun.metadata.reviewSummary || {}
+      : {};
+    const settledStatus = deriveTaskStatusFromRunStatus(linkedRun.status, reviewSummary);
+    if (settledStatus && settledStatus !== nextTask.status) {
+      stats.staleTaskStatusesSettled += 1;
+      return {
+        ...nextTask,
+        status: settledStatus,
+        updatedAt,
+      };
+    }
+    return nextTask;
+  });
+
+  writeHub(workspaceRoot, hub);
+  return {
+    ok: true,
+    stats,
+    hubPath: hubPath(workspaceRoot),
+    taskCount: hub.tasks.length,
+    runCount: hub.runLinks.length,
+  };
+}
+
 function summarizeSelfHostExpansion(taskHub = {}, options = {}) {
   const hub = taskHub && typeof taskHub === 'object' ? taskHub : {};
   const workspaceScope = normalizeWorkspaceScope(options);
@@ -360,6 +682,10 @@ function summarizeSelfHostExpansion(taskHub = {}, options = {}) {
       return false;
     }
     const metadata = task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+    const metadataRoadmapDay = String(metadata.roadmapDay || '').trim();
+    if (metadataRoadmapDay && roadmapDay) {
+      return metadataRoadmapDay === roadmapDay;
+    }
     const signalDay = String(
       metadata.selfHostExpansionOutcomeAt
       || metadata.selfHostExpansionConsumedAt
@@ -1128,8 +1454,9 @@ function createGoal(workspaceRoot, payload = {}) {
 function listGoals(workspaceRoot, payload = {}) {
   const hub = readHub(workspaceRoot);
   const limit = Math.max(1, Math.min(200, Number(payload.limit || 80)));
+  const workspaceScope = normalizeWorkspaceScope({ workspaceRoot, ...payload });
   const compatibilityGoals = payload.includeCompat === false ? [] : listCompatibilityGoals(workspaceRoot, payload);
-  const goals = [...hub.goals, ...compatibilityGoals];
+  const goals = [...hub.goals, ...compatibilityGoals].filter((goal) => entityMatchesWorkspaceScope(goal, workspaceScope));
   return {
     ok: true,
     goals: goals.slice(0, limit),
@@ -1166,10 +1493,12 @@ function updateGoal(workspaceRoot, payload = {}) {
 function listTasks(workspaceRoot, payload = {}) {
   const hub = readHub(workspaceRoot);
   const limit = Math.max(1, Math.min(240, Number(payload.limit || 120)));
+  const workspaceScope = normalizeWorkspaceScope({ workspaceRoot, ...payload });
   let tasks = [...hub.tasks];
   if (payload.includeCompat !== false) {
     tasks = tasks.concat(listCompatibilityTasks(workspaceRoot, payload));
   }
+  tasks = tasks.filter((task) => entityMatchesWorkspaceScope(task, workspaceScope));
   if (payload.goalId) {
     tasks = tasks.filter((task) => task.goalId === String(payload.goalId));
   }
@@ -1222,6 +1551,18 @@ function createTask(workspaceRoot, payload = {}) {
     return { ok: true, task: existingTask, hubPath: hubPath(workspaceRoot), deduped: true };
   }
   const task = createTaskRecord(workspaceRoot, payload);
+  const openTaskDedupeKey = buildOpenTaskDedupeKey(task);
+  if (openTaskDedupeKey) {
+    const matchingOpenTask = hub.tasks.find((item) => {
+      if (!item || typeof item !== 'object' || isClosedTaskStatus(item.status)) {
+        return false;
+      }
+      return buildOpenTaskDedupeKey(item) === openTaskDedupeKey;
+    });
+    if (matchingOpenTask) {
+      return { ok: true, task: matchingOpenTask, hubPath: hubPath(workspaceRoot), deduped: true };
+    }
+  }
   hub.tasks = [task, ...hub.tasks.filter((item) => item.id !== task.id)].slice(0, 480);
   if (task.goalId) {
     hub.goals = hub.goals.map((goal) => (
@@ -1476,6 +1817,7 @@ function syncRuntimeRuns(workspaceRoot, runtimeStatus = {}) {
 function listRuns(workspaceRoot, payload = {}, runtimeStatus = {}) {
   const hub = syncRuntimeRuns(workspaceRoot, runtimeStatus);
   const limit = Math.max(1, Math.min(240, Number(payload.limit || 120)));
+  const workspaceScope = normalizeWorkspaceScope({ workspaceRoot, ...payload });
   const runtimeByRunId = new Map(
     (Array.isArray(runtimeStatus?.latest) ? runtimeStatus.latest : [])
       .filter((item) => item && item.runId)
@@ -1496,6 +1838,7 @@ function listRuns(workspaceRoot, payload = {}, runtimeStatus = {}) {
       endedAt: runtimeRun.endedAt || null,
     };
   });
+  runs = runs.filter((run) => entityMatchesWorkspaceScope(run, workspaceScope));
   if (payload.taskId) {
     runs = runs.filter((run) => run.taskId === String(payload.taskId));
   }
@@ -1618,6 +1961,7 @@ module.exports = {
   listTasks,
   readHub,
   recordTaskRun,
+  runWorkspaceHygiene,
   summarizeSelfHostExpansion,
   updateTask,
   updateGoal,

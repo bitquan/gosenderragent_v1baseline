@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildAutoFollowupPlan,
+  buildRunFollowupPlan,
   buildFollowupRecipe,
   buildNextActionRecipe,
   buildQueuedRecipePayload,
@@ -297,4 +298,51 @@ test('buildAutoFollowupPlan blocks automatic queueing while review is still hold
   assert.equal(plan.shouldQueue, false);
   assert.equal(plan.shouldAutoRun, false);
   assert.match(String(plan.reason || ''), /review or approval/i);
+});
+
+
+test('buildRunFollowupPlan synthesizes queueable tasks from reviewer findings', () => {
+  const plan = buildRunFollowupPlan({
+    state: 'fail',
+    reviewSummary: {
+      pendingApprovalCount: 0,
+      revisionCandidates: [
+        {
+          id: 'docs-scout-1',
+          kind: 'revision',
+          category: 'docs-scout',
+          title: 'Scout trusted docs for core/runtime.js',
+          objective: 'Capture a trusted docs source and compare the runtime implementation.',
+          summary: 'Reviewer wants a trusted docs source before the next revision.',
+          riskClass: 'low',
+          targetPaths: ['core/runtime.js'],
+        },
+        {
+          id: 'repair-1',
+          kind: 'revision',
+          category: 'validation-repair',
+          title: 'Repair core/runtime.js',
+          objective: 'Repair the runtime blocker and rerun the smallest relevant validation.',
+          summary: 'Apply the next repair slice.',
+          riskClass: 'medium',
+          targetPaths: ['core/runtime.js'],
+        },
+      ],
+    },
+    changedFiles: [{ path: 'core/runtime.js' }],
+  }, {
+    settings: {
+      autoQueueTaskLoopFollowups: true,
+      autoRunQueuedTaskLoopFollowups: true,
+    },
+    safeMode: { active: false, controller: { manualSafeMode: false } },
+    readiness: {},
+  });
+
+  assert.equal(plan.exists, true);
+  assert.equal(plan.source, 'run-findings');
+  assert.equal(plan.shouldQueue, true);
+  assert.equal(plan.shouldAutoRun, true);
+  assert.equal(plan.recipe.steps.length, 2);
+  assert.equal(plan.recipe.steps[0].category, 'docs-scout');
 });

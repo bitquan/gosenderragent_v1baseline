@@ -2,12 +2,8 @@
 
 const path = require('path');
 
-const { buildAiStatus } = require('../core/ai-center');
-const { listBenchmarkRuns } = require('../core/benchmarks');
-const { buildModelFoundryStatus } = require('../core/model-foundry');
 const { buildSystemCheck, renderSystemCheck, SYSTEM_CHECK_AREAS } = require('../core/system-check');
-const { readTrainingTuningSettings, collectTrainingTelemetry } = require('../core/training-tuning');
-const { readAssistantConfig } = require('../host/assistant-config');
+const { buildSystemCheckContext } = require('../core/system-check-context');
 
 function parseArgs(argv = []) {
   const parsed = {
@@ -77,31 +73,10 @@ async function main() {
     printHelp();
     return;
   }
-  const tuningSettings = readTrainingTuningSettings(args.workspaceRoot);
-  const tuningStatus = {
-    telemetry: await collectTrainingTelemetry({
-      settings: tuningSettings,
-    }),
-  };
-  const assistantConfig = readAssistantConfig(args.workspaceRoot, { defaultWorkspace: args.workspaceRoot });
-  const benchmarks = listBenchmarkRuns(args.workspaceRoot);
-  const modelFoundry = buildModelFoundryStatus(args.workspaceRoot, {
-    benchmarks,
-  });
-  const aiStatus = buildAiStatus({
-    settings: assistantConfig,
-    tuningStatus,
-    benchmarkRuns: benchmarks.runs,
-    modelFoundry,
-  });
+  const context = await buildSystemCheckContext(args.workspaceRoot);
   const report = buildSystemCheck({
     ...args,
-    assistantConfig,
-    benchmarks,
-    modelFoundry,
-    aiStatus,
-    tuningSettings,
-    tuningStatus,
+    ...context,
   });
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));

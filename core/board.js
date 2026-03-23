@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const assistantPaths = require('./assistant-paths');
 const { getAssistantRunsDir } = assistantPaths;
+const { isIgnoredWorkspacePath } = require('./review');
 
 const BAT_BOARD_ITEM_RE = /^\s*[-*]\s+`BAT<(\d+)>`\s+(.+)$/;
 
@@ -16,6 +17,60 @@ function readJson(filePath) {
   } catch (_err) {
     return null;
   }
+}
+
+function readWorkspaceConfigMap(workspaceRoot) {
+  if (!workspaceRoot) {
+    return {};
+  }
+  const out = {};
+  for (const fileName of ['dev_assistant.yaml', 'dev_assistant.local.yaml']) {
+    const configPath = path.join(workspaceRoot, fileName);
+    if (!fs.existsSync(configPath)) {
+      continue;
+    }
+    try {
+      const lines = fs.readFileSync(configPath, 'utf8').split(/\r?\n/);
+      for (const rawLine of lines) {
+        const line = String(rawLine || '').split('#')[0];
+        const match = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+        if (!match) {
+          continue;
+        }
+        const key = match[1];
+        const value = String(match[2] || '').trim().replace(/^['"]|['"]$/g, '');
+        if (value) {
+          out[key] = value;
+        }
+      }
+    } catch (_err) {
+      return out;
+    }
+  }
+  return out;
+}
+
+function getBoardAssistantRunsDir(workspaceRoot) {
+  if (!workspaceRoot) {
+    return '';
+  }
+  const workspaceConfig = readWorkspaceConfigMap(workspaceRoot);
+  if (workspaceConfig.assistant_runs_dir) {
+    return path.isAbsolute(workspaceConfig.assistant_runs_dir)
+      ? workspaceConfig.assistant_runs_dir
+      : path.join(workspaceRoot, workspaceConfig.assistant_runs_dir);
+  }
+  if (workspaceConfig.assistant_artifacts_root) {
+    const artifactsRoot = path.isAbsolute(workspaceConfig.assistant_artifacts_root)
+      ? workspaceConfig.assistant_artifacts_root
+      : path.join(workspaceRoot, workspaceConfig.assistant_artifacts_root);
+    return path.join(artifactsRoot, 'assistant_runs');
+  }
+  const localRunsDir = path.join(workspaceRoot, 'docs', 'assistant_runs');
+  if (fs.existsSync(localRunsDir)) {
+    return localRunsDir;
+  }
+  return getAssistantRunsDir(workspaceRoot);
 }
 
 function resolveWorkspacePath(workspaceRoot, targetPath) {
@@ -69,7 +124,7 @@ function normalizeRuntimeContext(workspaceRoot, value) {
           status: String(item.status || 'M'),
         };
       })
-      .filter((item) => item?.path),
+      .filter((item) => item?.path && !isIgnoredWorkspacePath(item.path)),
     artifact_context: {
       ...artifactContext,
       referenced_paths: referencedPaths.map((item) => toRelativeWorkspacePath(workspaceRoot, item)).filter(Boolean),
@@ -113,7 +168,7 @@ function summarizeWorkspaceTopology(workspaceRoot, runtimeContext, options = {})
     : normalizedContext.changed_files;
   const changedPaths = changedFileInputs
     .map((item) => normalizeWorkspaceChangedPath(workspaceRoot, item))
-    .filter(Boolean);
+    .filter((item) => item && !isIgnoredWorkspacePath(item));
   const activeFilePath = String(normalizedContext.active_file_path || normalizedContext.activeFilePath || '').trim();
   const rootRelativePath = activeRoot && workspaceRoot ? toRelativeWorkspacePath(workspaceRoot, activeRoot) : '';
   const scopeLabel = isolated ? 'isolated worktree' : (workspaceRoot ? 'main workspace' : 'no workspace');
@@ -438,7 +493,7 @@ function pickLatestJson(workspaceRoot, matcher) {
   if (!workspaceRoot) {
     return null;
   }
-  const runsDir = getAssistantRunsDir(workspaceRoot);
+  const runsDir = getBoardAssistantRunsDir(workspaceRoot);
   if (!fs.existsSync(runsDir)) {
     return null;
   }
@@ -591,7 +646,7 @@ function parseAssistantRuns(workspaceRoot, { limit = 30 } = {}) {
   if (!workspaceRoot) {
     return [];
   }
-  const runsDir = getAssistantRunsDir(workspaceRoot);
+  const runsDir = getBoardAssistantRunsDir(workspaceRoot);
   if (!fs.existsSync(runsDir)) {
     return [];
   }
@@ -769,7 +824,7 @@ function parseFollowupBatReport(workspaceRoot) {
   if (!workspaceRoot) {
     return null;
   }
-  const payload = readJson(path.join(getAssistantRunsDir(workspaceRoot), 'assistant_followup_bats.json'));
+  const payload = readJson(path.join(getBoardAssistantRunsDir(workspaceRoot), 'assistant_followup_bats.json'));
   if (!payload) {
     return null;
   }
@@ -875,7 +930,7 @@ function parseAssistantAnalyzeSummary(workspaceRoot) {
       state: 'idle',
     };
   }
-  const status = readJson(path.join(getAssistantRunsDir(workspaceRoot), 'assistant_analyze_status.json')) || {};
+  const status = readJson(path.join(getBoardAssistantRunsDir(workspaceRoot), 'assistant_analyze_status.json')) || {};
   const reportPath = status.report_path || status.reportPath || path.join(workspaceRoot, 'docs', 'DEV_ASSISTANT_LOG_REPORT.md');
   const resolvedReportPath = resolveWorkspacePath(workspaceRoot, reportPath);
   const exists = !!(resolvedReportPath && fs.existsSync(resolvedReportPath));
@@ -917,7 +972,7 @@ function parseAssistantTrainingSummary(workspaceRoot, dashboard = {}) {
     };
   }
   const rawTraining = dashboard.training && typeof dashboard.training === 'object' ? dashboard.training : {};
-  const status = readJson(path.join(getAssistantRunsDir(workspaceRoot), 'assistant_training_status.json')) || {};
+  const status = readJson(path.join(getBoardAssistantRunsDir(workspaceRoot), 'assistant_training_status.json')) || {};
   const outputPath = getTrainingOutputPath(workspaceRoot);
   const exists = !!(outputPath && fs.existsSync(outputPath));
   const staleAfterHours = Math.max(1, Number(rawTraining.stale_after_hours || rawTraining.staleAfterHours || 24));
@@ -1108,7 +1163,7 @@ function parseEngineBaselineSummary(workspaceRoot, dashboard = {}) {
   if (!workspaceRoot) {
     return null;
   }
-  const runsDir = getAssistantRunsDir(workspaceRoot);
+  const runsDir = getBoardAssistantRunsDir(workspaceRoot);
   const jsonPath = path.join(runsDir, 'engine_baseline_summary.json');
   const markdownPath = path.join(runsDir, 'engine_baseline_summary.md');
   const canonicalMarkdownPath = path.join(workspaceRoot, 'docs', 'ENGINE_BASELINE.md');
@@ -1157,7 +1212,7 @@ function parseEngineDailyReport(workspaceRoot, dashboard = {}) {
   if (!workspaceRoot) {
     return null;
   }
-  const runsDir = getAssistantRunsDir(workspaceRoot);
+  const runsDir = getBoardAssistantRunsDir(workspaceRoot);
   const jsonPath = path.join(runsDir, 'engine_daily_report.json');
   const markdownPath = path.join(runsDir, 'engine_daily_report.md');
   const canonicalMarkdownPath = path.join(workspaceRoot, 'docs', 'ENGINE_DAILY_REPORT.md');
@@ -1221,7 +1276,7 @@ function parseAssistantDashboard(workspaceRoot) {
   if (!workspaceRoot) {
     return null;
   }
-  const dashboard = readJson(path.join(getAssistantRunsDir(workspaceRoot), 'assistant_dashboard.json')) || {};
+  const dashboard = readJson(path.join(getBoardAssistantRunsDir(workspaceRoot), 'assistant_dashboard.json')) || {};
   const training = parseAssistantTrainingSummary(workspaceRoot, dashboard);
   const engineBaselineSummary = parseEngineBaselineSummary(workspaceRoot, dashboard);
   const engineDailyReport = parseEngineDailyReport(workspaceRoot, dashboard);

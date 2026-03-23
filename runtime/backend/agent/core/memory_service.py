@@ -1032,3 +1032,52 @@ def record_memory(
         }
     )
     save_memory(project_root, entries)
+
+
+def summarize_pattern_quality(project_root: Path, *, limit: int = 120) -> dict[str, Any]:
+    entries = load_memory(project_root)[-limit:]
+    good: Counter[str] = Counter()
+    bad: Counter[str] = Counter()
+    sources: Counter[str] = Counter()
+    for entry in entries:
+        metadata = _entry_metadata(entry)
+        validation = _entry_validation(entry).strip().lower()
+        strategy = _entry_strategy(entry).strip().lower() or 'unknown'
+        source = str(metadata.get('pattern_source') or ('test-backed' if validation == 'pass' else 'failure-backed')).strip()
+        sources[source] += 1
+        if validation == 'pass':
+            good[strategy] += 1
+        elif validation:
+            bad[strategy] += 1
+    def _top(counter: Counter[str]) -> list[dict[str, Any]]:
+        return [
+            {'label': label, 'count': count, 'confidence': round(min(0.99, 0.45 + (count * 0.08)), 2)}
+            for label, count in counter.most_common(5)
+        ]
+    return {
+        'good_patterns': _top(good),
+        'bad_patterns': _top(bad),
+        'source_mix': [{'label': label, 'count': count} for label, count in sources.most_common(5)],
+        'summary': (f"Good patterns {sum(good.values())} • Bad patterns {sum(bad.values())} • Sources {', '.join(label for label, _ in sources.most_common(3))}".strip()),
+    }
+
+
+def summarize_docs_ingestion_health(project_root: Path, *, limit: int = 120) -> dict[str, Any]:
+    entries = load_memory(project_root)[-limit:]
+    captures = 0
+    experiments = 0
+    topics: Counter[str] = Counter()
+    for entry in entries:
+        metadata = _entry_metadata(entry)
+        captures += int(metadata.get('docs_capture_count') or 0)
+        experiments += int(metadata.get('docs_experiment_count') or 0)
+        for item in list(metadata.get('docs_topics') or []):
+            topic = str(item or '').strip()
+            if topic:
+                topics[topic] += 1
+    return {
+        'docs_capture_count': captures,
+        'docs_experiment_count': experiments,
+        'top_topics': [{'label': label, 'count': count} for label, count in topics.most_common(5)],
+        'summary': f'Captured {captures} docs slices and {experiments} docs-backed experiment signal(s).',
+    }

@@ -4,11 +4,28 @@ const fs = require('fs');
 const path = require('path');
 
 const APP_ROOT = path.resolve(__dirname, '..');
-const RUNTIME_ROOT = path.join(APP_ROOT, 'runtime');
 
 function isExistingDirectory(targetPath) {
   return !!targetPath && fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory();
 }
+
+function resolveRuntimeRoot(appRoot = APP_ROOT) {
+  const primary = path.join(appRoot, 'runtime');
+  if (isExistingDirectory(primary)) {
+    return primary;
+  }
+  const normalizedRoot = path.resolve(String(appRoot || '').trim());
+  if (normalizedRoot.includes('app.asar')) {
+    const unpackedRoot = normalizedRoot.replace(/app\.asar/i, 'app.asar.unpacked');
+    const unpackedRuntime = path.join(unpackedRoot, 'runtime');
+    if (isExistingDirectory(unpackedRuntime)) {
+      return unpackedRuntime;
+    }
+  }
+  return primary;
+}
+
+const RUNTIME_ROOT = resolveRuntimeRoot(APP_ROOT);
 
 function normalizeDirectory(targetPath) {
   const raw = String(targetPath || '').trim();
@@ -50,5 +67,6 @@ module.exports = {
   getSuggestedWorkspaceRoots,
   isExistingDirectory,
   normalizeDirectory,
+  resolveRuntimeRoot,
   resolveTargetWorkspaceRoot,
 };

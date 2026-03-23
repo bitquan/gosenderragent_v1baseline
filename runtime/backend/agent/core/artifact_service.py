@@ -58,6 +58,96 @@ _SELF_IMPROVEMENT_RECENT_DUPLICATE_PENALTIES = {
 _SELF_IMPROVEMENT_SAFE_STATUSES = {"succeeded", "review"}
 
 
+def _extract_agent_routes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for key in ("agent_routes", "agentRoutes", "model_routing", "modelRouting"):
+        raw = payload.get(key)
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict):
+                    candidates.append(item)
+        elif isinstance(raw, dict):
+            for lane, item in raw.items():
+                if isinstance(item, dict):
+                    candidates.append({"agent": lane, **item})
+    runtime_result = payload.get("runtime_result") or payload.get("runtimeResult")
+    if isinstance(runtime_result, dict):
+        route_snapshot = runtime_result.get("agent_route_snapshot") or runtime_result.get("agentRouteSnapshot")
+        if isinstance(route_snapshot, list):
+            for item in route_snapshot:
+                if isinstance(item, dict):
+                    candidates.append(item)
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in candidates:
+        agent = str(item.get("agent") or item.get("role") or item.get("lane") or item.get("stage") or "").strip()
+        provider = str(item.get("provider") or item.get("provider_name") or item.get("providerName") or "").strip()
+        model = str(item.get("model") or item.get("model_name") or item.get("modelName") or "").strip()
+        if not agent and not provider and not model:
+            continue
+        key = f"{agent}|{provider}|{model}"
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({
+            "agent": agent,
+            "provider": provider,
+            "model": model,
+            "stage": str(item.get("stage") or "").strip(),
+            "source": str(item.get("source") or item.get("route_source") or item.get("routeSource") or "").strip(),
+        })
+    return normalized
+
+
+def _build_operator_proof_bundle(payload: dict[str, Any]) -> dict[str, Any]:
+    owner_summary = dict(payload.get("owner_summary") or {})
+    run_summary = dict(owner_summary.get("run_summary") or payload.get("run_summary") or {})
+    test_summary = dict(owner_summary.get("test_summary") or payload.get("test_summary") or {})
+    review_queue = dict(owner_summary.get("review_queue_summary") or payload.get("review_queue_summary") or {})
+    artifact_paths = [str(path) for path in list(owner_summary.get("artifact_paths") or payload.get("artifact_paths") or []) if str(path)]
+    changed_file_count = int(run_summary.get("created_file_count") or 0)
+    execution_result_count = int(run_summary.get("execution_result_count") or 0)
+    passed_count = int(test_summary.get("passed_count") or 0)
+    failed_count = int(test_summary.get("failed_count") or 0)
+    command_count = int(test_summary.get("command_count") or 0)
+    pending_review_count = int(review_queue.get("pending_review_count") or 0)
+    approval_request_count = int(review_queue.get("approval_request_count") or 0)
+    routes = _extract_agent_routes(payload)
+    provider_names = sorted({str(item.get("provider") or "").strip() for item in routes if str(item.get("provider") or "").strip()})
+    model_names = sorted({str(item.get("model") or "").strip() for item in routes if str(item.get("model") or "").strip()})
+    final_state = str(run_summary.get("final_state") or payload.get("final_state") or payload.get("finalState") or "").strip()
+    status = str(run_summary.get("status") or payload.get("status") or "").strip()
+    proof_ready = bool(artifact_paths or execution_result_count > 0 or command_count > 0 or changed_file_count > 0)
+    summary_parts = []
+    if changed_file_count > 0:
+        summary_parts.append(f"{changed_file_count} changed file(s)")
+    if command_count > 0:
+        summary_parts.append(f"{command_count} test command(s)")
+    if approval_request_count > 0 or pending_review_count > 0:
+        summary_parts.append(f"{approval_request_count + pending_review_count} approval/review item(s)")
+    if artifact_paths:
+        summary_parts.append(f"{len(artifact_paths)} artifact(s)")
+    visibility_summary = ", ".join(summary_parts) if summary_parts else "No operator proof artifacts were captured yet."
+    return {
+        "status": status,
+        "final_state": final_state,
+        "proof_ready": proof_ready,
+        "changed_file_count": changed_file_count,
+        "execution_result_count": execution_result_count,
+        "test_command_count": command_count,
+        "passed_test_count": passed_count,
+        "failed_test_count": failed_count,
+        "pending_review_count": pending_review_count,
+        "approval_request_count": approval_request_count,
+        "artifact_count": len(artifact_paths),
+        "artifact_paths": artifact_paths[:8],
+        "providers": provider_names,
+        "models": model_names,
+        "agent_routes": routes,
+        "summary": visibility_summary,
+    }
+
+
 def runs_dir(project_root: Path) -> Path:
     return assistant_dev_runs_dir(project_root)
 
@@ -92,7 +182,8 @@ def write_run_artifact(project_root: Path, payload: dict[str, Any], *, target: P
     resolved_target = target or build_run_artifact_path(project_root, payload)
     try:
         resolved_target.parent.mkdir(parents=True, exist_ok=True)
-        resolved_target.write_text(json.dumps({**payload, "timestamp": timestamp}, indent=2, default=str), encoding="utf-8")
+        proof_bundle = dict(payload.get("proof_bundle") or payload.get("proofBundle") or _build_operator_proof_bundle(payload))
+        resolved_target.write_text(json.dumps({**payload, "timestamp": timestamp, "proof_bundle": proof_bundle}, indent=2, default=str), encoding="utf-8")
         return resolved_target
     except Exception:
         return None
@@ -155,6 +246,7 @@ def write_human_summary(project_root: Path, payload: dict[str, Any], *, target: 
     supervision_label = dict((run_summary.get("metadata") or {}).get("supervision_label") or (experiment_scorecard.get("metadata") or {}).get("supervision_label") or {})
     stage_speed_summary = dict((run_summary.get("metadata") or {}).get("stage_speed_summary") or (experiment_scorecard.get("metadata") or {}).get("stage_speed_summary") or {})
     trust_summary = dict((run_summary.get("metadata") or {}).get("trust_summary") or (experiment_scorecard.get("metadata") or {}).get("trust_summary") or {})
+    proof_bundle = dict(payload.get("proof_bundle") or payload.get("proofBundle") or _build_operator_proof_bundle(payload))
     lines = [
         f"# Assistant Run {ticket}",
         "",

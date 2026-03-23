@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from backend.agent.core.approval import ApprovalGate
@@ -22,6 +23,62 @@ from backend.agent.runtime.contracts import (
 )
 from backend.agent.runtime.orchestration_driver import RuntimeOrchestrationDriver
 from backend.agent.core.patch_review import build_review_summary
+
+_OBJECTIVE_PATH_RE = re.compile(r'([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+)')
+
+
+def _extract_explicit_objective_paths(objective: str) -> list[str]:
+    text = str(objective or '').strip()
+    if not text:
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in _OBJECTIVE_PATH_RE.findall(text):
+        candidate = str(match or '').strip().strip('`"\')]}.,:;!?')
+        if not candidate:
+            continue
+        normalized = candidate.replace('\\', '/')
+        leaf = normalized.rsplit('/', 1)[-1]
+        if '.' not in leaf and leaf.upper() not in {'README', 'LICENSE', 'AGENTS'}:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        paths.append(normalized)
+    return paths[:5]
+
+
+def _parse_bullet_list(raw: str) -> list[str]:
+    items = [
+        str(item or '').strip().strip('.')
+        for item in re.split(r',|;|•|\n', str(raw or ''))
+    ]
+    return [item for item in items if item][:6]
+
+
+def _synthesize_append_section_step(objective: str, explicit_paths: list[str]) -> dict[str, Any] | None:
+    if not explicit_paths:
+        return None
+    text = str(objective or '').strip()
+    lowered = text.lower()
+    if not any(token in lowered for token in ('add a short section', 'add a section', 'append a section', 'append section')):
+        return None
+    title_match = re.search(r'(?:called|titled)\s+(.+?)(?:\s+with\b|\.|$)', text, re.IGNORECASE)
+    bullets_match = re.search(r'bullets?\s*:\s*(.+?)(?:\.\s+Then\b|$)', text, re.IGNORECASE)
+    title = str(title_match.group(1) if title_match else '').strip().strip(' "\'`')
+    bullets = _parse_bullet_list(bullets_match.group(1) if bullets_match else '')
+    if not title or not bullets:
+        return None
+    content_lines = ['', f'## {title}', '']
+    content_lines.extend(f'- {item}' for item in bullets)
+    content = '\n'.join(content_lines).rstrip() + '\n'
+    return {
+        'action': 'edit_file',
+        'path': explicit_paths[0],
+        'content': content,
+        'mode': 'append',
+    }
 
 
 def _tool_loop_task_objective(objective: str, runtime_task: dict[str, Any]) -> dict[str, Any]:
@@ -336,6 +393,7 @@ def _planner_handler(orchestrator, _agent, task, payload):
     context = dict(task.context or {})
     plan_steps = list(context.get("steps") or [])
     search_pattern = str(context.get("search_pattern") or "**/*")
+    explicit_paths = _extract_explicit_objective_paths(task.objective)
     tasks_payload = orchestrator.execute_tool("planner", "list_tasks", board_path=context.get("board_path", "docs/BAT_FEATURE_BOARD.md"))
     search_payload = orchestrator.execute_tool(
         "planner",
@@ -347,20 +405,35 @@ def _planner_handler(orchestrator, _agent, task, payload):
     )
 
     if not plan_steps:
-        target_files = [str(item) for item in context.get("target_files", []) if str(item).strip()]
-        if target_files:
-            plan_steps = [
-                {
-                    "action": "edit_file",
-                    "path": item,
-                    "content": context.get("content_by_path", {}).get(item, context.get("default_content", "")),
-                    "mode": context.get("edit_mode", "replace"),
-                }
-                for item in target_files
-            ]
+        synthesized_edit = _synthesize_append_section_step(task.objective, explicit_paths)
+        if synthesized_edit:
+            plan_steps = [synthesized_edit]
         else:
-            matches = list((search_payload or {}).get("matches", []))[:3]
-            plan_steps = [{"action": "inspect_file", "path": item} for item in matches]
+            target_files = [str(item) for item in context.get("target_files", []) if str(item).strip()]
+            for path in explicit_paths:
+                if path not in target_files:
+                    target_files.append(path)
+            if target_files:
+                if context.get("content_by_path") or str(context.get("default_content") or '').strip():
+                    plan_steps = [
+                        {
+                            "action": "edit_file",
+                            "path": item,
+                            "content": context.get("content_by_path", {}).get(item, context.get("default_content", "")),
+                            "mode": context.get("edit_mode", "replace"),
+                        }
+                        for item in target_files
+                    ]
+                else:
+                    plan_steps = [{"action": "inspect_file", "path": item} for item in target_files[:3]]
+            else:
+                ranked_matches = [
+                    str(item.get("path") or "").strip()
+                    for item in list((search_payload or {}).get("ranked_matches", []) or [])
+                    if isinstance(item, dict) and str(item.get("path") or "").strip()
+                ]
+                matches = ranked_matches or list((search_payload or {}).get("matches", []))
+                plan_steps = [{"action": "inspect_file", "path": item} for item in matches[:3]]
 
     return {
         "status": "completed",

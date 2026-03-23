@@ -132,6 +132,7 @@ def _task_mode_route_config(project_root: Path | None, task_mode: str) -> dict[s
     provider = config.get(f'assistant_task_mode_{task_mode}_provider')
     model = config.get(f'assistant_task_mode_{task_mode}_model')
     fallback_model = config.get(f'assistant_task_mode_{task_mode}_fallback_model')
+    fallback_provider = config.get(f'assistant_task_mode_{task_mode}_fallback_provider')
     route: dict[str, Any] = {}
     if provider:
         route['provider'] = provider
@@ -139,6 +140,21 @@ def _task_mode_route_config(project_root: Path | None, task_mode: str) -> dict[s
         route['model'] = model
     if fallback_model:
         route['fallback_model'] = fallback_model
+    if fallback_provider:
+        route['fallback_provider'] = fallback_provider
+    return route
+
+
+def _review_lane_override(project_root: Path | None, lane: str) -> dict[str, Any]:
+    config = _project_config(project_root)
+    payload = config.get(f'assistant_{lane}_route')
+    if isinstance(payload, dict):
+        return payload
+    route: dict[str, Any] = {}
+    for key in ('provider', 'model', 'fallback_model', 'fallback_provider'):
+        value = config.get(f'assistant_{lane}_{key}')
+        if value:
+            route[key] = value
     return route
 
 
@@ -165,6 +181,14 @@ def resolve_agent_model_route(agent_name: str, project_root: Path | None = None)
     config = route_config if isinstance(route_config, dict) else {}
     if task_mode_config:
         config = {**task_mode_config, **config}
+    if canonical_name == 'validator':
+        review_override = _review_lane_override(project_root, 'reviewer')
+        if review_override:
+            config = {**config, **review_override}
+    elif canonical_name == 'release':
+        approval_override = _review_lane_override(project_root, 'approver')
+        if approval_override:
+            config = {**config, **approval_override}
     if not config:
         return AgentModelRoute(
             agent=normalized_name or default.agent,

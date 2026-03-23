@@ -65,6 +65,7 @@ function buildApprovalQueue(options = {}) {
   const approvalRequiredPath = typeof options.approvalRequiredPath === 'function'
     ? options.approvalRequiredPath
     : () => true;
+  const includeChangedFiles = options.includeChangedFiles !== false;
 
   const queue = [];
   const seen = new Set();
@@ -98,8 +99,10 @@ function buildApprovalQueue(options = {}) {
     pushUnique(queue, seen, item);
   };
 
-  for (const changed of normalizeChangedFiles(options.review)) {
-    addCandidate(changed, { source: 'changed-file', detail: changed?.status || 'changed file pending review' });
+  if (includeChangedFiles) {
+    for (const changed of normalizeChangedFiles(options.review)) {
+      addCandidate(changed, { source: 'changed-file', detail: changed?.status || 'changed file pending review' });
+    }
   }
 
   for (const failing of normalizeFailingLocations(options.review)) {

@@ -92,3 +92,76 @@ def load_project_config(project_root: Path, *, base_name: str = "dev_assistant.y
         if isinstance(payload, dict):
             config = _merge_dicts(config, payload)
     return config
+
+
+_ALLOWED_PROVIDER_VALUES = {"", "auto", "openai", "ollama", "local", "anthropic", "azure-openai"}
+
+
+def _as_trimmed_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def validate_config_coherence(project_root: Path) -> dict[str, Any]:
+    cfg = load_project_config(project_root)
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    def _check_path(cfg_key: str) -> None:
+        raw = cfg.get(cfg_key)
+        if raw is None or not str(raw).strip():
+            return
+        candidate = Path(str(raw).strip()).expanduser()
+        if not candidate.is_absolute() and not str(raw).strip().startswith('.'):
+            warnings.append(f"{cfg_key} is relative; prefer an absolute or workspace-relative path.")
+
+    def _check_route(prefix: str) -> None:
+        provider = _as_trimmed_text(cfg.get(f'assistant_task_mode_{prefix}_provider')).lower()
+        model = _as_trimmed_text(cfg.get(f'assistant_task_mode_{prefix}_model'))
+        if provider and provider not in _ALLOWED_PROVIDER_VALUES:
+            warnings.append(f"assistant_task_mode_{prefix}_provider uses unknown provider '{provider}'.")
+        if provider in {'openai', 'azure-openai', 'anthropic'} and not model:
+            warnings.append(f"assistant_task_mode_{prefix}_provider is set to {provider} but no model is pinned.")
+        if provider in {'local', 'ollama'} and not model:
+            warnings.append(f"assistant_task_mode_{prefix}_provider is set to {provider} but no local model is pinned.")
+
+    for key in (
+        'assistant_artifacts_root',
+        'assistant_promotions_root',
+        'assistant_benchmark_root',
+        'assistant_labs_root',
+        'assistant_model_foundry_root',
+        'assistant_training_model_storage_root',
+        'assistant_runs_dir',
+        'assistant_dev_runs_dir',
+    ):
+        _check_path(key)
+
+    for lane in ('planner', 'coder', 'validator', 'summarizer'):
+        _check_route(lane)
+
+    base_provider = _as_trimmed_text(cfg.get('assistant_model_base_provider')).lower()
+    provider_source = _as_trimmed_text(cfg.get('assistant_model_provider_source')).lower()
+    engine_provider = _as_trimmed_text(cfg.get('assistant_engine_model_base_provider')).lower()
+    if base_provider and provider_source and base_provider != provider_source:
+        warnings.append('assistant_model_base_provider and assistant_model_provider_source diverge; routing may look inconsistent in the UI.')
+    if engine_provider == 'openai' and _as_trimmed_text(cfg.get('assistant_engine_model_base_model')) == '':
+        errors.append('assistant_engine_model_base_provider is openai but assistant_engine_model_base_model is empty.')
+    if cfg.get('assistant_auto_run_queued_task_loop_followups') is True and cfg.get('assistant_auto_queue_task_loop_followups') is not True:
+        warnings.append('assistant_auto_run_queued_task_loop_followups is enabled without assistant_auto_queue_task_loop_followups.')
+    if cfg.get('assistant_self_improvement_only') is True and _as_trimmed_text(cfg.get('assistant_autonomy_mode')).lower() not in {'self', 'guided', ''}:
+        warnings.append('assistant_self_improvement_only is enabled while assistant_autonomy_mode is not self/guided.')
+
+    status = 'ok'
+    if errors:
+        status = 'error'
+    elif warnings:
+        status = 'warn'
+    return {
+        'status': status,
+        'ok': not errors,
+        'warning_count': len(warnings),
+        'error_count': len(errors),
+        'warnings': warnings,
+        'errors': errors,
+        'summary': errors[0] if errors else (warnings[0] if warnings else 'Configuration is coherent.'),
+    }

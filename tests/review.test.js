@@ -14,6 +14,7 @@ const {
   buildReviewSnapshot,
   collectArtifactEntriesForRun,
   isApprovalRequiredPath,
+  isIgnoredWorkspacePath,
   summarizeUnifiedDiff,
 } = require('../core/review');
 
@@ -37,6 +38,12 @@ test('parseChangedFileLine normalizes git status rows', () => {
     raw: 'M frontend/src/app.ts',
     path: 'frontend/src/app.ts',
   });
+});
+
+test('parseChangedFileLine ignores generated cache noise', () => {
+  assert.equal(parseChangedFileLine(' M agent/core/__pycache__/worker.cpython-313.pyc'), null);
+  assert.equal(parseChangedFileLine(' M docs/assistant_runs/session.json'), null);
+  assert.equal(isIgnoredWorkspacePath('agent/core/__pycache__/worker.cpython-313.pyc'), true);
 });
 
 test('readWorkspaceFile and saveWorkspaceFile stay inside workspace', () => {

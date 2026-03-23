@@ -16,6 +16,7 @@
     "smoke:ui": "electron ./scripts/ui-smoke.js",
     "packaged:smoke": "node ./scripts/build-renderer.js && node ./scripts/packaged-smoke.js",
     "engine:acceptance": "node ./scripts/engine-acceptance.js",
+    "engine:cli": "node ./scripts/engine-cli.js",
     "system:check": "node ./scripts/system-check.js",
     "smart:patch": "node ./scripts/smart-patch.js",
     "prep:windows:pc": "node ./scripts/prepare-windows-pc-clone.js",

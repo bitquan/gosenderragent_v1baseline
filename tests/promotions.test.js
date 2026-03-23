@@ -35,8 +35,13 @@ function makeWorkspace() {
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-agent-promotions-'));
   const artifactsRoot = path.join(workspaceRoot, 'artifacts');
   const benchmarkRoot = path.join(artifactsRoot, 'benchmarks');
+  const promotionsRoot = path.join(artifactsRoot, 'assistant_promotions');
   fs.mkdirSync(artifactsRoot, { recursive: true });
-  fs.writeFileSync(path.join(workspaceRoot, 'dev_assistant.local.yaml'), `assistant_artifacts_root: ${artifactsRoot}\nassistant_benchmark_root: ${benchmarkRoot}\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(workspaceRoot, 'dev_assistant.local.yaml'),
+    `assistant_artifacts_root: ${artifactsRoot}\nassistant_benchmark_root: ${benchmarkRoot}\nassistant_promotions_root: ${promotionsRoot}\n`,
+    'utf8',
+  );
   exec('git', ['init'], workspaceRoot);
   exec('git', ['config', 'user.email', 'test@example.com'], workspaceRoot);
   exec('git', ['config', 'user.name', 'Test'], workspaceRoot);
@@ -47,6 +52,7 @@ function makeWorkspace() {
     workspaceRoot,
     artifactsRoot,
     benchmarkRoot,
+    promotionsRoot,
   };
 }
 
@@ -242,6 +248,43 @@ test('listPromotionState surfaces the first ready candidate when no lab is selec
     assert.equal(state.currentCandidateId, created.candidate.id);
     assert.equal(state.currentCandidateIdentity.candidateId, created.candidate.id);
     assert.equal(state.currentBenchmarkIdentity.id, 'bench-parity-ready');
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('listPromotionState filters out candidates from unrelated temp workspaces', () => {
+  const { workspaceRoot, promotionsRoot } = makeWorkspace();
+  fs.mkdirSync(promotionsRoot, { recursive: true });
+
+  try {
+    fs.writeFileSync(path.join(promotionsRoot, 'candidates.json'), JSON.stringify([
+      {
+        id: 'candidate_current_workspace',
+        name: 'current-workspace-candidate',
+        status: 'candidate',
+        workspaceRoot,
+        targetWorkspaceRoot: workspaceRoot,
+        labRoot: path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'self-host'),
+        sourceRoot: workspaceRoot,
+        verification: { ok: true },
+      },
+      {
+        id: 'candidate_foreign_workspace',
+        name: 'foreign-temp-candidate',
+        status: 'candidate',
+        workspaceRoot: 'C:\\Users\\benzo\\AppData\\Local\\Temp\\desktop-agent-promotions-foreign',
+        targetWorkspaceRoot: 'C:\\Users\\benzo\\AppData\\Local\\Temp\\desktop-agent-promotions-foreign',
+        labRoot: 'C:\\Users\\benzo\\AppData\\Local\\Temp\\desktop-agent-promotions-foreign\\artifacts\\assistant_labs\\persistent\\self-host',
+        sourceRoot: 'C:\\Users\\benzo\\AppData\\Local\\Temp\\desktop-agent-promotions-foreign',
+        verification: { ok: true },
+      },
+    ], null, 2), 'utf8');
+
+    const state = listPromotionState(workspaceRoot);
+
+    assert.equal(state.candidateCount, 1);
+    assert.equal(state.candidates[0].id, 'candidate_current_workspace');
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }

@@ -123,10 +123,14 @@ test('ai center summarizes profiles, providers, and benchmark leaders', () => {
   assert.equal(typeof orchestratorRole.fallbackModel, 'string');
   assert.equal(status.localModelInventory.status, 'ready');
   assert.equal(Array.isArray(status.localModelInventory.entries), true);
+  assert.equal(status.localModelInventory.workerFamilies.primary, 'qwen');
+  assert.equal(status.localModelInventory.promotionPolicy, 'manual-promote');
   assert.equal(status.localModelInventory.entries.some((entry) => entry.wrappedProfileId === 'gs-dev-1-default'), true);
   assert.equal(status.localModelInventory.entries.some((entry) => entry.kind === 'foundry-candidate'), true);
   assert.equal(status.gsDev1.localInventoryEntry.wrappedProfileId, 'gs-dev-1-default');
   assert.equal(status.gsDev1.localInventoryEntry.foundryCandidate.id, 'candidate-local-gs-dev-1');
+  assert.equal(status.current.workerFamily, 'qwen');
+  assert.equal(status.current.promotionPolicy, 'manual-promote');
 });
 
 test('ai center applies manual lane overrides without losing benchmark context', () => {

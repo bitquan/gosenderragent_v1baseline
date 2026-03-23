@@ -18,6 +18,7 @@ const {
   listTasks,
   readHub,
   recordTaskRun,
+  runWorkspaceHygiene,
   summarizeSelfHostExpansion,
   updateTask,
 } = require('../core/task-hub');
@@ -33,6 +34,14 @@ function makeWorkspace() {
   );
   fs.mkdirSync(path.join(workspaceRoot, 'docs'), { recursive: true });
   return workspaceRoot;
+}
+
+function readHubDocument(workspaceRoot) {
+  const hubPath = path.join(getAssistantRunsDir(workspaceRoot), 'task-hub.json');
+  return {
+    hubPath,
+    hub: JSON.parse(fs.readFileSync(hubPath, 'utf8')),
+  };
 }
 
 test('task hub creates linked goals and tasks for chat prompts', () => {
@@ -100,6 +109,229 @@ test('task hub exposes built-in recipes and aliases runLinks as runs when readin
   }
 });
 
+test('task hub hygiene archives duplicate open tasks and settles stale run-linked statuses', () => {
+  const workspaceRoot = makeWorkspace();
+
+  try {
+    const first = createTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Audit the inbox and settle stale task noise.',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const { hubPath, hub } = readHubDocument(workspaceRoot);
+    const secondTask = {
+      ...first.task,
+      id: `${first.task.id}_duplicate`,
+      goalId: '',
+      status: 'ready',
+      createdAt: '2026-03-20T10:00:00.000Z',
+      updatedAt: '2026-03-20T10:00:00.000Z',
+      lastRunId: '',
+      metadata: {
+        ...(first.task.metadata || {}),
+      },
+    };
+    hub.tasks = [secondTask, ...(hub.tasks || [])];
+    fs.writeFileSync(hubPath, `${JSON.stringify(hub, null, 2)}\n`, 'utf8');
+
+    recordTaskRun(workspaceRoot, {
+      taskId: first.task.id,
+      goalId: first.task.goalId,
+      runId: 'agent_hygiene_1',
+      action: 'orchestrate',
+      status: 'pass',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+
+    const result = runWorkspaceHygiene(workspaceRoot, {
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const tasks = listTasks(workspaceRoot, { includeCompat: false });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stats.duplicateTasksArchived >= 1, true);
+    assert.equal(result.stats.staleTaskStatusesSettled >= 1, true);
+    assert.equal(tasks.tasks.some((task) => task.id === secondTask.id && task.status === 'archived'), true);
+    assert.equal(tasks.tasks.some((task) => task.id === first.task.id && task.status === 'completed'), true);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('task hub createTask reuses an equivalent open task for the same objective and scope', () => {
+  const workspaceRoot = makeWorkspace();
+
+  try {
+    const first = createTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Repair the latest failed validation path and rerun the relevant checks.',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const second = createTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Repair the latest failed validation path and rerun the relevant checks.',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+
+    const tasks = listTasks(workspaceRoot, { includeCompat: false });
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(second.deduped, true);
+    assert.equal(second.task.id, first.task.id);
+    assert.equal(tasks.count, 1);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('task hub hygiene archives duplicate completed builder proof tasks and keeps the newest clean pass', () => {
+  const workspaceRoot = makeWorkspace();
+
+  try {
+    const older = createTask(workspaceRoot, {
+      source: 'system',
+      objective: 'Exercise the dummy-node-app builder recipe and validate the generated delivery template in a lab.',
+      targetWorkspaceRoot: workspaceRoot,
+      metadata: {
+        builderProof: true,
+        recipeId: 'dummy-node-app',
+        requiresManualReview: false,
+        reviewPendingCount: 0,
+      },
+    });
+    const { hubPath, hub } = readHubDocument(workspaceRoot);
+    const newerTask = {
+      ...older.task,
+      id: `${older.task.id}_duplicate`,
+      goalId: '',
+      status: 'completed',
+      createdAt: '2026-03-20T11:00:00.000Z',
+      updatedAt: '2026-03-20T11:00:00.000Z',
+      lastRunId: '',
+      metadata: {
+        ...(older.task.metadata || {}),
+        builderProof: true,
+        recipeId: 'dummy-node-app',
+        lastRunState: 'pass',
+        requiresManualReview: false,
+        reviewPendingCount: 0,
+      },
+    };
+    hub.tasks = [newerTask, ...(hub.tasks || [])];
+    fs.writeFileSync(hubPath, `${JSON.stringify(hub, null, 2)}\n`, 'utf8');
+
+    updateTask(workspaceRoot, {
+      taskId: older.task.id,
+      patch: {
+        status: 'completed',
+        updatedAt: '2026-03-20T10:00:00.000Z',
+        metadata: {
+          builderProof: true,
+          recipeId: 'dummy-node-app',
+          lastRunState: 'pass',
+          requiresManualReview: false,
+          reviewPendingCount: 0,
+        },
+      },
+    });
+    updateTask(workspaceRoot, {
+      taskId: newerTask.id,
+      patch: {
+        status: 'completed',
+        updatedAt: '2026-03-20T11:00:00.000Z',
+        metadata: {
+          builderProof: true,
+          recipeId: 'dummy-node-app',
+          lastRunState: 'pass',
+          requiresManualReview: false,
+          reviewPendingCount: 0,
+        },
+      },
+    });
+
+    recordTaskRun(workspaceRoot, {
+      taskId: older.task.id,
+      goalId: older.task.goalId,
+      runId: 'builder_older',
+      action: 'builder-proof',
+      status: 'pass',
+      targetWorkspaceRoot: workspaceRoot,
+      metadata: {
+        builderProof: true,
+        recipeId: 'dummy-node-app',
+        reviewSummary: { requiresManualReview: false },
+      },
+    });
+    recordTaskRun(workspaceRoot, {
+      taskId: newerTask.id,
+      goalId: newerTask.goalId,
+      runId: 'builder_newer',
+      action: 'builder-proof',
+      status: 'pass',
+      targetWorkspaceRoot: workspaceRoot,
+      metadata: {
+        builderProof: true,
+        recipeId: 'dummy-node-app',
+        reviewSummary: { requiresManualReview: false },
+      },
+    });
+
+    const result = runWorkspaceHygiene(workspaceRoot, {
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const tasks = listTasks(workspaceRoot, { includeCompat: false });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stats.duplicateTasksArchived >= 1, true);
+    assert.equal(tasks.tasks.some((task) => task.id === older.task.id && task.status === 'archived'), true);
+    assert.equal(tasks.tasks.some((task) => task.id === newerTask.id && task.status === 'completed'), true);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('task hub hygiene archives generated repair tasks tied to infrastructure startup failures', () => {
+  const workspaceRoot = makeWorkspace();
+
+  try {
+    const created = createTask(workspaceRoot, {
+      source: 'reviewer',
+      objective: 'Repair the latest failed validation path and rerun the relevant checks.',
+      targetWorkspaceRoot: workspaceRoot,
+      candidateId: 'repair-failed-run:agent_infra_fail_1',
+      metadata: {
+        followupSignature: 'monitor-followup:repair-failed-run:agent_infra_fail_1',
+      },
+    });
+
+    const runtimeStatePath = path.join(getAssistantRunsDir(workspaceRoot), 'runtime_state.json');
+    fs.writeFileSync(runtimeStatePath, `${JSON.stringify({
+      runs: [
+        {
+          runId: 'agent_infra_fail_1',
+          state: 'fail',
+          label: 'Task: Repair the latest failed validation path and rerun the relevant checks',
+          stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+        },
+      ],
+    }, null, 2)}\n`, 'utf8');
+
+    const result = runWorkspaceHygiene(workspaceRoot, {
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const tasks = listTasks(workspaceRoot, { includeCompat: false });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.stats.infrastructureRepairTasksArchived, 1);
+    assert.equal(tasks.tasks.some((task) => task.id === created.task.id && task.status === 'archived'), true);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('task hub run links merge runtime status into listRuns output', () => {
   const workspaceRoot = makeWorkspace();
 
@@ -134,6 +366,59 @@ test('task hub run links merge runtime status into listRuns output', () => {
     assert.equal(runs.runs[0].runId, 'agent_123');
     assert.equal(runs.runs[0].runtimeState, 'pass');
     assert.deepEqual(runs.runs[0].artifactPaths, ['/tmp/result.json']);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('task hub list helpers stay scoped to the current target workspace', () => {
+  const workspaceRoot = makeWorkspace();
+  const otherWorkspaceRoot = path.join(workspaceRoot, 'foreign-workspace');
+  fs.mkdirSync(otherWorkspaceRoot, { recursive: true });
+
+  try {
+    const local = createGoalAndTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Repair the local workspace validation path.',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    const foreign = createGoalAndTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Repair the foreign workspace validation path.',
+      targetWorkspaceRoot: otherWorkspaceRoot,
+    });
+    recordTaskRun(workspaceRoot, {
+      taskId: local.task.id,
+      goalId: local.goal.id,
+      runId: 'agent_local_1',
+      action: 'orchestrate',
+      status: 'pass',
+      targetWorkspaceRoot: workspaceRoot,
+    });
+    recordTaskRun(workspaceRoot, {
+      taskId: foreign.task.id,
+      goalId: foreign.goal.id,
+      runId: 'agent_foreign_1',
+      action: 'orchestrate',
+      status: 'blocked',
+      targetWorkspaceRoot: otherWorkspaceRoot,
+    });
+
+    const goals = listGoals(workspaceRoot, { targetWorkspaceRoot: workspaceRoot, includeCompat: false });
+    const tasks = listTasks(workspaceRoot, { targetWorkspaceRoot: workspaceRoot, includeCompat: false });
+    const runs = listRuns(workspaceRoot, { targetWorkspaceRoot: workspaceRoot }, {
+      latest: [
+        { runId: 'agent_local_1', state: 'pass', label: 'Local run' },
+        { runId: 'agent_foreign_1', state: 'blocked', label: 'Foreign run' },
+      ],
+    });
+
+    assert.equal(goals.goals.length, 1);
+    assert.equal(goals.goals[0].id, local.goal.id);
+    assert.equal(tasks.tasks.length, 1);
+    assert.equal(tasks.tasks[0].id, local.task.id);
+    assert.equal(runs.runs.length, 1);
+    assert.equal(runs.runs[0].runId, 'agent_local_1');
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }

@@ -104,10 +104,14 @@ function buildWorkspaceScopedSuffix(workspaceRoot) {
   return `${baseName}-${hash}`;
 }
 
-function namespaceConfiguredDir(configuredDir, workspaceRoot) {
+function namespaceConfiguredDir(configuredDir, workspaceRoot, entry = null) {
   const normalizedConfiguredDir = normalizeConfigRoot(configuredDir);
   const normalizedWorkspaceRoot = normalizeConfigRoot(workspaceRoot);
+  const entryRoot = normalizeConfigRoot(entry?.root);
   if (!normalizedConfiguredDir || !normalizedWorkspaceRoot || normalizedWorkspaceRoot === APP_ROOT) {
+    return normalizedConfiguredDir;
+  }
+  if (entryRoot && entryRoot === normalizedWorkspaceRoot) {
     return normalizedConfiguredDir;
   }
   return path.join(normalizedConfiguredDir, 'workspaces', buildWorkspaceScopedSuffix(normalizedWorkspaceRoot));
@@ -115,27 +119,40 @@ function namespaceConfiguredDir(configuredDir, workspaceRoot) {
 
 function getAssistantArtifactsRoot(workspaceRoot) {
   const entries = readConfigEntries(workspaceRoot);
-  return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_artifacts_root, ''), workspaceRoot);
+  return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_artifacts_root, ''), workspaceRoot, entries.assistant_artifacts_root);
 }
 
 function getAssistantRunsDir(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
   const normalizedWorkspaceRoot = normalizeConfigRoot(workspaceRoot);
+  const localRunsDir = normalizedWorkspaceRoot ? path.join(normalizedWorkspaceRoot, 'docs', 'assistant_runs') : '';
   if (config.assistant_runs_dir) {
-    return namespaceConfiguredDir(
+    const configuredRunsDir = namespaceConfiguredDir(
       resolveConfiguredPath(
         entries.assistant_runs_dir,
-        normalizedWorkspaceRoot ? path.join(normalizedWorkspaceRoot, 'docs', 'assistant_runs') : '',
+        localRunsDir,
       ),
       normalizedWorkspaceRoot,
+      entries.assistant_runs_dir,
     );
+    if (entries.assistant_runs_dir && normalizeConfigRoot(entries.assistant_runs_dir.root) === normalizedWorkspaceRoot) {
+      return configuredRunsDir;
+    }
+    if (localRunsDir && fs.existsSync(localRunsDir)) {
+      return localRunsDir;
+    }
+    return configuredRunsDir;
   }
   const root = getAssistantArtifactsRoot(workspaceRoot);
   if (root) {
-    return path.join(root, 'assistant_runs');
+    const configuredRunsDir = path.join(root, 'assistant_runs');
+    if (localRunsDir && fs.existsSync(localRunsDir)) {
+      return localRunsDir;
+    }
+    return configuredRunsDir;
   }
-  return normalizedWorkspaceRoot ? path.join(normalizedWorkspaceRoot, 'docs', 'assistant_runs') : '';
+  return localRunsDir;
 }
 
 function getAssistantSchedulerLogPath(workspaceRoot) {
@@ -150,10 +167,24 @@ function getAssistantSchedulerLogPath(workspaceRoot) {
 function getAssistantRuntimeStatePath(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
+  const runsDir = getAssistantRunsDir(workspaceRoot);
+  const localRuntimeStatePath = normalizeConfigRoot(workspaceRoot)
+    ? path.join(normalizeConfigRoot(workspaceRoot), 'docs', 'assistant_runs', 'runtime_state.json')
+    : '';
   if (config.assistant_runtime_state_path) {
-    return resolveConfiguredPath(entries.assistant_runtime_state_path, path.join(getAssistantRunsDir(workspaceRoot), 'runtime_state.json'));
+    const configuredPath = resolveConfiguredPath(entries.assistant_runtime_state_path, path.join(runsDir, 'runtime_state.json'));
+    if (entries.assistant_runtime_state_path && normalizeConfigRoot(entries.assistant_runtime_state_path.root) === normalizeConfigRoot(workspaceRoot)) {
+      return configuredPath;
+    }
+    if (localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
+      return localRuntimeStatePath;
+    }
+    return configuredPath;
   }
-  return path.join(getAssistantRunsDir(workspaceRoot), 'runtime_state.json');
+  if (localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
+    return localRuntimeStatePath;
+  }
+  return path.join(runsDir, 'runtime_state.json');
 }
 
 function getConfiguredAssistantDesktopBuildDir(workspaceRoot) {
@@ -236,6 +267,36 @@ function getConfiguredAssistantModelFoundryRoot(workspaceRoot) {
   return root ? path.join(root, 'model_foundry') : '';
 }
 
+function getConfiguredAssistantDevDataRoot(workspaceRoot) {
+  const config = readConfigMap(workspaceRoot);
+  const entries = readConfigEntries(workspaceRoot);
+  if (config.assistant_dev_data_dir) {
+    return resolveConfiguredPath(entries.assistant_dev_data_dir, '');
+  }
+  const root = getAssistantArtifactsRoot(workspaceRoot);
+  return root ? path.join(root, 'dev_data') : '';
+}
+
+function getConfiguredAssistantLocalTrainingExportsRoot(workspaceRoot) {
+  const config = readConfigMap(workspaceRoot);
+  const entries = readConfigEntries(workspaceRoot);
+  if (config.assistant_local_training_exports_root) {
+    return resolveConfiguredPath(entries.assistant_local_training_exports_root, '');
+  }
+  const root = getConfiguredAssistantDevDataRoot(workspaceRoot);
+  return root ? path.join(root, 'local_training_exports') : '';
+}
+
+function getConfiguredAssistantCheckpointMergesRoot(workspaceRoot) {
+  const config = readConfigMap(workspaceRoot);
+  const entries = readConfigEntries(workspaceRoot);
+  if (config.assistant_checkpoint_merges_root) {
+    return resolveConfiguredPath(entries.assistant_checkpoint_merges_root, '');
+  }
+  const root = getConfiguredAssistantModelFoundryRoot(workspaceRoot) || getConfiguredAssistantDevDataRoot(workspaceRoot);
+  return root ? path.join(root, 'checkpoint_merges') : '';
+}
+
 function getConfiguredAssistantChatAttachmentsRoot(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
@@ -253,9 +314,12 @@ module.exports = {
   getConfiguredAssistantDesktopBuildDir,
   getConfiguredAssistantDesktopLiveChannelDir,
   getConfiguredAssistantDesktopReleaseDir,
+  getConfiguredAssistantDevDataRoot,
   getConfiguredAssistantLabsRoot,
   getConfiguredAssistantLearningJournalRoot,
+  getConfiguredAssistantLocalTrainingExportsRoot,
   getConfiguredAssistantModelFoundryRoot,
+  getConfiguredAssistantCheckpointMergesRoot,
   getConfiguredAssistantPromotionsRoot,
   getAssistantRunsDir,
   getAssistantRuntimeStatePath,

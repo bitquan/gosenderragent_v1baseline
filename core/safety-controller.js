@@ -14,6 +14,14 @@ function includesSelfWorkAction(value) {
   return /(self-improve|autopilot|repair|implement)/.test(normalized);
 }
 
+function looksInfrastructureFailure(...values) {
+  const haystack = values.map((value) => normalizeText(value)).filter(Boolean).join('\n').toLowerCase();
+  if (!haystack) {
+    return false;
+  }
+  return /could not start the python runtime|spawn .*py\.exe enonent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+}
+
 function pushReason(reasons, payload) {
   reasons.push({
     id: String(payload.id || '').trim() || 'reason',
@@ -74,7 +82,15 @@ function buildSafetyStatus(options = {}) {
 
   const latestRuntimeState = normalizeState(latestRuntime.state, 'idle');
   const latestRuntimeLabel = normalizeText(latestRuntime.label || latestRuntime.action);
-  if (latestRuntimeState === 'fail' && includesSelfWorkAction(latestRuntimeLabel)) {
+  const latestRuntimeLooksInfra = looksInfrastructureFailure(
+    latestRuntime.blockedReason,
+    latestRuntime.stderrTail,
+    latestRuntime.stdoutTail,
+    latestRuntime.logTail,
+    latestRuntime.operatorExecution?.outputTail?.stderr,
+    latestRuntime.operatorExecution?.outputTail?.stdout,
+  );
+  if (latestRuntimeState === 'fail' && includesSelfWorkAction(latestRuntimeLabel) && !latestRuntimeLooksInfra) {
     state = 'safe-mode';
     blockAutonomy = true;
     blockPromotions = true;

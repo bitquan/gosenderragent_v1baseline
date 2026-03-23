@@ -883,6 +883,33 @@ function buildAutonomousActionSummary(options = {}) {
   return summary;
 }
 
+
+
+function buildAutonomyGraduationPlan(summary = {}, evaluationSnapshot = {}) {
+  const ladder = evaluationSnapshot && typeof evaluationSnapshot === 'object' && evaluationSnapshot.autonomyLadder && typeof evaluationSnapshot.autonomyLadder === 'object'
+    ? evaluationSnapshot.autonomyLadder
+    : (evaluationSnapshot.memory && evaluationSnapshot.memory.autonomy_ladder && typeof evaluationSnapshot.memory.autonomy_ladder === 'object'
+      ? evaluationSnapshot.memory.autonomy_ladder
+      : {});
+  const stage = clampLevel(ladder.stage || ladder.difficulty_ceiling || 1);
+  const overscopedCount = Number(summary.currentWorkspaceOverscopedCount || summary.overscopedCount || 0);
+  const reviewBlockedCount = Number(summary.reviewBlockedCount || 0);
+  const failureCount = Number(summary.failureCount || 0);
+  const nextCeiling = overscopedCount > 0 || reviewBlockedCount > 0 || failureCount > 0
+    ? Math.max(1, stage - 1)
+    : Math.min(5, stage + (Number(summary.currentWorkspaceSafeCount || 0) >= 3 ? 1 : 0));
+  return {
+    stage,
+    nextDifficultyCeiling: nextCeiling,
+    canGraduate: nextCeiling > stage,
+    shouldHold: nextCeiling < stage || reviewBlockedCount > 0,
+    summary: nextCeiling > stage
+      ? `Autonomy can widen from stage ${stage} to ${nextCeiling} after another clean bounded pass.`
+      : reviewBlockedCount > 0 || failureCount > 0 || overscopedCount > 0
+        ? `Hold autonomy at stage ${stage} until review and validation pressure drop.`
+        : `Keep autonomy at stage ${stage} and continue collecting proof.`,
+  };
+}
 module.exports = {
   ACTION_SAMPLE_LIMIT,
   DAILY_SAFE_ACTION_TARGET,
@@ -893,4 +920,5 @@ module.exports = {
   inferTaskDifficulty,
   normalizeWorkspaceScope,
   runMatchesWorkspaceScope,
+  buildAutonomyGraduationPlan,
 };

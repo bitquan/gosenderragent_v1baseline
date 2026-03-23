@@ -16,8 +16,9 @@ const {
   safeStorage,
 } = require('electron');
 const packageMeta = require('./package.json');
+const { buildAppStoragePaths } = require('./core/app-storage-paths');
 const APP_NAME = String(packageMeta.productName || 'GoSenderr Desktop Agent').trim() || 'GoSenderr Desktop Agent';
-const APP_STORAGE_NAME = app.isPackaged ? APP_NAME : `${APP_NAME} Dev`;
+const IS_DEV_BUILD = !app.isPackaged;
 app.setName(APP_NAME);
 const requestedUserDataDir = String(process.env.DESKTOP_AGENT_USER_DATA_DIR || '').trim();
 const requestedSessionDataDir = String(process.env.DESKTOP_AGENT_SESSION_DATA_DIR || '').trim();
@@ -68,35 +69,28 @@ function migrateLegacyCacheDirectories(legacyRoot, sessionDataRoot) {
     }
   }
 }
+const storagePaths = buildAppStoragePaths({
+  appName: APP_NAME,
+  isDev: IS_DEV_BUILD,
+  localStorageRoot: requestedLocalStorageRoot,
+  requestedUserDataDir,
+  requestedSessionDataDir,
+  requestedCacheDir,
+  fallbackUserDataDir: app.getPath('userData'),
+});
 const resolvedUserDataDir = ensureAppStoragePath(
   'userData',
-  requestedUserDataDir || (
-    requestedLocalStorageRoot
-      ? path.join(requestedLocalStorageRoot, APP_STORAGE_NAME, 'user-data')
-      : app.getPath('userData')
-  ),
-) || (
-  requestedLocalStorageRoot
-    ? path.join(requestedLocalStorageRoot, APP_STORAGE_NAME, 'user-data')
-    : app.getPath('userData')
-);
+  storagePaths.userDataDir,
+) || app.getPath('userData');
 const resolvedSessionDataDir = ensureAppStoragePath(
   'sessionData',
-  requestedSessionDataDir || (
-    requestedLocalStorageRoot
-      ? path.join(requestedLocalStorageRoot, APP_STORAGE_NAME, 'session-data')
-      : path.join(resolvedUserDataDir, 'session-data')
-  ),
-) || (
-  requestedLocalStorageRoot
-    ? path.join(requestedLocalStorageRoot, APP_STORAGE_NAME, 'session-data')
-    : path.join(resolvedUserDataDir, 'session-data')
-);
+  storagePaths.sessionDataDir,
+) || storagePaths.sessionDataDir;
 migrateLegacyCacheDirectories(resolvedUserDataDir, resolvedSessionDataDir);
 const resolvedCacheDir = ensureAppStoragePath(
   'cache',
-  requestedCacheDir || path.join(resolvedSessionDataDir, 'Cache'),
-) || path.join(resolvedSessionDataDir, 'Cache');
+  storagePaths.cacheDir,
+) || storagePaths.cacheDir;
 app.commandLine.appendSwitch('disk-cache-dir', resolvedCacheDir);
 app.commandLine.appendSwitch('media-cache-dir', resolvedCacheDir);
 process.env.DESKTOP_AGENT_USER_DATA_DIR = resolvedUserDataDir;
@@ -141,7 +135,7 @@ ipcMain.handle('devEngine:start', async (_event) => {
   }
 });
 
-const { SharedAgentRuntime, mergeMemoryHints } = require('./shared-runtime/runtime');
+const { SharedAgentRuntime } = require('./shared-runtime/runtime');
 const board = require('./core/board');
 const parseBatBoard = board.parseBatBoard;
 const summarizeBats = board.summarizeBats;
@@ -164,6 +158,17 @@ const summarizeWorkspaceTopology =
   typeof board.summarizeWorkspaceTopology === 'function' ? board.summarizeWorkspaceTopology : () => ({});
 const { listSkills, runSkill } = require('./core/skills');
 const { listTools } = require('./core/tool-catalog');
+const {
+  buildHumanPromptInstruction,
+  getChatModeConfig,
+  inferChatModeRouting: inferCanonicalChatModeRouting,
+  parseChatModeDirective: parseCanonicalChatModeDirective,
+  resolveChatModeValue: resolveCanonicalChatModeValue,
+} = require('./core/engine-contract');
+const {
+  buildGroundedChatPrompt,
+  buildGroundedModeReply,
+} = require('./core/grounded-chat');
 const {
   listAutomations,
   upsertAutomation,
@@ -189,38 +194,16 @@ const {
 } = require('./core/autonomy');
 const { applySafetyModeToRequest, buildSafetyStatus } = require('./core/safety-controller');
 const { runPreflight } = require('./core/preflight');
-const {
-  getGitSummary,
-  getGitStatus,
-  getGitDiff,
-  stagePaths,
-  unstagePaths,
-  stageAll,
-  unstageAll,
-  discardPaths,
-  commitStaged,
-  pullTrackedBranch,
-  pushTrackedBranch,
-  publishBranch,
-  listBranches,
-  createBranch,
-  switchBranch,
-} = require('./core/git-service');
 const { sanitizeRelativePath } = require('./core/utils');
 const { handleAssistantChat } = require('./core/chat');
+const { buildSystemCheck } = require('./core/system-check');
+const { buildSystemCheckContext } = require('./core/system-check-context');
 const { buildStorageSnapshot, cleanupStorageArtifacts } = require('./core/storage');
 const { listLabs, createLab, destroyLab, resetLab, runLabRecipe } = require('./core/labs');
-const {
-  listBenchmarkRuns,
-  recordBenchmarkRun,
-  runBenchmarkValidation,
-  finalizeBenchmarkOutcome,
-} = require('./core/benchmarks');
+const { listBenchmarkRuns, recordBenchmarkRun } = require('./core/benchmarks');
 const { readLatestAcceptanceReport, runEngineAcceptanceSuite } = require('./core/engine-acceptance');
 const { buildReviewerSummary } = require('./core/reviewer');
 const { buildRegressionCandidates } = require('./core/regression-builder');
-const { buildAutonomousActionSummary, buildTaskAutonomyAssessment } = require('./core/autonomous-actions');
-const { buildSystemCheck, buildSelfImprovementSummary } = require('./core/system-check');
 const { buildTestBenchSnapshot } = require('./core/test-bench');
 const { buildMvpReadiness } = require('./core/mvp-readiness');
 const {
@@ -239,7 +222,6 @@ const {
   normalizeLaneOverrides,
   normalizeProfileId,
   normalizeRemoteProviderId,
-  normalizeRemoteProviderSecretName,
   normalizeRoutingPolicy,
   normalizeWrappedProfile,
   normalizeWrappedProfileId,
@@ -257,11 +239,10 @@ const {
   rollbackPromotion,
 } = require('./core/promotions');
 const { LearningJournalService } = require('./core/learning-journal');
-const { buildVsCodeSetupStatus, bootstrapVsCodeWorkspace, installVsCodeCompanion } = require('./core/vscode-setup');
+const { buildVsCodeSetupStatus, bootstrapVsCodeWorkspace } = require('./core/vscode-setup');
 const { buildVsCodeExtensionHealth } = require('./core/vscode-extension-health');
 const { buildModelFoundryStatus, seedModelFoundryCandidate } = require('./core/model-foundry');
 const {
-  completeTaskRun,
   createGoal,
   createGoalAndTask,
   createTask,
@@ -276,15 +257,10 @@ const {
   listTasks,
   readHub,
   recordTaskRun,
-  updateTask,
+  runWorkspaceHygiene,
   updateGoal,
 } = require('./core/task-hub');
-const {
-  buildAutoFollowupPlan,
-  buildNextActionRecipe,
-  buildQueuedRecipePayload,
-  queueFollowupRecipeTasks,
-} = require('./core/followup-recipes');
+const { buildQueuedRecipePayload, buildRunFollowupPlan, queueFollowupRecipeTasks } = require('./core/followup-recipes');
 const {
   downloadLatestReleaseFromFeed,
   getStagedReleaseStatus,
@@ -309,15 +285,19 @@ const {
   buildLearnRunPayload,
   buildSelfImproveRunPayload,
   buildTerminalTrainingCommand,
+  buildCheckpointMergeCommand,
+  buildLocalModelInventory,
   buildModelDownloadCommand,
   buildModelInstallPresets,
   discoverStoredModels,
   HARDWARE_TARGET_PRESETS,
+  PROMOTION_POLICY_OPTIONS,
   normalizeHardwareTarget,
   RECOMMENDED_LOCAL_MODELS,
   resolveOllamaHomeRoot,
   resolveOllamaModelsRoot,
   collectTrainingTelemetry,
+  WORKER_FAMILY_OPTIONS,
 } = require('./core/training-tuning');
 const {
   DesktopAgentRuntimeService,
@@ -330,9 +310,12 @@ const {
   getWorkspaceDiff,
   summarizeUnifiedDiff,
   isApprovalRequiredPath,
+  isIgnoredWorkspacePath,
   normalizeReviewPath,
 } = require('./core/review');
 const { buildApprovalQueue } = require('./core/approval-queue');
+const { buildLiveEngineMonitorSummary } = require('./core/engine-monitor-summary');
+const { mergeRecentRuns, selectFreshestRun } = require('./core/run-selection');
 const { collectAutoApprovedDecisions } = require('./core/approval-auto');
 const {
   applyDecision,
@@ -345,6 +328,7 @@ const {
   getAssistantRunsDir,
   getAssistantSchedulerLogPath,
   getConfiguredAssistantChatAttachmentsRoot,
+  getConfiguredAssistantCheckpointMergesRoot,
   getConfiguredAssistantModelFoundryRoot,
 } = require('./core/assistant-paths');
 const {
@@ -560,11 +544,11 @@ function normalizeSettingsUpdatePayload(payload = {}) {
   if (payload?.ui?.chatCustomInstructions !== undefined && normalized.chatCustomInstructions === undefined) {
     normalized.chatCustomInstructions = payload.ui.chatCustomInstructions;
   }
-  if (payload?.ui?.chatWorkbenchMode !== undefined && normalized.chatWorkbenchMode === undefined) {
-    normalized.chatWorkbenchMode = payload.ui.chatWorkbenchMode;
+  if (payload?.ui?.chatComposerHeight !== undefined && normalized.chatComposerHeight === undefined) {
+    normalized.chatComposerHeight = payload.ui.chatComposerHeight;
   }
-  if (payload?.ui?.chatComposerSize !== undefined && normalized.chatComposerSize === undefined) {
-    normalized.chatComposerSize = payload.ui.chatComposerSize;
+  if (payload?.ui?.chatTransparencyLevel !== undefined && normalized.chatTransparencyLevel === undefined) {
+    normalized.chatTransparencyLevel = payload.ui.chatTransparencyLevel;
   }
   return normalized;
 }
@@ -604,12 +588,14 @@ function getDesktopSettingsPayload(workspaceRoot) {
     chatInspectorCollapsed: store.get('chatInspectorCollapsed') !== false,
     chatInspectorWidth: Math.max(320, Math.min(620, Math.round(Number(store.get('chatInspectorWidth') || 380)))),
     chatUtilityMode: String(store.get('chatUtilityMode') || 'context'),
+    chatComposerHeight: String(store.get('chatComposerHeight') || 'comfortable'),
+    chatTransparencyLevel: ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').trim().toLowerCase())
+      ? String(store.get('chatTransparencyLevel')).trim().toLowerCase()
+      : 'balanced',
     showLiveWork: !!store.get('showLiveWork'),
-    chatMode: String(store.get('chatMode') || 'ask').trim().toLowerCase() || 'ask',
+    chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
     chatInstructionMode: String(store.get('chatInstructionMode') || 'auto').trim().toLowerCase() || 'auto',
     chatCustomInstructions: String(store.get('chatCustomInstructions') || ''),
-    chatWorkbenchMode: String(store.get('chatWorkbenchMode') || 'focus').trim().toLowerCase() || 'focus',
-    chatComposerSize: String(store.get('chatComposerSize') || 'tall').trim().toLowerCase() || 'tall',
   };
   return {
     model: store.get('model'),
@@ -620,11 +606,15 @@ function getDesktopSettingsPayload(workspaceRoot) {
     localAiCmdManual: store.get('localAiCmd'),
     aiManualMode,
     aiBridgeProfile,
-    aiRemoteProvider,
-    aiRemoteModel: String(store.get('aiRemoteModel') || '').trim(),
-    aiRemoteBaseUrl: String(aiRemoteProviderPreset.baseUrl || '').trim(),
-    aiRemoteApiKeyName: String(aiRemoteProviderPreset.apiKeyName || '').trim(),
-    aiWrappedProfileId,
+      aiRemoteProvider,
+      aiRemoteModel: String(store.get('aiRemoteModel') || '').trim(),
+      aiRemoteBaseUrl: String(store.get('aiRemoteBaseUrl') || aiRemoteProviderPreset.baseUrl || '').trim(),
+      aiRemoteApiKeyName: String(store.get('aiRemoteApiKeyName') || aiRemoteProviderPreset.apiKeyName || '').trim(),
+      chatComposerHeight: ui.chatComposerHeight,
+      chatTransparencyLevel: ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').toLowerCase())
+        ? String(store.get('chatTransparencyLevel')).toLowerCase()
+        : 'balanced',
+      aiWrappedProfileId,
     aiWorkspaceWrappedProfileId,
     aiEngineWrappedProfileId,
     aiWrappedProfiles,
@@ -638,14 +628,10 @@ function getDesktopSettingsPayload(workspaceRoot) {
     aiProfile,
     aiRoutingPolicy,
     aiLaneOverrides,
-    chatMode: ['ask', 'plan', 'edit', 'agent'].includes(ui.chatMode) ? ui.chatMode : 'ask',
-    chatInstructionMode: ['off', 'auto', 'custom'].includes(ui.chatInstructionMode) ? ui.chatInstructionMode : 'auto',
-    chatCustomInstructions: ui.chatCustomInstructions,
-    chatWorkbenchMode: ['focus', 'balanced', 'control-room'].includes(ui.chatWorkbenchMode) ? ui.chatWorkbenchMode : 'focus',
-    chatComposerSize: ['comfortable', 'tall'].includes(ui.chatComposerSize) ? ui.chatComposerSize : 'tall',
+      chatMode: ui.chatMode,
+      chatInstructionMode: ['off', 'auto', 'custom'].includes(ui.chatInstructionMode) ? ui.chatInstructionMode : 'auto',
+      chatCustomInstructions: ui.chatCustomInstructions,
     learningLivePolling: !!store.get('learningLivePolling'),
-    autoQueueTaskLoopFollowups: autonomy.autoQueueTaskLoopFollowups === true,
-    autoRunQueuedTaskLoopFollowups: autonomy.autoRunQueuedTaskLoopFollowups === true,
     ...tuningSettings,
     ...autonomy,
     ui,
@@ -664,8 +650,8 @@ function getDesktopSettingsPayload(workspaceRoot) {
       bridgeProfile: aiBridgeProfile,
       remoteProvider: aiRemoteProvider,
       remoteModel: String(store.get('aiRemoteModel') || '').trim(),
-      remoteBaseUrl: String(aiRemoteProviderPreset.baseUrl || '').trim(),
-      remoteApiKeyName: String(aiRemoteProviderPreset.apiKeyName || '').trim(),
+      remoteBaseUrl: String(store.get('aiRemoteBaseUrl') || aiRemoteProviderPreset.baseUrl || '').trim(),
+      remoteApiKeyName: String(store.get('aiRemoteApiKeyName') || aiRemoteProviderPreset.apiKeyName || '').trim(),
       wrappedProfileId: aiWrappedProfileId,
       workspaceWrappedProfileId: aiWorkspaceWrappedProfileId,
       engineWrappedProfileId: aiEngineWrappedProfileId,
@@ -682,8 +668,8 @@ function getDesktopSettingsPayload(workspaceRoot) {
       safetyLevel: autonomy.safetyLevel || normalizeSafetyLevel(store.get('safetyLevel')),
       safetyLevels: safetyLevelOptions(),
       supervisedAutoRunRecipes: autonomy.supervisedAutoRunRecipes === true,
-      autoQueueTaskLoopFollowups: autonomy.autoQueueTaskLoopFollowups === true,
-      autoRunQueuedTaskLoopFollowups: autonomy.autoRunQueuedTaskLoopFollowups === true,
+      autoQueueTaskLoopFollowups: store.get('autoQueueTaskLoopFollowups') === true,
+      autoRunQueuedTaskLoopFollowups: store.get('autoRunQueuedTaskLoopFollowups') === true,
     },
     automations: workspaceRoot ? getAutopilotSettings(workspaceRoot) : {},
     labs: {
@@ -763,56 +749,6 @@ function nextActionableTodoBat(workspaceRoot) {
   return bats.find((item) => item.safeActionable) || bats.find((item) => String(item.status || '').includes('TODO')) || null;
 }
 
-function readGitSummary(workspaceRoot) {
-  const root = String(workspaceRoot || '').trim();
-  if (!root) {
-    return {
-      ok: false,
-      branch: '',
-      upstream: '',
-      ahead: 0,
-      behind: 0,
-      dirty: false,
-      stagedCount: 0,
-      unstagedCount: 0,
-      untrackedCount: 0,
-      lastCommit: '',
-      files: [],
-      canCommit: false,
-      canPull: false,
-      canPush: false,
-      canPublish: false,
-      blockedReason: 'Pick a workspace to inspect git state.',
-      label: 'No workspace',
-      summary: 'Open a git workspace to enable the desktop Git controls.',
-    };
-  }
-  try {
-    return getGitSummary(root);
-  } catch (error) {
-    return {
-      ok: false,
-      branch: '',
-      upstream: '',
-      ahead: 0,
-      behind: 0,
-      dirty: false,
-      stagedCount: 0,
-      unstagedCount: 0,
-      untrackedCount: 0,
-      lastCommit: '',
-      files: [],
-      canCommit: false,
-      canPull: false,
-      canPush: false,
-      canPublish: false,
-      blockedReason: error instanceof Error ? error.message : 'Git summary is unavailable.',
-      label: 'Git unavailable',
-      summary: error instanceof Error ? error.message : 'Git summary is unavailable.',
-    };
-  }
-}
-
 const store = createResilientStore(Store, {
   userDataRoot: app.getPath('userData'),
   name: 'desktop-agent-settings',
@@ -826,21 +762,21 @@ const store = createResilientStore(Store, {
     surfaceTemplate: 'board',
     safeLayoutMode: false,
     startInChatWorkspace: true,
-    chatInspectorCollapsed: true,
-    chatInspectorWidth: 380,
-    chatUtilityMode: 'context',
-    showLiveWork: true,
-    chatMode: 'ask',
-    chatInstructionMode: 'auto',
-    chatCustomInstructions: '',
-    chatWorkbenchMode: 'focus',
-    chatComposerSize: 'tall',
+      chatInspectorCollapsed: true,
+      chatInspectorWidth: 380,
+      chatUtilityMode: 'context',
+      chatComposerHeight: 'comfortable',
+      chatTransparencyLevel: 'balanced',
+      showLiveWork: true,
+      chatMode: 'auto',
+      chatInstructionMode: 'auto',
+      chatCustomInstructions: '',
     runtime: 'ollama',
     localAiCmd: '',
-    aiManualMode: false,
-    aiBridgeProfile: 'llama-bridge',
-    aiRemoteProvider: 'openai',
-    aiRemoteModel: 'gpt-4o-mini',
+      aiManualMode: false,
+      aiBridgeProfile: 'llama-bridge',
+      aiRemoteProvider: 'openai',
+      aiRemoteModel: 'gpt-5-mini',
     aiRemoteBaseUrl: '',
     aiRemoteApiKeyName: '',
     aiWrappedProfileId: 'gs-dev-1-default',
@@ -869,7 +805,7 @@ const store = createResilientStore(Store, {
     sandboxRequired: true,
     baselineSelfHealPriority: true,
     supervisedAutoRunRecipes: false,
-    autoQueueTaskLoopFollowups: true,
+    autoQueueTaskLoopFollowups: false,
     autoRunQueuedTaskLoopFollowups: false,
     maxRetryRounds: 2,
     stabilityProfileVersion: 2,
@@ -964,31 +900,11 @@ function normalizeOperatorExecutionPayload(value = {}) {
   return value && typeof value === 'object' ? value : {};
 }
 
-function normalizeOperatorExecutionList(value = []) {
-  return Array.isArray(value)
-    ? value.filter((item) => item && typeof item === 'object')
-    : [];
-}
-
-function buildOperatorExecutionDevLoopFields(run = {}, operatorExecution = {}) {
-  return {
-    taskObjective: normalizeOperatorExecutionPayload(operatorExecution.taskObjective || run.taskObjective || {}),
-    failureClass: normalizeOperatorExecutionPayload(operatorExecution.failureClass || run.failureClass || {}),
-    recoveryLadder: normalizeOperatorExecutionPayload(operatorExecution.recoveryLadder || run.recoveryLadder || {}),
-    checkpointRef: normalizeOperatorExecutionPayload(operatorExecution.checkpointRef || run.checkpointRef || {}),
-    interruptRequest: normalizeOperatorExecutionPayload(operatorExecution.interruptRequest || run.interruptRequest || {}),
-    reviewBundle: normalizeOperatorExecutionPayload(operatorExecution.reviewBundle || run.reviewBundle || {}),
-    workbenchArtifacts: normalizeOperatorExecutionList(operatorExecution.workbenchArtifacts || run.workbenchArtifacts || []),
-  };
-}
-
 function summarizeOperatorExecutionFromRun(run = {}) {
   const operatorExecution = normalizeOperatorExecutionPayload(run.operatorExecution || {});
-  const devLoopFields = buildOperatorExecutionDevLoopFields(run, operatorExecution);
   if (Object.keys(operatorExecution).length > 0) {
     return {
       ...operatorExecution,
-      ...devLoopFields,
       task: String(operatorExecution.task || run.task || '').trim(),
       laneId: String(operatorExecution.laneId || run.laneId || '').trim(),
       laneLabel: String(operatorExecution.laneLabel || run.laneLabel || '').trim(),
@@ -1018,7 +934,6 @@ function summarizeOperatorExecutionFromRun(run = {}) {
     || '',
   ).trim();
   return {
-    ...devLoopFields,
     task: String(run.task || run.label || '').trim(),
     laneId: String(run.laneId || '').trim(),
     laneLabel: String(run.laneLabel || '').trim(),
@@ -1069,7 +984,6 @@ function summarizeOperatorExecutionFromRun(run = {}) {
 
 function buildTaskLoopPayload({ request = null, execution = null, ok = false, message = '' } = {}) {
   const operatorExecution = normalizeOperatorExecutionPayload(execution || {});
-  const devLoopFields = buildOperatorExecutionDevLoopFields({}, operatorExecution);
   return {
     ok,
     message: String(message || operatorExecution.resultSummary || operatorExecution.stageSummary?.summary || '').trim(),
@@ -1093,13 +1007,6 @@ function buildTaskLoopPayload({ request = null, execution = null, ok = false, me
     testSummary: operatorExecution.testSummary || {},
     benchmarkMetadata: operatorExecution.benchmarkMetadata || {},
     learningMetadata: operatorExecution.learningMetadata || {},
-    taskObjective: devLoopFields.taskObjective,
-    failureClass: devLoopFields.failureClass,
-    recoveryLadder: devLoopFields.recoveryLadder,
-    checkpointRef: devLoopFields.checkpointRef,
-    interruptRequest: devLoopFields.interruptRequest,
-    reviewBundle: devLoopFields.reviewBundle,
-    workbenchArtifacts: devLoopFields.workbenchArtifacts,
     retryAvailable: operatorExecution.retryAvailable === true,
     repairAvailable: operatorExecution.repairAvailable === true,
     artifactPaths: Array.isArray(operatorExecution.artifactPaths) ? operatorExecution.artifactPaths : [],
@@ -1168,6 +1075,126 @@ const learningJournal = new LearningJournalService({
   runLearnAction: async (payload) => runTunedAction('learn', payload),
 });
 
+const autoQueuedFollowupRunIds = new Set();
+
+async function maybeQueueEngineFollowupsFromRunEvent(event = {}) {
+  if (!event || typeof event !== 'object') {
+    return null;
+  }
+  const runId = String(event.runId || event.runtimeRun?.run_id || event.runtimeRun?.runId || '').trim();
+  if (!runId || autoQueuedFollowupRunIds.has(runId)) {
+    return null;
+  }
+  const state = String(event.state || '').trim().toLowerCase();
+  if (!['pass', 'fail', 'skipped', 'cancelled'].includes(state)) {
+    return null;
+  }
+  autoQueuedFollowupRunIds.add(runId);
+  const workspaceRoot = String(
+    event.workspaceRoot
+    || event.runtimeContext?.workspaceRoot
+    || event.operatorExecution?.workspaceRoot
+    || getWorkspaceRoot()
+    || ''
+  ).trim();
+  const targetWorkspaceRoot = String(
+    event.targetWorkspaceRoot
+    || event.runtimeContext?.targetWorkspaceRoot
+    || event.operatorExecution?.targetWorkspaceRoot
+    || event.runtimeContext?.workspaceScopeRoot
+    || workspaceRoot
+  ).trim() || workspaceRoot;
+  if (!workspaceRoot) {
+    return null;
+  }
+  const assistantConfig = readAssistantConfig(workspaceRoot);
+  const safeMode = getSafetyStatusSnapshot({
+    workspaceRoot,
+    targetWorkspaceRoot,
+    labRoot: '',
+    latestRuntime: null,
+    baseline: { state: 'green', blocked: false, reason: '' },
+    assistantConfig,
+  });
+  const readiness = {};
+  const followupPlan = buildRunFollowupPlan({
+    ...event,
+    operatorExecution: event.operatorExecution || {},
+    reviewSummary: event.reviewSummary || {},
+    ownerExperimentSummary: event.ownerExperimentSummary || {},
+    recommendedActions: event.recommendedActions || [],
+    approvalRequests: event.approvalRequests || event.reviewRequests || [],
+    runtimeContext: event.runtimeContext || {},
+    runtimeResult: event.runtimeResult || {},
+  }, {
+    settings: {
+      autoQueueTaskLoopFollowups: assistantConfig.autoQueueTaskLoopFollowups === true,
+      autoRunQueuedTaskLoopFollowups: assistantConfig.autoRunQueuedTaskLoopFollowups === true,
+    },
+    safeMode,
+    readiness,
+    pendingApprovals: Array.isArray(event.approvalRequests) ? event.approvalRequests.length : 0,
+  });
+  if (!followupPlan?.exists || !followupPlan.recipe) {
+    return null;
+  }
+  const queued = followupPlan.shouldQueue
+    ? queueFollowupRecipeTasks(workspaceRoot, followupPlan.recipe, {
+        targetWorkspaceRoot,
+        labRoot: '',
+        threadId: String(event.threadId || event.operatorExecution?.threadId || '').trim(),
+        changeSessionId: String(event.changeSessionId || event.operatorExecution?.changeSessionId || '').trim(),
+        ring: 'candidate',
+        promotionState: 'candidate',
+      })
+    : null;
+  let firstRun = null;
+  if (queued?.ok && followupPlan.shouldAutoRun && Array.isArray(queued.tasks) && queued.tasks.length > 0) {
+    firstRun = await launchUniversalTaskRun({
+      workspaceRoot,
+      targetWorkspaceRoot,
+      labRoot: '',
+      task: queued.tasks[0],
+      goal: queued.goal || null,
+      changeSessionId: String(event.changeSessionId || event.operatorExecution?.changeSessionId || '').trim(),
+      label: `${followupPlan.recipe.title} • ${queued.tasks[0].title || 'Step 1'}`,
+    });
+  }
+  const payload = {
+    type: 'followup-plan',
+    parentRunId: runId,
+    runId: firstRun?.runId || '',
+    state: queued?.ok ? (firstRun?.runId ? 'running' : 'queued') : 'ready',
+    label: followupPlan.recipe.title || 'Engine follow-up plan',
+    recipe: {
+      id: followupPlan.recipe.id || '',
+      title: followupPlan.recipe.title || '',
+      summary: followupPlan.recipe.summary || '',
+      stepCount: Array.isArray(followupPlan.recipe.steps) ? followupPlan.recipe.steps.length : 0,
+      autoQueueEligible: followupPlan.recipe.autoQueueEligible === true,
+    },
+    createdTaskIds: Array.isArray(queued?.tasks) ? queued.tasks.map((item) => item?.id).filter(Boolean) : [],
+    shouldQueue: followupPlan.shouldQueue === true,
+    shouldAutoRun: followupPlan.shouldAutoRun === true,
+    source: followupPlan.source || 'run-findings',
+    summary: followupPlan.reason || '',
+  };
+  learningJournal.recordEvent('followup-plan', {
+    parentRunId: runId,
+    recipeId: followupPlan.recipe.id || '',
+    title: followupPlan.recipe.title || '',
+    shouldQueue: followupPlan.shouldQueue === true,
+    shouldAutoRun: followupPlan.shouldAutoRun === true,
+    createdTaskCount: Array.isArray(queued?.tasks) ? queued.tasks.length : 0,
+    source: followupPlan.source || 'run-findings',
+  });
+  pushMonitorEvent('runtime', payload);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('agent:run-event', payload);
+  }
+  return payload;
+}
+
 function updateLearningJournalScope(payload = {}) {
   const roots = resolveRequestRoots(payload);
   return learningJournal.setScope({
@@ -1185,15 +1212,6 @@ runtime.on('run-event', (event) => {
     latestTaskLoopSession.latestExecution = summarizeOperatorExecutionFromRun(event);
   }
   if (event && event.state && ['pass', 'fail', 'skipped', 'cancelled'].includes(String(event.state))) {
-    const operatorExecution = event.operatorExecution && typeof event.operatorExecution === 'object'
-      ? event.operatorExecution
-      : {};
-    const taskHubCompletion = completeTaskRun(String(event.workspaceRoot || getWorkspaceRoot() || '').trim(), {
-      runId: event.runId,
-      status: event.state,
-      summary: operatorExecution.resultSummary || event.blockedReason || event.label || '',
-      reviewSummary: event.reviewSummary || {},
-    });
     learningJournal.recordEvent('run-complete', {
       runId: event.runId,
       label: event.label,
@@ -1202,23 +1220,10 @@ runtime.on('run-event', (event) => {
       approvalCount: Array.isArray(event.approvalRequests) ? event.approvalRequests.length : 0,
       trustSignalCount: Number(event.trustSignalCount || 0),
       reviewSummary: event.reviewSummary || {},
-      reviewBundle: operatorExecution.reviewBundle || {},
-      failureClass: operatorExecution.failureClass || {},
-      nextAction: operatorExecution.nextAction || {},
-      changedFiles: Array.isArray(operatorExecution.changedFiles) ? operatorExecution.changedFiles : [],
-      taskObjective: operatorExecution.taskObjective || {},
       trusted: String(event.state || '').toLowerCase() === 'pass'
         && (Number(event.trustSignalCount || 0) > 0 || (Array.isArray(event.approvalRequests) ? event.approvalRequests.length === 0 : true)),
     });
-    if (taskHubCompletion?.ok && taskHubCompletion.selfHostExpansion) {
-      learningJournal.recordEvent('self-host-expansion', {
-        runId: event.runId,
-        taskId: taskHubCompletion.selfHostExpansion.taskId,
-        verdict: taskHubCompletion.selfHostExpansion.outcome,
-        summary: taskHubCompletion.selfHostExpansion.summary,
-        trusted: String(taskHubCompletion.selfHostExpansion.outcome || '').trim().toLowerCase() === 'pass',
-      });
-    }
+    Promise.resolve().then(() => maybeQueueEngineFollowupsFromRunEvent(event)).catch((_error) => {});
   }
   pushMonitorEvent('runtime', event);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1975,6 +1980,47 @@ async function exportDesktopLocalTrainingBundle(workspaceRoot, payload = {}) {
   };
 }
 
+async function mergeDesktopLocalCheckpoints(workspaceRoot, payload = {}) {
+  const mergeRoot = getConfiguredAssistantCheckpointMergesRoot(workspaceRoot)
+    || path.join(workspaceRoot, '.assistant_checkpoint_merges');
+  const mergeName = String(payload.mergeName || payload.name || 'checkpoint-merge').trim() || 'checkpoint-merge';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const outputPath = String(payload.outputPath || payload.outputDir || '').trim()
+    || path.join(mergeRoot, `${stamp}-${mergeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'merge'}`);
+  const request = {
+    action: 'checkpoint-merge',
+    workspace: workspaceRoot,
+    targetWorkspaceRoot: workspaceRoot,
+    projectRoot: workspaceRoot,
+    basePath: payload.basePath || payload.baseModelPath || '',
+    secondaryPath: payload.secondaryPath || payload.secondaryModelPath || '',
+    outputPath,
+    mergeName,
+    alpha: payload.alpha ?? 0.2,
+    method: payload.method || 'linear',
+    ollamaModelName: payload.ollamaModelName || '',
+    dryRun: payload.dryRun === true,
+  };
+  const result = await runRuntimeApiAction(workspaceRoot, request);
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.payload.error || result.stderr || 'Unable to merge local checkpoints.',
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      checkpointMerge: {},
+    };
+  }
+  return {
+    ok: true,
+    message: result.payload.summary || 'Prepared checkpoint merge.',
+    outputPath: result.payload.outputPath || outputPath,
+    checkpointMerge: result.payload.checkpointMerge || {},
+    artifactPaths: Array.isArray(result.payload.artifactPaths) ? result.payload.artifactPaths : [],
+  };
+}
+
 async function buildBinaryReleaseNow() {
   const workspaceRoot = getWorkspaceRoot();
   const settings = binaryUpdateSettings();
@@ -2441,70 +2487,47 @@ async function setSecret(name, value) {
   if (!name) {
     throw new Error('Secret name is required.');
   }
-  const nextValue = String(value || '').trim();
-  try {
-    const keytar = getKeytarModule();
-    if (keytar) {
-      if (!nextValue) {
-        await keytar.deletePassword(SECRET_SERVICE, name);
-        delete process.env[name];
-        return { ok: true, backend: 'keytar', configured: false };
-      }
-      await keytar.setPassword(SECRET_SERVICE, name, nextValue);
-      process.env[name] = nextValue;
-      return { ok: true, backend: 'keytar', configured: true };
-    }
 
-    if (!safeStorage.isEncryptionAvailable()) {
-      return { ok: false, backend: 'none', configured: false, message: 'OS encryption is unavailable.' };
-    }
-
-    const fallback = store.get('encryptedSecrets') || {};
-    if (!nextValue) {
-      delete fallback[name];
-      store.set('encryptedSecrets', fallback);
-      delete process.env[name];
-      return { ok: true, backend: 'safeStorage-fallback', configured: false };
-    }
-    const encrypted = safeStorage.encryptString(nextValue).toString('base64');
-    fallback[name] = encrypted;
-    store.set('encryptedSecrets', fallback);
-    process.env[name] = nextValue;
-    return { ok: true, backend: 'safeStorage-fallback', configured: true };
-  } catch (error) {
-    return {
-      ok: false,
-      backend: getKeytarModule() ? 'keytar' : 'none',
-      configured: false,
-      message: error?.message || 'Secret update failed.',
-    };
+  const keytar = getKeytarModule();
+  if (keytar) {
+    await keytar.setPassword(SECRET_SERVICE, name, String(value || ''));
+    return { ok: true, backend: 'keytar' };
   }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    return { ok: false, backend: 'none', message: 'OS encryption is unavailable.' };
+  }
+
+  const encrypted = safeStorage.encryptString(String(value || '')).toString('base64');
+  const fallback = store.get('encryptedSecrets') || {};
+  fallback[name] = encrypted;
+  store.set('encryptedSecrets', fallback);
+  return { ok: true, backend: 'safeStorage-fallback' };
 }
 
 async function getSecret(name) {
   if (!name) {
-    return { ok: false, value: null, backend: 'none', configured: false };
+    return { ok: false, value: null, backend: 'none' };
   }
 
   const keytar = getKeytarModule();
   if (keytar) {
     const value = await keytar.getPassword(SECRET_SERVICE, name);
-    const configured = !!String(value || '').trim();
-    return { ok: true, value: value || '', backend: 'keytar', configured };
+    return { ok: true, value: value || '', backend: 'keytar' };
   }
 
   const fallback = store.get('encryptedSecrets') || {};
   const blob = fallback[name];
   if (!blob) {
-    return { ok: true, value: '', backend: 'safeStorage-fallback', configured: false };
+    return { ok: true, value: '', backend: 'safeStorage-fallback' };
   }
 
   if (!safeStorage.isEncryptionAvailable()) {
-    return { ok: false, value: null, backend: 'none', configured: false };
+    return { ok: false, value: null, backend: 'none' };
   }
 
   const value = safeStorage.decryptString(Buffer.from(blob, 'base64'));
-  return { ok: true, value, backend: 'safeStorage-fallback', configured: !!String(value || '').trim() };
+  return { ok: true, value, backend: 'safeStorage-fallback' };
 }
 
 function runAssistantCli(workspaceRoot, args, extraEnv = {}) {
@@ -2535,63 +2558,31 @@ function normalizeChatHistoryPayload(history) {
 
 function buildAssistantChatContext(workspaceRoot, payload = {}) {
   const incoming = payload && typeof payload === 'object' ? payload : {};
-  const chatMode = resolveChatModeValue(incoming.chatMode || store.get('chatMode'));
-  const modeState = inferChatModeRouting(chatMode, incoming.message || '');
   const editorContext = buildDesktopEditorContext(workspaceRoot);
-  const modelProvisioning = incoming.modelProvisioning && typeof incoming.modelProvisioning === 'object'
-    ? {
-        status: String(incoming.modelProvisioning.status || incoming.modelProvisioning.state || '').trim().toLowerCase(),
-        summary: String(incoming.modelProvisioning.summary || '').trim(),
-        recommendedAction: String(incoming.modelProvisioning.recommendedAction || '').trim(),
-      }
-    : null;
-  const activeFile = String(incoming.activeFile || editorContext.active_file_path || '').trim();
-  const selectionLine = Number(incoming.selectionLine || editorContext.selection_start_line || 0) || 0;
-  const surroundingSnippet = String(
-    incoming.surroundingSnippet
-    || (activeFile && activeFile === editorContext.active_file_path ? editorContext.surrounding_snippet : '')
-    || (activeFile ? buildSurroundingSnippet(workspaceRoot, activeFile, selectionLine || 1) : '')
-    || ''
-  ).trim();
-  const currentFileDiff = String(
-    incoming.currentFileDiff
-    || (activeFile && activeFile === editorContext.active_file_path ? editorContext.current_file_diff : '')
-    || (activeFile ? buildCurrentFileDiff(workspaceRoot, activeFile) : '')
-    || ''
-  ).trim();
-  const recentWork = incoming.recentWork && typeof incoming.recentWork === 'object'
-    ? {
-        ...incoming.recentWork,
-        summary: String(incoming.recentWork.summary || '').trim(),
-        workedAt: String(incoming.recentWork.workedAt || '').trim(),
-        changedFiles: normalizeChatChangedFileList(incoming.recentWork.changedFiles),
-      }
-    : buildChatRecentWorkContext(workspaceRoot, incoming);
   return {
     ...incoming,
-    chatMode,
-    suggestedTaskMode: modeState.suggestedTaskMode,
-    suggestedLaneId: modeState.suggestedLaneId,
-    modeAllowsExecution: modeState.modeAllowsExecution,
-    modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
-    activeFile,
-    selectionLine,
+    activeFile: String(incoming.activeFile || editorContext.active_file_path || '').trim(),
+    selectionLine: Number(incoming.selectionLine || editorContext.selection_start_line || 0) || 0,
     changedFiles: Number(incoming.changedFiles || 0) || 0,
     approvalCount: Number(incoming.approvalCount || 0) || 0,
-    activeRunId: String(incoming.activeRunId || recentWork.runId || '').trim(),
+    activeRunId: String(incoming.activeRunId || '').trim(),
     activeRunLabel: String(incoming.activeRunLabel || '').trim(),
     worktree: String(incoming.worktree || '').trim(),
     activeView: String(incoming.activeView || '').trim(),
-    openFiles: Array.isArray(incoming.openFiles) ? incoming.openFiles : (Array.isArray(editorContext.open_files) ? editorContext.open_files.slice(0, 6) : []),
-    diagnostics: Array.isArray(incoming.diagnostics) ? incoming.diagnostics : (Array.isArray(editorContext.diagnostics) ? editorContext.diagnostics.slice(0, 6) : []),
-    surroundingSnippet,
-    currentFileDiff,
-    recentWork,
-    recentWorkSummary: String(incoming.recentWorkSummary || recentWork.summary || '').trim(),
-    recentWorkWorkedAt: String(incoming.recentWorkWorkedAt || recentWork.workedAt || '').trim(),
-    recentWorkFiles: normalizeChatChangedFileList(incoming.recentWorkFiles || recentWork.changedFiles),
-    modelProvisioning,
   };
+}
+
+
+function resolveChatModeValue(value) {
+  return resolveCanonicalChatModeValue(value);
+}
+
+function parseChatModeDirective(value) {
+  return parseCanonicalChatModeDirective(value);
+}
+
+function inferChatModeRouting(chatMode, message = '') {
+  return inferCanonicalChatModeRouting(chatMode, message);
 }
 
 function buildTrustedDocReferences(workspaceRoot) {
@@ -2610,68 +2601,13 @@ function buildTrustedDocReferences(workspaceRoot) {
   }].filter((item) => item.url || item.title);
 }
 
-function resolveChatModeValue(value) {
-  const mode = String(value || 'ask').trim().toLowerCase();
-  return ['ask', 'plan', 'edit', 'agent'].includes(mode) ? mode : 'ask';
-}
-
-function parseChatModeDirective(value) {
-  const message = String(value || '').trim();
-  const match = message.match(/^\/(ask|plan|edit|agent)(?:\s+(.*))?$/i);
-  if (!match) {
-    return { mode: '', message };
-  }
-  return {
-    mode: resolveChatModeValue(match[1]),
-    message: String(match[2] || '').trim(),
-  };
-}
-
-function inferChatModeRouting(chatMode, message = '') {
-  const mode = resolveChatModeValue(chatMode);
-  const lower = String(message || '').trim().toLowerCase();
-  const hasOpsIntent = /(status|summary|health|why|what happened|what is happening|what's happening|inbox|review)/.test(lower);
-  const hasResearchIntent = /(docs|document|research|reference|why|how)/.test(lower);
-  if (mode === 'plan') {
-    return {
-      suggestedTaskMode: 'planner',
-      suggestedLaneId: hasResearchIntent ? 'research-docs' : 'plan-reasoning',
-      modeAllowsExecution: false,
-      modeRequiresEditConfirmation: false,
-      suggestedNextAction: 'Talk through the plan, risks, and next bounded step before changing code.',
-    };
-  }
-  if (mode === 'edit') {
-    return {
-      suggestedTaskMode: /(review|diff|verify|validate)/.test(lower) ? 'validator' : 'coder',
-      suggestedLaneId: /(review|diff|verify|validate)/.test(lower) ? 'review-verify' : /repair|fix|failed|failing/.test(lower) ? 'repair-fast' : 'code-main',
-      modeAllowsExecution: false,
-      modeRequiresEditConfirmation: true,
-      suggestedNextAction: 'Prepare the edit path and confirm before running code changes.',
-    };
-  }
-  if (mode === 'agent') {
-    return {
-      suggestedTaskMode: hasResearchIntent ? 'research' : hasOpsIntent ? 'summarizer' : 'coder',
-      suggestedLaneId: hasResearchIntent ? 'research-docs' : hasOpsIntent ? 'ops-summary' : 'code-main',
-      modeAllowsExecution: true,
-      modeRequiresEditConfirmation: false,
-      suggestedNextAction: 'Use the bounded engine loop and only act when the current gates are healthy.',
-    };
-  }
-  return {
-    suggestedTaskMode: hasResearchIntent ? 'research' : hasOpsIntent ? 'summarizer' : 'chat',
-    suggestedLaneId: hasResearchIntent ? 'research-docs' : hasOpsIntent ? 'ops-summary' : 'chat-fast',
-    modeAllowsExecution: false,
-    modeRequiresEditConfirmation: false,
-    suggestedNextAction: 'Answer naturally, keep the thread conversational, and avoid mutating work from Ask mode.',
-  };
-}
-
 function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
   const mode = String(store.get('chatInstructionMode') || 'auto').trim().toLowerCase() || 'auto';
   const chatMode = resolveChatModeValue(context.chatMode || store.get('chatMode'));
   const modeState = inferChatModeRouting(chatMode, context.message || '');
+  const modePresentation = getChatModeConfig(chatMode);
+  const effectiveMode = modeState.effectiveChatMode || chatMode;
+  const effectiveModePresentation = getChatModeConfig(effectiveMode);
   const customInstructions = String(store.get('chatCustomInstructions') || '').trim();
   const learningStatus = learningJournal.getStatus();
   const styleProfile = learningStatus?.styleProfile && typeof learningStatus.styleProfile === 'object'
@@ -2688,23 +2624,15 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
     ? styleProfile.commonTargets.map((item) => String(item?.label || '').trim()).filter(Boolean)
     : [];
   const autoInstructionsParts = [];
-  const provisioning = context.modelProvisioning && typeof context.modelProvisioning === 'object'
-    ? context.modelProvisioning
-    : {};
+  autoInstructionsParts.unshift(buildHumanPromptInstruction(effectiveMode));
+  if (modePresentation?.meta) {
+    autoInstructionsParts.push(modePresentation.meta);
+  }
+  if (chatMode === 'auto' && effectiveMode !== chatMode) {
+    autoInstructionsParts.push(`Auto resolved this request to ${effectiveModePresentation.label}.`);
+  }
   if (preferredVerbs.length > 0) {
     autoInstructionsParts.push(`Prefer ${preferredVerbs.join(', ')} style task phrasing.`);
-  }
-  if (chatMode === 'ask') {
-    autoInstructionsParts.unshift('Stay conversational, helpful, and plain-English. Do not auto-launch edits or coding runs from Ask mode.');
-  }
-  if (chatMode === 'plan') {
-    autoInstructionsParts.unshift('Prefer scoped plans, risks, and next steps. Do not launch edit work directly from Plan mode.');
-  }
-  if (chatMode === 'edit') {
-    autoInstructionsParts.unshift('Focus on code changes, diffs, and repair paths. Prepare edit work carefully and require confirmation before executing it.');
-  }
-  if (chatMode === 'agent') {
-    autoInstructionsParts.unshift('Act through the existing engine loop only when the current safety, review, and autonomy gates allow it.');
   }
   if (commonTargets.length > 0) {
     autoInstructionsParts.push(`Common target areas: ${commonTargets.slice(0, 3).join(', ')}.`);
@@ -2751,19 +2679,11 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
   if (docsVault?.exists && String(docsVault.recommendedAction || '').trim()) {
     autoInstructionsParts.push(String(docsVault.recommendedAction || '').trim());
   }
-  if (!docsVault?.exists || ['aging', 'stale'].includes(String(docsVault?.freshnessLabel || '').trim().toLowerCase())) {
-    autoInstructionsParts.push('Use the docs-scout lab recipe before trusting a new documentation-led change.');
-  }
-  if (String(provisioning.summary || '').trim()) {
-    autoInstructionsParts.push(`Model provisioning: ${String(provisioning.summary || '').trim()}`);
-  }
-  if (['fail', 'warn'].includes(String(provisioning.status || provisioning.state || '').trim().toLowerCase())
-    && String(provisioning.recommendedAction || '').trim()) {
-    autoInstructionsParts.push(String(provisioning.recommendedAction || '').trim());
-  }
   return {
     chatMode,
+    effectiveChatMode: effectiveMode,
     modeLabel: chatMode.charAt(0).toUpperCase() + chatMode.slice(1),
+    effectiveModeLabel: effectiveModePresentation.label,
     suggestedTaskMode: modeState.suggestedTaskMode,
     suggestedLaneId: modeState.suggestedLaneId,
     modeAllowsExecution: modeState.modeAllowsExecution,
@@ -2777,9 +2697,6 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
     recommendedSources,
     docsFreshness: String(docsVault?.freshnessLabel || '').trim(),
     docsRecommendedAction: String(docsVault?.recommendedAction || '').trim(),
-    docsLabRecipeId: 'docs-scout',
-    modelProvisioningSummary: String(provisioning.summary || '').trim(),
-    modelProvisioningAction: String(provisioning.recommendedAction || '').trim(),
     styleProfile,
   };
 }
@@ -2810,8 +2727,6 @@ function buildAssistantReplySuggestions(message, reply) {
     push('/workers');
   }
   if (suggestions.length === 0) {
-    push('/ask');
-    push('/plan');
     push('/next');
     push('/approvals');
     push('/health');
@@ -2933,7 +2848,7 @@ function getChatBackendConfig(workspaceRoot) {
     remoteProviderId: remoteProvider.id,
     remoteBaseUrl: String(remoteProvider.baseUrl || '').trim(),
     remoteApiKeyName: String(remoteProvider.apiKeyName || '').trim() || 'OPENAI_API_KEY',
-    remoteModel: String(store.get('aiRemoteModel') || store.get('model') || remoteProvider.models?.[0]?.id || 'gpt-4o-mini').trim() || 'gpt-4o-mini',
+    remoteModel: String(store.get('aiRemoteModel') || store.get('model') || remoteProvider.models?.[0]?.id || 'gpt-5-mini').trim() || 'gpt-5-mini',
   };
 }
 
@@ -3073,20 +2988,46 @@ async function getTrainingTuningStatus(payload = {}) {
     activeRuns: Array.isArray(runtimeStatus?.activeRuns) ? runtimeStatus.activeRuns.length : 0,
     schedulerRunning: !!schedulerStatusPayload().running,
   });
+  const benchmarkRuns = listBenchmarkRuns(workspaceRoot);
+  const foundryStatus = buildModelFoundryStatus(workspaceRoot, {
+    benchmarks: { runs: benchmarkRuns },
+    learning: learningJournal.getStatus(),
+    acceptance: readLatestAcceptanceReport(workspaceRoot),
+  });
+  const aiStatus = buildAiStatus({
+    workspaceRoot,
+    settings,
+    tuningStatus: { telemetry, recommendedModels: RECOMMENDED_LOCAL_MODELS },
+    benchmarkRuns,
+    modelFoundry: foundryStatus,
+    secretAvailability: {},
+  });
   return {
     ok: true,
     workspaceRoot,
     settings,
     telemetry,
+    lifecycle: aiStatus.localModelInventory,
+    benchmarkLeader: aiStatus.benchmarkSummary?.[0] || null,
+    modelFoundry: foundryStatus,
     importState: snapshotTuningImportState(),
     cliAvailable: canManageOllama(),
     recommendedModels: RECOMMENDED_LOCAL_MODELS,
+    workerFamilies: WORKER_FAMILY_OPTIONS,
+    promotionPolicies: PROMOTION_POLICY_OPTIONS,
     hardwareTargets: HARDWARE_TARGET_PRESETS,
     installPresets: buildModelInstallPresets(workspaceRoot, settings),
     commands: {
       train: buildTerminalTrainingCommand(workspaceRoot, settings, 'train'),
       learn: buildTerminalTrainingCommand(workspaceRoot, settings, 'learn'),
       selfImprove: buildTerminalTrainingCommand(workspaceRoot, settings, 'self-improve'),
+      checkpointMerge: buildCheckpointMergeCommand(workspaceRoot, {
+        basePath: '<base-model-dir>',
+        secondaryPath: '<secondary-model-dir>',
+        outputPath: path.join(getConfiguredAssistantCheckpointMergesRoot(workspaceRoot) || path.join(workspaceRoot, '.assistant_checkpoint_merges'), 'merge-output'),
+        alpha: 0.2,
+        mergeName: 'lab-merge',
+      }),
       ollama: workspaceRoot ? `cd '${String(workspaceRoot).replace(/'/g, `'"'"'`)}' && make ollama-serve` : 'make ollama-serve',
       modelPack: buildModelDownloadCommand(workspaceRoot, settings, 'pack'),
     },
@@ -3416,16 +3357,27 @@ function workspaceSnapshot() {
   const bats = prioritizeBatsForSafeMode(targetWorkspaceRoot, parseBatBoard(targetWorkspaceRoot));
   const boardStatusByTicket = new Map(bats.map((item) => [String(item.ticket), String(item.status || '')]));
   const runtimeStatus = runtime.getStatus();
-  const latestRuntime = runtimeStatus.latest?.[0] || null;
-  const runtimeRuns = Array.isArray(runtimeStatus.latest) ? runtimeStatus.latest : [];
+  const runtimeHistory = Array.isArray(runtimeStatus.latest) ? runtimeStatus.latest : [];
   const recentRuns = parseAssistantRuns(targetWorkspaceRoot, { limit: 20 });
-  const sharedRuntimeContext = normalizeRuntimeContext(latestRuntime?.runtimeContext || recentRuns[0]?.runtimeContext || {});
   const followupBats = parseFollowupBatReport(targetWorkspaceRoot);
   const latestSprint = parseLatestSprintSummary(targetWorkspaceRoot);
   const recovery = runtime.getRecoveryState();
-  const taskHubGoals = listGoals(workspaceRoot, { limit: 20 });
-  const taskHubTasks = listTasks(workspaceRoot, { limit: 40 });
-  const taskHubRuns = listRuns(workspaceRoot, { limit: 40 }, runtimeStatus);
+  const taskHubScope = {
+    targetWorkspaceRoot,
+    workspaceRoot,
+    labRoot: selectedLabRoot,
+  };
+  const taskHubGoals = listGoals(workspaceRoot, { ...taskHubScope, limit: 20 });
+  const taskHubTasks = listTasks(workspaceRoot, { ...taskHubScope, limit: 40 });
+  const taskHubRuns = listRuns(workspaceRoot, { ...taskHubScope, limit: 40 }, runtimeStatus);
+  const runtimeRuns = mergeRecentRuns(runtimeHistory, taskHubRuns.runs, recentRuns).slice(0, 40);
+  const latestRuntime = selectFreshestRun(runtimeRuns);
+  const sharedRuntimeContext = normalizeRuntimeContext(
+    latestRuntime?.runtimeContext
+      || runtimeRuns[0]?.runtimeContext
+      || recentRuns[0]?.runtimeContext
+      || {},
+  );
   const taskHubRecipes = listRecipes();
   const acceptance = readLatestAcceptanceReport(statusWorkspaceRoot);
   const benchmarkRuns = listBenchmarkRuns(statusWorkspaceRoot);
@@ -3436,19 +3388,7 @@ function workspaceSnapshot() {
     root: getDesktopAppRollbackRoot(statusWorkspaceRoot, 'darwin'),
     backups: listArchivedAppBackups(statusWorkspaceRoot, 'darwin'),
   };
-  let changedFiles = [];
-  if (targetWorkspaceRoot) {
-    try {
-      const out = childProcess.execSync('git status --short', {
-        cwd: targetWorkspaceRoot,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      changedFiles = out.trim().split(/\r?\n/).filter((l) => l);
-    } catch (_e) {
-      // ignore errors
-    }
-  }
+  const changedFiles = readWorkspaceChangedFiles(targetWorkspaceRoot, { includeNoise: false });
   const review = buildReviewSnapshot(targetWorkspaceRoot, {
     changedFiles,
     recentRuns,
@@ -3523,11 +3463,6 @@ function workspaceSnapshot() {
   });
   const promotions = listPromotionState(statusWorkspaceRoot, { labRoot: selectedLabRoot });
   const settings = getDesktopSettingsPayload(workspaceRoot);
-  const gitSummary = readGitSummary(targetWorkspaceRoot || workspaceRoot);
-  const assistantConfig = readAssistantConfig(workspaceRoot, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
-  const selfImprovement = buildSelfImprovementSummary(statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE, '', {
-    dailyTarget: Number(assistantConfig.dailySelfImprovementTarget || 5),
-  });
   const taskHub = {
     goals: taskHubGoals.goals,
     tasks: taskHubTasks.tasks,
@@ -3550,22 +3485,6 @@ function workspaceSnapshot() {
     modelFoundry,
     integrations,
     appRollbacks,
-    benchmarks: benchmarkRuns,
-    updates: latestUpdateStatus,
-    selfImprovement,
-  });
-  const systemCheck = buildSystemCheck({
-    workspaceRoot: statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE,
-    targetWorkspaceRoot: targetWorkspaceRoot || statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE,
-    labRoot: selectedLabRoot,
-    assistantConfig,
-    runtimeState: recovery,
-    acceptance,
-    benchmarks: benchmarkRuns,
-    learningJournal: learningStatus,
-    promotions,
-    readiness,
-    taskHub,
   });
   return {
     workspaceRoot,
@@ -3578,7 +3497,6 @@ function workspaceSnapshot() {
     latestSprint,
     changedFiles,
     worktree,
-    git: gitSummary,
     runtimeContext: sharedRuntimeContext,
     editorContext: buildDesktopEditorContext(targetWorkspaceRoot),
     review: reviewWithSmokeFixture,
@@ -3593,7 +3511,6 @@ function workspaceSnapshot() {
     labs: listLabs(workspaceRoot),
     promotions,
     learningJournal: learningStatus,
-    selfImprovement,
     benchmarks: benchmarkRuns,
     acceptance,
     vscodeSetup,
@@ -3602,7 +3519,6 @@ function workspaceSnapshot() {
     integrations,
     appRollbacks,
     readiness,
-    systemCheck,
     taskHub,
     operatorLoop: buildTaskLoopSnapshot(workspaceRoot),
     recovery: {
@@ -3624,11 +3540,7 @@ function workspaceSnapshotLite() {
   const targetWorkspaceRoot = getTargetWorkspaceRoot();
   const selectedLabRoot = getSelectedLabRoot();
   const settings = getDesktopSettingsPayload(workspaceRoot);
-  const gitSummary = readGitSummary(targetWorkspaceRoot || workspaceRoot);
   const assistantConfig = readAssistantConfig(workspaceRoot, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
-  const selfImprovement = buildSelfImprovementSummary(statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE, '', {
-    dailyTarget: Number(assistantConfig.dailySelfImprovementTarget || 5),
-  });
   const safeMode = getSafetyStatusSnapshot({
     workspaceRoot,
     targetWorkspaceRoot,
@@ -3668,6 +3580,31 @@ function workspaceSnapshotLite() {
       healthCards: [],
       workers: [],
       safeMode,
+      liveActivity: {
+        transparencyLevel: ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').toLowerCase())
+          ? String(store.get('chatTransparencyLevel')).toLowerCase()
+          : 'balanced',
+        currentAction: '',
+        currentState: 'idle',
+        summary: 'Waiting for the next synced run.',
+        updates: [],
+      },
+      selfModel: {
+        workspaceRoot,
+        targetWorkspaceRoot,
+        branch: '',
+        changedFileCount: 0,
+        currentRunLabel: '',
+        currentRunState: 'idle',
+        latestBlocker: '',
+        approvalState: 'clear',
+        inboxSummary: 'Inbox is clear',
+        safetyState: safeMode.active ? 'safe-mode' : safeMode.watchOnly ? 'watch' : 'ready',
+        managerModel: String(settings.aiRemoteModel || '').trim(),
+        workerModel: String(settings.trainingOllamaModel || settings.model || '').trim(),
+        nextSafeAction: '',
+        confidenceLabel: 'ready',
+      },
     },
     promotions,
     reviewer: {
@@ -3709,26 +3646,11 @@ function workspaceSnapshotLite() {
     modelFoundry,
     integrations,
     appRollbacks,
-    benchmarks: { runs: [] },
-    updates: latestUpdateStatus,
-    selfImprovement,
-  });
-  const systemCheck = buildSystemCheck({
-    workspaceRoot: statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE,
-    targetWorkspaceRoot: targetWorkspaceRoot || statusWorkspaceRoot || DEFAULT_TARGET_WORKSPACE,
-    labRoot: selectedLabRoot,
-    assistantConfig,
-    acceptance,
-    learningJournal: learningStatus,
-    promotions,
-    readiness,
-    taskHub,
   });
   return {
     workspaceRoot,
     targetWorkspaceRoot,
     selectedLabRoot,
-    git: gitSummary,
     bats: [],
     summary: summarizeBats([]),
     recentRuns: [],
@@ -3794,7 +3716,6 @@ function workspaceSnapshotLite() {
     labs: { labs: [] },
     promotions,
     learningJournal: learningStatus,
-    selfImprovement,
     benchmarks: { runs: [] },
     acceptance,
     vscodeSetup,
@@ -3803,7 +3724,6 @@ function workspaceSnapshotLite() {
     integrations,
     appRollbacks,
     readiness,
-    systemCheck,
     taskHub,
     operatorLoop: buildTaskLoopSnapshot(workspaceRoot),
     recovery: { runs: [] },
@@ -3825,36 +3745,8 @@ async function handleAgentRun(action, payload = {}) {
   return agentRuntimeService.handleRun(action, nextPayload);
 }
 
-function mergeTaskLoopMemoryHints(execution = {}, learningStatus = {}) {
-  const journalMemoryHints = learningStatus && typeof learningStatus.memoryHints === 'object'
-    ? learningStatus.memoryHints
-    : {};
-  if (!execution || typeof execution !== 'object') {
-    return execution;
-  }
-  const learningMetadata = execution.learningMetadata && typeof execution.learningMetadata === 'object'
-    ? execution.learningMetadata
-    : {};
-  const mergedMemoryHints = mergeMemoryHints(
-    execution.memoryHints,
-    learningMetadata.memoryHints,
-    journalMemoryHints,
-  );
-  if (Object.keys(mergedMemoryHints).length === 0) {
-    return execution;
-  }
-  return {
-    ...execution,
-    learningMetadata: {
-      ...learningMetadata,
-      memoryHints: mergedMemoryHints,
-    },
-    memoryHints: mergedMemoryHints,
-  };
-}
-
-function buildTaskLoopSnapshot(workspaceRoot = getWorkspaceRoot(), learningStatus = learningJournal.getStatus()) {
-  const latestExecution = mergeTaskLoopMemoryHints(latestTaskLoopExecution(), learningStatus);
+function buildTaskLoopSnapshot(workspaceRoot = getWorkspaceRoot()) {
+  const latestExecution = latestTaskLoopExecution();
   return {
     workspaceRoot: workspaceRoot || '',
     lanes: AI_CAPABILITY_LANES,
@@ -3956,12 +3848,6 @@ async function runHelperTaskLoopLane(lane, payload = {}) {
     task,
     taskMode: lane.taskMode,
     action: lane.action,
-    taskObjective: {
-      kind: lane.laneId === 'research-docs' ? 'research' : 'chat',
-      summary: task,
-      source: 'desktop-workbench',
-      laneId: lane.laneId,
-    },
     runId: '',
     status: 'completed',
     runState: 'completed',
@@ -4296,66 +4182,10 @@ function findGoalById(workspaceRoot, goalId) {
   return findGoal(workspaceRoot, goalId);
 }
 
-function buildTaskModelRoles(assistantConfig = {}) {
-  return {
-    workspace: {
-      modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-      modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
-      baseModel: String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-      providerSource: String(assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
-    },
-    engine: {
-      modelProfileId: String(assistantConfig.engineModelProfileId || assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-      modelDisplayName: String(assistantConfig.engineModelDisplayName || '').trim(),
-      baseModel: String(assistantConfig.engineBaseModel || assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-      providerSource: String(assistantConfig.engineProviderSource || assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
-    },
-  };
-}
-
-function buildTaskLaunchBlockResult(task = {}, goal = {}, assessment = {}) {
-  const blockedReason = String(
-    assessment.blockingReason
-    || assessment.recommendedAction
-    || 'This task is outside the current model envelope.',
-  ).trim();
-  return {
-    ok: false,
-    blocked: true,
-    blockedBy: 'model-fit',
-    blockedReason,
-    message: blockedReason,
-    label: `Blocked task: ${task?.title || goal?.title || 'Untitled task'}`,
-    goalId: String(goal?.id || task?.goalId || '').trim(),
-    taskId: String(task?.id || '').trim(),
-    taskEnvelope: assessment,
-  };
-}
-
 async function launchUniversalTaskRun({ workspaceRoot, targetWorkspaceRoot, labRoot, task, goal, changeSessionId = '', label = '' }) {
   const objective = String(task?.objective || goal?.objective || '').trim();
   if (!objective) {
     return { ok: false, message: 'Task objective is missing.' };
-  }
-  const assistantConfig = readAssistantConfig(workspaceRoot, { defaultWorkspace: targetWorkspaceRoot || workspaceRoot || DEFAULT_TARGET_WORKSPACE });
-  const taskEnvelope = buildTaskAutonomyAssessment(task, buildTaskModelRoles(assistantConfig));
-  if (taskEnvelope.capabilityFit === 'overscoped') {
-    if (task?.id) {
-      updateTask(workspaceRoot, {
-        taskId: task.id,
-        patch: {
-          status: 'needs-rescope',
-          metadata: {
-            ...(task.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
-            taskEnvelope,
-            lastBlockedBy: 'model-fit',
-            lastBlockedAt: new Date().toISOString(),
-            lastBlockedReason: taskEnvelope.blockingReason || taskEnvelope.recommendedAction || '',
-          },
-        },
-      });
-    }
-    return buildTaskLaunchBlockResult(task, goal, taskEnvelope);
   }
   const slices = Array.isArray(task?.slices) ? task.slices : [];
   const primarySlice = slices[0] || {};
@@ -4382,7 +4212,6 @@ async function launchUniversalTaskRun({ workspaceRoot, targetWorkspaceRoot, labR
       goalId: goal?.id || task?.goalId || '',
       taskId: task?.id || '',
       metadata: {
-        ...(task?.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
         source: 'task-hub',
         compatSource: task?.source || '',
         goalId: goal?.id || task?.goalId || '',
@@ -4395,7 +4224,6 @@ async function launchUniversalTaskRun({ workspaceRoot, targetWorkspaceRoot, labR
         sliceIndex: Number.isFinite(Number(primarySlice.sliceIndex)) ? Number(primarySlice.sliceIndex) : null,
         sliceTargetPaths: Array.isArray(task?.sliceTargetPaths) ? task.sliceTargetPaths : [],
         slices,
-        taskEnvelope,
       },
     });
     if (legacyRun?.runId && task?.id) {
@@ -4434,10 +4262,9 @@ async function launchUniversalTaskRun({ workspaceRoot, targetWorkspaceRoot, labR
     acceptanceChecks: Array.isArray(task?.acceptanceChecks) ? task.acceptanceChecks : [],
     riskClass: String(task?.riskClass || 'medium'),
     budget: task?.budget && typeof task.budget === 'object' ? task.budget : {},
-      metadata: {
-        ...(task?.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
-        source: 'task-hub',
-        goalId: goal?.id || task?.goalId || '',
+    metadata: {
+      source: 'task-hub',
+      goalId: goal?.id || task?.goalId || '',
       taskId: task?.id || '',
       ring: task?.ring || (labRoot ? 'lab' : 'live'),
       candidateId: task?.candidateId || '',
@@ -4446,7 +4273,6 @@ async function launchUniversalTaskRun({ workspaceRoot, targetWorkspaceRoot, labR
       sliceIndex: Number.isFinite(Number(primarySlice.sliceIndex)) ? Number(primarySlice.sliceIndex) : null,
       sliceTargetPaths: Array.isArray(task?.sliceTargetPaths) ? task.sliceTargetPaths : [],
       slices,
-      taskEnvelope,
     },
   });
   if (run?.runId && task?.id) {
@@ -4487,9 +4313,6 @@ function collectBenchmarkArtifactPaths(result) {
   if (Array.isArray(result?.payload?.artifactPaths)) {
     candidates.push(...result.payload.artifactPaths);
   }
-  if (Array.isArray(result?.finalEvent?.artifactPaths)) {
-    candidates.push(...result.finalEvent.artifactPaths);
-  }
   if (Array.isArray(result?.artifact?.paths)) {
     candidates.push(...result.artifact.paths);
   }
@@ -4502,17 +4325,6 @@ function collectBenchmarkArtifactPaths(result) {
     paths.push(value);
   }
   return paths;
-}
-
-async function waitForBenchmarkRunCompletion(runId, timeoutMs = 15 * 60 * 1000) {
-  return Promise.race([
-    agentRuntimeService.waitForRunCompletion(runId),
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Timed out waiting for benchmark run ${runId} to settle.`));
-      }, Math.max(1, Number(timeoutMs || 0)));
-    }),
-  ]);
 }
 
 async function executeBenchmarkRun(payload = {}, options = {}) {
@@ -4590,60 +4402,15 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
       label: payload.name || options.defaultName || 'Engine benchmark',
       requestedCapabilities: payload.capabilities || ['plan-reasoning', 'code-main', 'review-verify'],
     });
-    if (!benchmarkRun?.runId) {
-      rawResult = { ok: false, payload: benchmarkRun };
-      status = 'fail';
-      summary = benchmarkRun?.blockedReason || benchmarkRun?.label || 'Benchmark run did not start.';
-    } else {
-      try {
-        const finalEvent = await waitForBenchmarkRunCompletion(
-          benchmarkRun.runId,
-          Number(payload.timeoutMs || options.timeoutMs || 15 * 60 * 1000),
-        );
-        rawResult = {
-          ok: String(finalEvent?.state || '').trim().toLowerCase() === 'pass',
-          payload: benchmarkRun,
-          finalEvent,
-          durationMs: Math.max(
-            0,
-            Date.parse(String(finalEvent?.timestamp || nowIso())) - Date.parse(String(startedAt)),
-          ),
-          artifactPaths: Array.isArray(finalEvent?.artifactPaths) ? finalEvent.artifactPaths : [],
-          approvalRequests: Array.isArray(finalEvent?.approvalRequests) ? finalEvent.approvalRequests : [],
-          repairDepth: Number(finalEvent?.repairDepth || 0),
-        };
-        status = rawResult.ok ? 'pass' : 'fail';
-        summary = finalEvent?.operatorExecution?.resultSummary
-          || finalEvent?.blockedReason
-          || finalEvent?.label
-          || benchmarkRun?.label
-          || summary;
-      } catch (error) {
-        rawResult = {
-          ok: false,
-          payload: benchmarkRun,
-          error: String(error?.message || error || 'Benchmark run timed out.'),
-        };
-        status = 'fail';
-        summary = rawResult.error;
-      }
-    }
+    rawResult = { ok: !!benchmarkRun?.runId, payload: benchmarkRun };
+    status = benchmarkRun?.runId ? 'pass' : 'fail';
+    summary = benchmarkRun?.blockedReason || benchmarkRun?.label || summary;
   }
 
-  const validationResult = runBenchmarkValidation(targetWorkspaceRoot, payload, {
-    required: executionMode !== 'baseline',
-  });
-  const finalized = finalizeBenchmarkOutcome({
-    status,
-    summary,
-    validationResult,
-  });
-  status = finalized.status;
-  summary = finalized.summary;
   const completedAt = nowIso();
   const artifactPaths = collectBenchmarkArtifactPaths(rawResult);
   const benchmarkModel = settings.runtime === 'openai'
-    ? (settings.aiRemoteModel || settings.model || 'gpt-4o-mini')
+    ? (settings.aiRemoteModel || settings.model || 'gpt-5-mini')
     : (payload.model || settings.ai?.trainingOllamaModel || settings.trainingOllamaModel || settings.model);
   const benchmark = recordBenchmarkRun(workspaceRoot, {
     id: payload.id,
@@ -4657,7 +4424,7 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
     benchmarkTags: activeWrappedProfile?.benchmarkTags || [],
     runtime: settings.runtime,
     status,
-    ok: finalized.ok,
+    ok: status !== 'fail',
     startedAt,
     completedAt,
     taskId: String(payload.taskId || '').trim(),
@@ -4671,20 +4438,11 @@ async function executeBenchmarkRun(payload = {}, options = {}) {
     labRoot,
     passRate: Number(payload.passRate || (status === 'fail' ? 0 : 100)),
     latencyMs: Number(payload.latencyMs || rawResult?.durationMs || 0),
-    repairDepth: Number(payload.repairDepth || rawResult?.repairDepth || rawResult?.finalEvent?.repairDepth || 0),
-    approvalCount: Number(
-      payload.approvalCount
-      || (Array.isArray(rawResult?.approvalRequests) ? rawResult.approvalRequests.length : 0)
-      || (Array.isArray(rawResult?.finalEvent?.approvalRequests) ? rawResult.finalEvent.approvalRequests.length : 0),
-    ),
+    repairDepth: Number(payload.repairDepth || rawResult?.repairDepth || 0),
+    approvalCount: Number(payload.approvalCount || (Array.isArray(rawResult?.approvalRequests) ? rawResult.approvalRequests.length : 0)),
     summary,
     artifactPaths,
-    validationResult,
-    rawResult: {
-      ...(rawResult?.payload && typeof rawResult.payload === 'object' ? rawResult.payload : {}),
-      ...(rawResult && typeof rawResult === 'object' ? rawResult : {}),
-      validationResult,
-    },
+    rawResult: rawResult?.payload || rawResult || {},
   });
   sendBenchmarkEvent({
     type: 'benchmark-recorded',
@@ -4843,24 +4601,15 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.showLiveWork !== undefined) {
     store.set('showLiveWork', !!payload.showLiveWork);
   }
+  if (payload.chatMode !== undefined) {
+    store.set('chatMode', resolveChatModeValue(payload.chatMode));
+  }
   if (payload.chatInstructionMode !== undefined) {
     const mode = String(payload.chatInstructionMode || 'auto').trim().toLowerCase();
     store.set('chatInstructionMode', ['off', 'auto', 'custom'].includes(mode) ? mode : 'auto');
   }
-  if (payload.chatMode !== undefined) {
-    const chatMode = String(payload.chatMode || 'ask').trim().toLowerCase();
-    store.set('chatMode', ['ask', 'plan', 'edit', 'agent'].includes(chatMode) ? chatMode : 'ask');
-  }
   if (payload.chatCustomInstructions !== undefined) {
     store.set('chatCustomInstructions', String(payload.chatCustomInstructions || '').trim());
-  }
-  if (payload.chatWorkbenchMode !== undefined) {
-    const chatWorkbenchMode = String(payload.chatWorkbenchMode || 'focus').trim().toLowerCase();
-    store.set('chatWorkbenchMode', ['focus', 'balanced', 'control-room'].includes(chatWorkbenchMode) ? chatWorkbenchMode : 'focus');
-  }
-  if (payload.chatComposerSize !== undefined) {
-    const chatComposerSize = String(payload.chatComposerSize || 'tall').trim().toLowerCase();
-    store.set('chatComposerSize', ['comfortable', 'tall'].includes(chatComposerSize) ? chatComposerSize : 'tall');
   }
   if (payload.learningLivePolling !== undefined) {
     store.set('learningLivePolling', !!payload.learningLivePolling);
@@ -4876,7 +4625,7 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
           aiRemoteBaseUrl: payload.aiRemoteBaseUrl !== undefined ? payload.aiRemoteBaseUrl : store.get('aiRemoteBaseUrl'),
           aiRemoteApiKeyName: payload.aiRemoteApiKeyName !== undefined ? payload.aiRemoteApiKeyName : store.get('aiRemoteApiKeyName'),
         });
-        store.set('model', String(payload.aiRemoteModel || store.get('aiRemoteModel') || remoteProvider.models?.[0]?.id || store.get('model') || 'gpt-4o-mini'));
+        store.set('model', String(payload.aiRemoteModel || store.get('aiRemoteModel') || remoteProvider.models?.[0]?.id || store.get('model') || 'gpt-5-mini'));
       } else if (['ollama', 'local', 'hybrid'].includes(normalizedRuntime)) {
         const currentTuningSettings = readTrainingTuningSettings(workspaceRoot);
         store.set('model', String(currentTuningSettings.trainingOllamaModel || store.get('model') || 'qwen2.5-coder:7b'));
@@ -4905,7 +4654,7 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
         aiRemoteBaseUrl: payload.aiRemoteBaseUrl !== undefined ? payload.aiRemoteBaseUrl : store.get('aiRemoteBaseUrl'),
         aiRemoteApiKeyName: payload.aiRemoteApiKeyName !== undefined ? payload.aiRemoteApiKeyName : store.get('aiRemoteApiKeyName'),
       });
-      store.set('model', String(store.get('aiRemoteModel') || remoteProvider.models?.[0]?.id || store.get('model') || 'gpt-4o-mini'));
+      store.set('model', String(store.get('aiRemoteModel') || remoteProvider.models?.[0]?.id || store.get('model') || 'gpt-5-mini'));
     }
   }
   if (payload.aiRemoteModel !== undefined) {
@@ -4918,15 +4667,8 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.aiRemoteBaseUrl !== undefined) {
     store.set('aiRemoteBaseUrl', String(payload.aiRemoteBaseUrl || '').trim());
   }
-  if (payload.aiRemoteApiKeyName !== undefined || payload.aiRemoteProvider !== undefined) {
-    const resolvedRemoteProvider = normalizeRemoteProviderId(payload.aiRemoteProvider !== undefined ? payload.aiRemoteProvider : store.get('aiRemoteProvider'));
-    const normalizedSecretName = resolvedRemoteProvider === 'custom-compatible'
-      ? normalizeRemoteProviderSecretName(
-        payload.aiRemoteApiKeyName !== undefined ? payload.aiRemoteApiKeyName : store.get('aiRemoteApiKeyName'),
-        'OPENAI_COMPAT_API_KEY',
-      )
-      : '';
-    store.set('aiRemoteApiKeyName', normalizedSecretName);
+  if (payload.aiRemoteApiKeyName !== undefined) {
+    store.set('aiRemoteApiKeyName', String(payload.aiRemoteApiKeyName || '').trim());
   }
   if (payload.aiWrappedProfileId !== undefined) {
     store.set('aiWrappedProfileId', normalizeWrappedProfileId(payload.aiWrappedProfileId));
@@ -4998,6 +4740,12 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.autoApproveLowRisk !== undefined) {
     store.set('autoApproveLowRisk', !!payload.autoApproveLowRisk);
   }
+  if (payload.autoQueueTaskLoopFollowups !== undefined) {
+    store.set('autoQueueTaskLoopFollowups', !!payload.autoQueueTaskLoopFollowups);
+  }
+  if (payload.autoRunQueuedTaskLoopFollowups !== undefined) {
+    store.set('autoRunQueuedTaskLoopFollowups', !!payload.autoRunQueuedTaskLoopFollowups);
+  }
   if (payload.humanApprovalProtectedOnly !== undefined) {
     store.set('humanApprovalProtectedOnly', !!payload.humanApprovalProtectedOnly);
   }
@@ -5010,14 +4758,20 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
   if (payload.supervisedAutoRunRecipes !== undefined) {
     store.set('supervisedAutoRunRecipes', !!payload.supervisedAutoRunRecipes);
   }
-  if (payload.autoQueueTaskLoopFollowups !== undefined) {
-    store.set('autoQueueTaskLoopFollowups', !!payload.autoQueueTaskLoopFollowups);
-  }
-  if (payload.autoRunQueuedTaskLoopFollowups !== undefined) {
-    store.set('autoRunQueuedTaskLoopFollowups', !!payload.autoRunQueuedTaskLoopFollowups);
-  }
   if (payload.maxRetryRounds !== undefined) {
     store.set('maxRetryRounds', Math.min(8, Math.max(1, Number(payload.maxRetryRounds) || 1)));
+  }
+  if (payload.chatComposerHeight !== undefined) {
+    const nextComposerHeight = ['compact', 'comfortable', 'tall'].includes(String(payload.chatComposerHeight || '').toLowerCase())
+      ? String(payload.chatComposerHeight || '').toLowerCase()
+      : 'comfortable';
+    store.set('chatComposerHeight', nextComposerHeight);
+  }
+  if (payload.chatTransparencyLevel !== undefined) {
+    const nextTransparency = ['quiet', 'balanced', 'verbose'].includes(String(payload.chatTransparencyLevel || '').toLowerCase())
+      ? String(payload.chatTransparencyLevel || '').toLowerCase()
+      : 'balanced';
+    store.set('chatTransparencyLevel', nextTransparency);
   }
   const tuningPayload = {};
   [
@@ -5058,8 +4812,6 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
     sandboxRequired: payload.sandboxRequired,
     baselineSelfHealPriority: payload.baselineSelfHealPriority,
     supervisedAutoRunRecipes: payload.supervisedAutoRunRecipes,
-    autoQueueTaskLoopFollowups: payload.autoQueueTaskLoopFollowups,
-    autoRunQueuedTaskLoopFollowups: payload.autoRunQueuedTaskLoopFollowups,
     maxRetryRounds: payload.maxRetryRounds,
   }, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
   restartAutoUpdateMonitor();
@@ -5076,6 +4828,22 @@ ipcMain.handle('app:updateSettings', async (_event, payload = {}) => {
     dashboardLayout: getDesktopDashboardLayoutPayload(),
     workspaceSelection: buildWorkspaceSelectionPayload(workspaceRoot),
   };
+});
+
+ipcMain.handle('app:reportRendererError', async (_event, payload = {}) => {
+  const message = String(payload.message || payload.reason || 'Unknown renderer error').trim() || 'Unknown renderer error';
+  const source = String(payload.source || payload.filename || 'renderer').trim() || 'renderer';
+  const stack = clipText(String(payload.stack || payload.componentStack || '').trim(), 4000);
+  pushMonitorEvent('runtime', {
+    type: 'renderer-error',
+    timestamp: nowIso(),
+    workspaceRoot: getWorkspaceRoot(),
+    targetWorkspaceRoot: getTargetWorkspaceRoot(),
+    source,
+    message,
+    stack,
+  });
+  return { ok: true };
 });
 
 ipcMain.handle('goals:list', async (_event, payload = {}) => {
@@ -5199,17 +4967,11 @@ ipcMain.handle('runs:get', async (_event, payload = {}) => {
 
 ipcMain.handle('recipes:list', async () => listRecipes());
 
-async function queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot, labRoot, payload = {}, recipe = {}) {
-  const result = queueFollowupRecipeTasks(workspaceRoot, recipe, {
-    targetWorkspaceRoot,
-    labRoot,
-    threadId: payload.threadId || '',
-    changeSessionId: payload.changeSessionId || '',
-    ring: payload.ring || '',
-    promotionState: payload.promotionState || '',
-  });
-  if (!result.ok || result.deduped) {
-    return result;
+ipcMain.handle('recipes:queueFollowup', async (_event, payload = {}) => {
+  const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
+  const recipe = payload.recipe && typeof payload.recipe === 'object' ? payload.recipe : {};
+  if (recipe.exists !== true || !Array.isArray(recipe.steps) || recipe.steps.length === 0) {
+    return { ok: false, message: 'A supervised follow-up recipe is required.' };
   }
   const queued = buildQueuedRecipePayload(recipe, {
     workspaceRoot,
@@ -5220,8 +4982,30 @@ async function queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot,
     ring: payload.ring || '',
     promotionState: payload.promotionState || '',
   });
-  const createdTasks = result.createdTasks;
-  const goalResult = { goal: result.goal || null };
+  const existingTasks = queued.tasks
+    .map((task) => findTaskByFollowupSignature(workspaceRoot, task.metadata?.followupSignature || ''))
+    .filter(Boolean);
+  if (existingTasks.length === queued.tasks.length) {
+    return {
+      ok: true,
+      deduped: true,
+      recipe: queued.recipe,
+      tasks: existingTasks,
+      message: 'This supervised recipe is already queued.',
+    };
+  }
+
+  const goalResult = createGoal(workspaceRoot, queued.goal);
+  const createdTasks = queued.tasks.map((task) => {
+    const existingTask = findTaskByFollowupSignature(workspaceRoot, task.metadata?.followupSignature || '');
+    if (existingTask) {
+      return existingTask;
+    }
+    return createTask(workspaceRoot, {
+      ...task,
+      goalId: goalResult.goal?.id || '',
+    }).task;
+  }).filter(Boolean);
 
   learningJournal.recordEvent('recipe-created', {
     recipeId: queued.recipe.id,
@@ -5231,7 +5015,7 @@ async function queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot,
     threadId: payload.threadId || '',
     changeSessionId: payload.changeSessionId || '',
   });
-  result.createdTasks.forEach((task) => {
+  createdTasks.forEach((task) => {
     learningJournal.recordEvent('task-created', {
       taskId: task.id,
       goalId: task.goalId || '',
@@ -5244,20 +5028,20 @@ async function queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot,
   const autonomy = getAutonomySettings(workspaceRoot);
   const shouldAutoRunFirstStep = payload.autoRunFirstStep === true
     || (autonomy.supervisedAutoRunRecipes === true && recipe.autoQueueEligible === true);
-  if (shouldAutoRunFirstStep && result.createdTasks.length > 0 && String(result.createdTasks[0].riskClass || '').trim().toLowerCase() === 'low') {
+  if (shouldAutoRunFirstStep && createdTasks.length > 0 && String(createdTasks[0].riskClass || '').trim().toLowerCase() === 'low') {
     firstRun = await launchUniversalTaskRun({
       workspaceRoot,
       targetWorkspaceRoot,
       labRoot,
-      task: result.createdTasks[0],
-      goal: result.goal || null,
-      changeSessionId: payload.changeSessionId || result.createdTasks[0].changeSessionId || '',
+      task: createdTasks[0],
+      goal: goalResult.goal || null,
+      changeSessionId: payload.changeSessionId || createdTasks[0].changeSessionId || '',
       label: `${queued.recipe.title} • ${createdTasks[0].title || 'Step 1'}`,
     });
     if (firstRun?.runId) {
       learningJournal.recordEvent('task-run', {
-        taskId: result.createdTasks[0].id,
-        goalId: result.createdTasks[0].goalId || '',
+        taskId: createdTasks[0].id,
+        goalId: createdTasks[0].goalId || '',
         runId: firstRun.runId,
         label: firstRun.label || '',
         source: 'followup-recipe',
@@ -5271,64 +5055,6 @@ async function queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot,
     tasks: createdTasks,
     createdCount: createdTasks.length,
     run: firstRun,
-  };
-}
-
-ipcMain.handle('recipes:queueFollowup', async (_event, payload = {}) => {
-  const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
-  const recipe = payload.recipe && typeof payload.recipe === 'object' ? payload.recipe : {};
-  return queueFollowupRecipeDefinition(workspaceRoot, targetWorkspaceRoot, labRoot, payload, recipe);
-});
-
-ipcMain.handle('recipes:queueTaskLoopNextAction', async (_event, payload = {}) => {
-  const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
-  const snapshot = workspaceSnapshot();
-  const execution = payload.execution && typeof payload.execution === 'object'
-    ? payload.execution
-    : snapshot.operatorLoop?.latestExecution || {};
-  const manualTrigger = payload.autoTrigger !== true;
-  const recipe = buildNextActionRecipe(execution);
-  if (!recipe) {
-    return {
-      ok: false,
-      queued: false,
-      message: 'The current next safe action is not queueable as a bounded follow-up task yet.',
-    };
-  }
-  const followupPlan = buildAutoFollowupPlan(execution, {
-    settings: snapshot.settings || getDesktopSettingsPayload(workspaceRoot),
-    safeMode: snapshot.manager?.safeMode || {},
-    readiness: snapshot.readiness || {},
-    pendingApprovals: Number(snapshot.manager?.approvals?.total || 0) || 0,
-  });
-  if (!manualTrigger && followupPlan.shouldQueue !== true) {
-    return {
-      ok: true,
-      queued: false,
-      autoTriggered: true,
-      message: String(followupPlan.reason || 'Automatic follow-up queueing is blocked right now.'),
-      plan: followupPlan,
-      snapshot,
-    };
-  }
-  const queuedRecipe = manualTrigger
-    ? { ...recipe, autoQueueEligible: false }
-    : (followupPlan.recipe || { ...recipe, autoQueueEligible: false });
-  const result = await queueFollowupRecipeDefinition(
-    workspaceRoot,
-    targetWorkspaceRoot,
-    labRoot,
-    {
-      ...payload,
-      autoRunFirstStep: manualTrigger ? false : followupPlan.shouldAutoRun === true,
-    },
-    queuedRecipe,
-  );
-  return {
-    ...result,
-    autoTriggered: !manualTrigger,
-    plan: followupPlan,
-    snapshot: workspaceSnapshot(),
   };
 });
 
@@ -5428,15 +5154,6 @@ ipcMain.handle('workspace:vscodeStatus', async (_event, payload = {}) => {
 ipcMain.handle('workspace:vscodeBootstrap', async (_event, payload = {}) => {
   const { targetWorkspaceRoot } = resolveRequestRoots(payload);
   const result = bootstrapVsCodeWorkspace(targetWorkspaceRoot);
-  return {
-    ...result,
-    snapshot: workspaceSnapshot(),
-  };
-});
-
-ipcMain.handle('workspace:vscodeInstallCompanion', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  const result = installVsCodeCompanion(targetWorkspaceRoot);
   return {
     ...result,
     snapshot: workspaceSnapshot(),
@@ -5974,6 +5691,109 @@ function clipText(value, maxChars) {
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function readWorkspaceChangedFiles(workspaceRoot, { includeNoise = false } = {}) {
+  if (!workspaceRoot) {
+    return [];
+  }
+  try {
+    const out = childProcess.execSync('git status --short', {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const lines = out.trim().split(/\r?\n/).filter((line) => line);
+    return includeNoise
+      ? lines
+      : lines.filter((line) => {
+          const normalized = normalizeReviewPath(String(line || '').slice(2).trim().split('->').pop() || '');
+          return normalized && !isIgnoredWorkspacePath(normalized);
+        });
+  } catch (_error) {
+    return [];
+  }
+}
+
+function approvalQueueDedupeKey(item = {}) {
+  const approvalKey = String(item.approvalKey || '').trim();
+  if (approvalKey) {
+    return approvalKey;
+  }
+  const normalizedPath = normalizeReviewPath(item.path || '');
+  return [
+    normalizedPath,
+    Math.max(1, Number(item.line || 1)),
+    String(item.source || '').trim().toLowerCase(),
+    String(item.ticket || '').trim(),
+    clipText(item.detail || item.summary || item.nextAction || '', 160).toLowerCase(),
+  ].filter(Boolean).join('|');
+}
+
+function dedupeApprovalQueue(queue = []) {
+  const buckets = new Map();
+  for (const item of Array.isArray(queue) ? queue : []) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    if (isIgnoredWorkspacePath(item.path || '')) {
+      continue;
+    }
+    const dedupeKey = approvalQueueDedupeKey(item);
+    if (!dedupeKey) {
+      continue;
+    }
+    if (!buckets.has(dedupeKey)) {
+      buckets.set(dedupeKey, item);
+      continue;
+    }
+    const current = buckets.get(dedupeKey);
+    const currentStatus = String(current?.status || '').trim().toLowerCase();
+    const nextStatus = String(item.status || '').trim().toLowerCase();
+    if (nextStatus === 'pending' && currentStatus !== 'pending') {
+      buckets.set(dedupeKey, item);
+      continue;
+    }
+    if (nextStatus === currentStatus && String(item.updatedAt || '').trim() > String(current?.updatedAt || '').trim()) {
+      buckets.set(dedupeKey, item);
+    }
+  }
+  return Array.from(buckets.values());
+}
+
+function runManagerHygiene(workspaceRoot, targetWorkspaceRoot, labRoot = '') {
+  const rawChangedFiles = readWorkspaceChangedFiles(targetWorkspaceRoot, { includeNoise: true });
+  const visibleChangedFiles = readWorkspaceChangedFiles(targetWorkspaceRoot, { includeNoise: false });
+  const ignoredChangedFiles = Math.max(0, rawChangedFiles.length - visibleChangedFiles.length);
+  const hygieneResult = runWorkspaceHygiene(workspaceRoot, {
+    workspaceRoot,
+    targetWorkspaceRoot,
+    labRoot,
+  });
+  const snapshot = workspaceSnapshot();
+  const approvals = snapshot?.manager?.approvals?.total || 0;
+  const nextAction = String(
+    snapshot?.reviewer?.nextAction
+    || snapshot?.readiness?.operatorSummary?.recommendedNextSafeAction
+    || snapshot?.manager?.selfModel?.nextSafeAction
+    || '',
+  ).trim();
+  return {
+    ...hygieneResult,
+    ignoredChangedFiles,
+    approvals,
+    nextAction,
+    reply: [
+      'I ran the workspace hygiene pass.',
+      hygieneResult.stats.duplicateRunLinksRemoved > 0 ? `Removed ${hygieneResult.stats.duplicateRunLinksRemoved} duplicate run link${hygieneResult.stats.duplicateRunLinksRemoved === 1 ? '' : 's'}.` : 'No duplicate run links were left behind.',
+      hygieneResult.stats.duplicateTasksArchived > 0 ? `Archived ${hygieneResult.stats.duplicateTasksArchived} stale duplicate task${hygieneResult.stats.duplicateTasksArchived === 1 ? '' : 's'}.` : 'No duplicate open tasks needed archiving.',
+      hygieneResult.stats.staleTaskStatusesSettled > 0 ? `Settled ${hygieneResult.stats.staleTaskStatusesSettled} stale task status${hygieneResult.stats.staleTaskStatusesSettled === 1 ? '' : 'es'}.` : 'Task statuses were already aligned with their recorded runs.',
+      ignoredChangedFiles > 0 ? `Ignored ${ignoredChangedFiles} generated cache change${ignoredChangedFiles === 1 ? '' : 's'} so the manager stays focused on real source work.` : 'No generated cache noise was hiding in the current git status.',
+      approvals > 0 ? `${approvals} approval item${approvals === 1 ? '' : 's'} still need attention.` : 'The approval queue is clear right now.',
+      nextAction ? `Next safe step: ${nextAction}.` : '',
+    ].filter(Boolean).join(' '),
+    snapshot,
+  };
+}
+
 function schedulerLogPath(workspaceRoot) {
   return getAssistantSchedulerLogPath(workspaceRoot || getWorkspaceRoot());
 }
@@ -6045,97 +5865,6 @@ function buildSurroundingSnippet(workspaceRoot, relativePath, lineNumber) {
 function buildCurrentFileDiff(workspaceRoot, relativePath) {
   const payload = getWorkspaceDiff(workspaceRoot, relativePath, { maxChars: 2500 });
   return payload && payload.ok ? clipText(payload.diff, 2500) : '';
-}
-
-function normalizeChatChangedFileList(items = []) {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-  return items
-    .map((item) => {
-      if (typeof item === 'string') {
-        return item.trim();
-      }
-      return String(item?.path || '').trim();
-    })
-    .filter(Boolean)
-    .slice(0, 6);
-}
-
-function buildChatRecentWorkContext(_workspaceRoot, payload = {}) {
-  const incoming = payload && typeof payload === 'object' ? payload : {};
-  const runtimeStatus = runtime.getStatus();
-  const latestRuns = Array.isArray(runtimeStatus?.latest) ? runtimeStatus.latest : [];
-  const requestedRunId = String(incoming.activeRunId || '').trim();
-  const selectedRun = (requestedRunId
-    ? latestRuns.find((run) => String(run?.runId || '').trim() === requestedRunId)
-    : null)
-    || latestRuns[0]
-    || null;
-
-  if (!selectedRun || typeof selectedRun !== 'object') {
-    return {
-      summary: '',
-      workedAt: '',
-      changedFiles: [],
-      status: '',
-      task: '',
-      laneLabel: '',
-      modelDisplayName: '',
-      runId: '',
-    };
-  }
-
-  const operatorExecution = selectedRun.operatorExecution && typeof selectedRun.operatorExecution === 'object'
-    ? selectedRun.operatorExecution
-    : {};
-  const changedFiles = normalizeChatChangedFileList(
-    operatorExecution.changedFiles
-    || operatorExecution.changed_files
-    || selectedRun.runtimeContext?.changed_files
-    || selectedRun.runtimeContext?.changedFiles
-    || [],
-  );
-  const task = String(operatorExecution.task || selectedRun.task || selectedRun.label || '').trim();
-  const laneLabel = String(operatorExecution.laneLabel || selectedRun.laneLabel || '').trim();
-  const status = String(operatorExecution.runState || operatorExecution.status || selectedRun.state || '').trim().toLowerCase();
-  const modelDisplayName = String(
-    operatorExecution.modelDisplayName
-    || selectedRun.modelDisplayName
-    || operatorExecution.modelProfileId
-    || selectedRun.modelProfileId
-    || ''
-  ).trim();
-  const workedAt = String(selectedRun.endedAt || selectedRun.startedAt || '').trim();
-  const summaryParts = [];
-  if (task) {
-    summaryParts.push(task);
-  }
-  if (status) {
-    summaryParts.push(`status ${status}`);
-  }
-  if (laneLabel) {
-    summaryParts.push(`lane ${laneLabel}`);
-  }
-  if (modelDisplayName) {
-    summaryParts.push(`model ${modelDisplayName}`);
-  }
-  if (workedAt) {
-    summaryParts.push(`last worked ${workedAt}`);
-  }
-  if (changedFiles.length > 0) {
-    summaryParts.push(`files ${changedFiles.slice(0, 3).join(', ')}`);
-  }
-  return {
-    summary: clipText(summaryParts.join(' • '), 240),
-    workedAt,
-    changedFiles,
-    status,
-    task,
-    laneLabel,
-    modelDisplayName,
-    runId: String(selectedRun.runId || '').trim(),
-  };
 }
 
 function getReviewDecisions() {
@@ -6247,12 +5976,12 @@ function injectUiSmokeApprovalFixture(workspaceRoot, review, fixturePath = '') {
   };
 }
 
-function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], decisionsOverride = null, bats = []) {
+function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], decisionsOverride = null, bats = [], options = {}) {
   const autonomy = getAutonomySettings(workspaceRoot);
   const decisions = decisionsOverride && typeof decisionsOverride === 'object'
     ? decisionsOverride
     : getReviewDecisions();
-  const queue = buildApprovalQueue({
+  const queue = dedupeApprovalQueue(buildApprovalQueue({
     workspaceRoot,
     review,
     recentRuns,
@@ -6264,7 +5993,8 @@ function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], dec
     isLowRiskApprovalPath,
     collectRuntimeApprovalSignals,
     collectProtectedBatReviewSignals,
-  });
+    includeChangedFiles: options.includeChangedFiles,
+  }));
 
   if (!autonomy.autoApproveLowRisk) {
     return queue;
@@ -6281,7 +6011,7 @@ function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], dec
   if (!(decisionsOverride && typeof decisionsOverride === 'object')) {
     store.set('reviewDecisions', autoApproval.decisions);
   }
-  return buildApprovalQueue({
+  return dedupeApprovalQueue(buildApprovalQueue({
     workspaceRoot,
     review,
     recentRuns,
@@ -6293,7 +6023,8 @@ function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], dec
     isLowRiskApprovalPath,
     collectRuntimeApprovalSignals,
     collectProtectedBatReviewSignals,
-  });
+    includeChangedFiles: options.includeChangedFiles,
+  }));
 }
 
 function resolveApprovalQueueTarget(queue) {
@@ -6493,6 +6224,7 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
   const storage = buildStorageSnapshot(workspaceRoot);
   const worktree = context.worktree || summarizeWorkspaceTopology(workspaceRoot, runtimeContext, { changedFiles });
   const assistantDashboard = parseAssistantDashboard(workspaceRoot) || {};
+  const taskHub = readHub(workspaceRoot);
   const training = assistantDashboard.training && typeof assistantDashboard.training === 'object'
     ? assistantDashboard.training
     : { exists: false, exampleCount: 0, pendingRunsCount: 0, state: 'idle' };
@@ -6533,35 +6265,6 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
       ? 'Backlog active; monitor latest failures.'
       : 'Backlog active';
   const assistantConfig = readAssistantConfig(canonicalWorkspaceRoot || workspaceRoot, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
-  const autonomousActions = buildAutonomousActionSummary({
-    runtimeState: {
-      runs: (Array.isArray(context.runtimeRuns) && context.runtimeRuns.length > 0
-        ? context.runtimeRuns
-        : [latestRuntime, ...recentRuns]).filter((run, index, items) => {
-          const runId = String(run?.runId || '').trim();
-          if (!runId) {
-            return !!run;
-          }
-          return items.findIndex((item) => String(item?.runId || '').trim() === runId) === index;
-        }),
-      activeRuns: Array.isArray(runtime.getStatus()?.activeRuns) ? runtime.getStatus().activeRuns : [],
-    },
-    modelRoles: {
-      workspace: {
-        modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-        modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
-        baseModel: String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-        providerSource: String(assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
-      },
-      engine: {
-        modelProfileId: String(assistantConfig.engineModelProfileId || assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-        modelDisplayName: String(assistantConfig.engineModelDisplayName || '').trim(),
-        baseModel: String(assistantConfig.engineBaseModel || assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-        providerSource: String(assistantConfig.engineProviderSource || assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
-      },
-    },
-    dailyTarget: Number(assistantConfig.dailySafeAutonomousTarget || 5),
-  });
   const safeMode = getSafetyStatusSnapshot({
     workspaceRoot: canonicalWorkspaceRoot || workspaceRoot,
     targetWorkspaceRoot: workspaceRoot,
@@ -6592,8 +6295,11 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
     updatedAt: schedulerLog.updatedAt,
     externallyActive: !!schedulerLog.externallyActive,
   };
-  const queue = buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns, review?.decisions || null, context.bats || []);
+  const queue = buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns, review?.decisions || null, context.bats || [], {
+    includeChangedFiles: false,
+  });
   const approvals = approvalQueueSummary(queue);
+  const liveEngineSummary = buildLiveEngineMonitorSummary(taskHub);
   const localAi = describeLocalAiStatus();
   const activeRuns = Array.isArray(runtime.getStatus()?.activeRuns) ? runtime.getStatus().activeRuns.length : 0;
   const topValidationFingerprints = Array.isArray(assistantDashboard.top_validation_fingerprints)
@@ -6613,13 +6319,20 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
     }
     return String(item.type || '').trim();
   }).filter(Boolean).join(' • ');
-  const engineState = assistantDashboard.recent_count
-    ? ((Number(assistantDashboard.blocked_count || 0) > 0 || Number(assistantDashboard.fail_count || 0) > 0 || latestRetryPolicy.action === 'handoff')
+  const engineHasLiveSummary = liveEngineSummary.hasLiveData === true;
+  const engineState = engineHasLiveSummary
+    ? ((liveEngineSummary.blockedCount > 0 || liveEngineSummary.failCount > 0 || latestRetryPolicy.action === 'handoff')
       ? 'warn'
-      : (Number(assistantDashboard.skipped_count || 0) > 0 || latestRetryPolicy.action === 'rescope' || latestEngineDecisions.some((item) => item.type === 'repair-skip' || item.type === 'low-confidence-patches'))
+      : (liveEngineSummary.skippedCount > 0 || latestRetryPolicy.action === 'rescope' || latestEngineDecisions.some((item) => item.type === 'repair-skip' || item.type === 'low-confidence-patches'))
         ? 'warn'
         : 'ready')
-    : 'idle';
+    : (assistantDashboard.recent_count
+      ? ((Number(assistantDashboard.blocked_count || 0) > 0 || Number(assistantDashboard.fail_count || 0) > 0 || latestRetryPolicy.action === 'handoff')
+        ? 'warn'
+        : (Number(assistantDashboard.skipped_count || 0) > 0 || latestRetryPolicy.action === 'rescope' || latestEngineDecisions.some((item) => item.type === 'repair-skip' || item.type === 'low-confidence-patches'))
+          ? 'warn'
+          : 'ready')
+      : 'idle');
   const dailyEngineReportDetail = engineDailyReport.exists
     ? [
         engineDailyReport.summary,
@@ -6628,6 +6341,30 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
         engineDailyReport.canonicalMarkdownPath || '',
       ].filter(Boolean).join(' • ')
     : '';
+  const engineValue = engineHasLiveSummary
+    ? `${Number(liveEngineSummary.passRate || 0)}% pass`
+    : (assistantDashboard.recent_count ? `${Number(assistantDashboard.pass_rate || 0)}% pass` : 'No runs yet');
+  const engineLeadDetail = engineHasLiveSummary
+    ? [
+        `${Number(liveEngineSummary.failCount || 0)} fail`,
+        `${Number(liveEngineSummary.blockedCount || 0)} blocked`,
+        `${Number(liveEngineSummary.skippedCount || 0)} skipped`,
+        `${Number(liveEngineSummary.reviewRequiredRate || 0)}% review required`,
+        `avg repairs ${Number(liveEngineSummary.averageRepairAttempts || 0)}`,
+      ].join(' • ')
+    : `${Number(assistantDashboard.blocked_count || 0)} blocked • ${Number(assistantDashboard.skipped_count || 0)} skipped`;
+  const engineFocusDetail = engineHasLiveSummary
+    ? [
+        liveEngineSummary.latestProblemSummary ? `Focus ${liveEngineSummary.latestProblemSummary}` : '',
+        engineFingerprintSummary,
+        engineDecisionSummary,
+      ].filter(Boolean).join(' • ')
+    : [
+        latestRetryPolicy.action ? `retry ${latestRetryPolicy.action}` : '',
+        engineFingerprintSummary,
+        engineDecisionSummary,
+        dailyEngineReportDetail,
+      ].filter(Boolean).join(' • ');
   const testsState = latestRuntime?.state === 'fail'
     ? 'fail'
     : latestRuntime?.state === 'skipped'
@@ -6638,6 +6375,55 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
         ? 'running'
         : 'idle';
   const preflightBlocking = Number(preflight?.blockingCount || 0);
+  const managerModel = String(
+    assistantConfig.engineBaseModel
+    || assistantConfig.engineModelDisplayName
+    || assistantConfig.baseModel
+    || '',
+  ).trim();
+  const workerModel = String(
+    assistantConfig.workspaceBaseModel
+    || assistantConfig.workspaceModelDisplayName
+    || assistantConfig.baseModel
+    || '',
+  ).trim();
+  const branchName = String(updates?.workspace?.branch || '').trim();
+  const transparencyLevel = ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').toLowerCase())
+    ? String(store.get('chatTransparencyLevel')).toLowerCase()
+    : 'balanced';
+  const liveActivity = {
+    transparencyLevel,
+    currentAction: String(latestRuntime?.label || latestArtifactRun?.label || currentRunDetail?.summary || '').trim(),
+    currentState: String(latestRuntime?.state || latestArtifactRun?.state || '').trim() || 'idle',
+    summary: [
+      latestRuntime?.label || latestArtifactRun?.label || '',
+      latestRuntime?.blockedReason || '',
+      safeMode.active ? 'safe mode active' : '',
+      scheduler.running ? 'scheduler running' : '',
+    ].filter(Boolean).join(' â€¢ '),
+    updates: [
+      latestRuntime?.label ? `Run: ${latestRuntime.label}` : '',
+      latestRuntime?.blockedReason ? `Blocker: ${latestRuntime.blockedReason}` : '',
+      approvals.total > 0 ? `Inbox: ${approvals.total} approval item(s)` : 'Inbox: clear',
+      changedFiles.length > 0 ? `Changed files: ${changedFiles.length}` : 'Changed files: clean',
+    ].filter(Boolean),
+  };
+  const selfModel = {
+    workspaceRoot: canonicalWorkspaceRoot || workspaceRoot,
+    targetWorkspaceRoot: workspaceRoot,
+    branch: branchName,
+    changedFileCount: changedFiles.length,
+    currentRunLabel: String(latestRuntime?.label || latestArtifactRun?.label || '').trim(),
+    currentRunState: String(latestRuntime?.state || latestArtifactRun?.state || '').trim() || 'idle',
+    latestBlocker: String(latestRuntime?.blockedReason || baseline.reason || '').trim(),
+    approvalState: approvals.total > 0 ? `${approvals.total} waiting` : 'clear',
+    inboxSummary: approvals.total > 0 ? `${approvals.pending} pending approval item(s)` : 'Inbox is clear',
+    safetyState: safeMode.active ? 'safe-mode' : safeMode.watchOnly ? 'watch' : 'ready',
+    managerModel,
+    workerModel,
+    nextSafeAction: String(approvedDocsVault?.recommendedAction || baseline.resumeCondition || '').trim(),
+    confidenceLabel: baseline.state === 'red' ? 'blocked' : baseline.state === 'yellow' ? 'watch' : 'ready',
+  };
 
   const healthCards = [
     {
@@ -6717,29 +6503,8 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
       id: 'engine',
       label: 'Engine',
       state: engineState,
-      value: assistantDashboard.recent_count ? `${Number(assistantDashboard.pass_rate || 0)}% pass` : 'No runs yet',
-      detail: [
-        `${Number(assistantDashboard.blocked_count || 0)} blocked • ${Number(assistantDashboard.skipped_count || 0)} skipped`,
-        latestRetryPolicy.action ? `retry ${latestRetryPolicy.action}` : '',
-        engineFingerprintSummary,
-        engineDecisionSummary,
-        dailyEngineReportDetail,
-      ].filter(Boolean).join(' • ') || 'Engine signals are clear',
-    },
-    {
-      id: 'autonomy',
-      label: 'Autonomy',
-      state: autonomousActions.status === 'fail' ? 'fail' : autonomousActions.status === 'warn' ? 'warn' : autonomousActions.status === 'ready' ? 'ready' : 'idle',
-      value: autonomousActions.actionCount > 0
-        ? `${Number(autonomousActions.dailyTarget?.safeCount || 0)}/${Number(autonomousActions.dailyTarget?.target || 0)} safe today`
-        : 'No actions yet',
-      detail: autonomousActions.highestRiskAction
-        ? [
-            `${autonomousActions.highestRiskAction.capabilityFit} fit`,
-            `job ${autonomousActions.highestRiskAction.difficultyLevel}/5 vs model ${autonomousActions.highestRiskAction.modelLevel}/5`,
-            autonomousActions.highestRiskAction.task || autonomousActions.highestRiskAction.label,
-          ].filter(Boolean).join(' | ')
-        : autonomousActions.summary,
+      value: engineValue,
+      detail: [engineLeadDetail, engineFocusDetail].filter(Boolean).join(' • ') || 'Engine signals are clear',
     },
     {
       id: 'training',
@@ -6843,7 +6608,8 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
     runtimeContext,
     worktree,
     currentRunDetail,
-    autonomousActions,
+    liveActivity,
+    selfModel,
     healthCards,
     workers: buildWorkerStates({ latestRuntime, runtimeRuns: context.runtimeRuns, scheduler, approvals, changedFileCount: changedFiles.length, baseline, training }),
     summaryText: `runtime ${activeRuns > 0 ? 'busy' : 'idle'} • ${worktree.scopeLabel || 'workspace'} ${worktree.displayName || workspaceRoot || ''} • safety ${safeMode.active ? 'safe-mode' : safeMode.watchOnly ? 'watch' : 'ready'} • baseline ${baseline.state || 'green'} • scheduler ${scheduler.running ? 'on' : 'off'} • training ${training.exists ? (training.stale || Number(training.pendingRunsCount || 0) > 0 ? 'due' : 'ready') : 'idle'} • approvals ${approvals.total}${approvals.runtimeGenerated > 0 ? ` (${approvals.runtimeGenerated} runtime)` : ''} • changed files ${changedFiles.length}`,
@@ -6863,19 +6629,329 @@ function managerStatusText(workspaceRoot) {
     updates: snapshot.updates,
   });
   const nextApproval = Array.isArray(manager.approvalQueue) ? manager.approvalQueue[0] : null;
-  const autonomyText = String(manager.autonomousActions?.recommendedNextSafeAction || '').trim();
-  const dailyQuotaProof = snapshot.systemCheck?.areas?.roadmap?.dailyQuotaProof || {};
   const nextText = nextApproval
     ? ` Next approval: ${nextApproval.ticket ? `BAT<${nextApproval.ticket}> • ` : ''}${nextApproval.path}:${nextApproval.line} (${nextApproval.source})${nextApproval.nextAction ? ` • ${nextApproval.nextAction}` : ''}.`
     : '';
-  const nextAutonomy = autonomyText ? ` Next safe action: ${autonomyText}.` : '';
-  const focusText = dailyQuotaProof?.focusTask?.title
-    ? ` Focus task: ${dailyQuotaProof.focusTask.title}.`
-    : '';
-  const doNotWidenText = dailyQuotaProof?.doNotWidenYetBecause
-    ? ` ${dailyQuotaProof.doNotWidenYetBecause}`
-    : '';
-  return `Manager health: ${manager.summaryText}.${nextText}${nextAutonomy}${focusText}${doNotWidenText}`.trim();
+  return `Manager health: ${manager.summaryText}.${nextText}`.trim();
+}
+
+function normalizeModelCatalogText(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+}
+
+function findModelCatalogMatch(input, catalog = []) {
+  const normalizedInput = normalizeModelCatalogText(input);
+  if (!normalizedInput) {
+    return null;
+  }
+  return (Array.isArray(catalog) ? catalog : []).find((item) => {
+    const model = normalizeModelCatalogText(item?.model || '');
+    const label = normalizeModelCatalogText(item?.label || '');
+    return normalizedInput === model
+      || normalizedInput === label
+      || model.includes(normalizedInput)
+      || label.includes(normalizedInput);
+  }) || null;
+}
+
+function readRequestedBoolean(text = '') {
+  const lower = String(text || '').trim().toLowerCase();
+  if (/\b(on|enable|enabled|turn on|start|resume|use)\b/.test(lower)) {
+    return true;
+  }
+  if (/\b(off|disable|disabled|turn off|stop|pause|hide)\b/.test(lower)) {
+    return false;
+  }
+  return null;
+}
+
+function buildManagerReviewReply(snapshot = {}) {
+  const reviewer = snapshot?.reviewer && typeof snapshot.reviewer === 'object' ? snapshot.reviewer : {};
+  const latestRun = Array.isArray(snapshot?.recentRuns) && snapshot.recentRuns.length > 0
+    ? snapshot.recentRuns[0]
+    : (Array.isArray(snapshot?.taskHub?.runs) && snapshot.taskHub.runs.length > 0 ? snapshot.taskHub.runs[0] : null);
+  const nextSafeAction = String(snapshot?.readiness?.operatorSummary?.recommendedNextSafeAction || snapshot?.testBench?.nextSafeAction?.summary || '').trim();
+  return [
+    reviewer.summary ? `Manager review: ${reviewer.summary}` : 'Manager review is ready, but there is no strong review signal yet.',
+    latestRun?.title || latestRun?.task ? `Latest run: ${String(latestRun.title || latestRun.task).trim()}.` : '',
+    latestRun?.blockedReason ? `Blocker: ${String(latestRun.blockedReason).trim()}.` : '',
+    reviewer.nextAction ? `Next step: ${String(reviewer.nextAction).trim()}.` : '',
+    nextSafeAction ? `Next safe action: ${nextSafeAction}.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+function buildInboxAuditReply(snapshot = {}) {
+  const manager = snapshot?.manager && typeof snapshot.manager === 'object' ? snapshot.manager : {};
+  const approvals = manager.approvals && typeof manager.approvals === 'object' ? manager.approvals : {};
+  const queue = Array.isArray(manager.approvalQueue) ? manager.approvalQueue : [];
+  const nextApproval = queue[0] || null;
+  const regression = snapshot?.regression && typeof snapshot.regression === 'object' ? snapshot.regression : {};
+  const reviewer = snapshot?.reviewer && typeof snapshot.reviewer === 'object' ? snapshot.reviewer : {};
+  return [
+    `I checked the current workspace inbox. ${approvals.total ? `${approvals.total} approval item${approvals.total === 1 ? '' : 's'} still need attention.` : 'The approval queue is clear.'}`,
+    nextApproval ? `Top item: ${String(nextApproval.detail || nextApproval.summary || nextApproval.path || 'review item').trim()}.` : '',
+    regression.candidateCount ? `${Number(regression.candidateCount)} repair candidate${Number(regression.candidateCount) === 1 ? '' : 's'} are ready for the next pass.` : '',
+    reviewer.nextAction ? `Best next move: ${String(reviewer.nextAction).trim()}.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+async function applyManagerChatCommand(text, roots = {}) {
+  const lower = String(text || '').trim().toLowerCase();
+  if (!lower) {
+    return null;
+  }
+  const workspaceRoot = roots.workspaceRoot || getWorkspaceRoot();
+  const targetWorkspaceRoot = roots.targetWorkspaceRoot || getTargetWorkspaceRoot();
+  const labRoot = roots.labRoot || getSelectedLabRoot();
+  const modeMatch = lower.match(/\b(?:switch|set|use|go to)\s+(?:chat\s+)?(?:mode\s+)?(?:to\s+)?(auto|ask|plan|edit|agent)\b/)
+    || lower.match(/\b(auto|ask|plan|edit|agent)\s+mode\b/);
+  if (modeMatch) {
+    const nextMode = resolveChatModeValue(modeMatch[1]);
+    store.set('chatMode', nextMode);
+    return {
+      ok: true,
+      reply: nextMode === 'auto'
+        ? 'Auto mode is on. I will stay conversational by default and step into Plan, Edit, or Agent only when the request and current gates support it.'
+        : `Switched to ${getChatModeConfig(nextMode).label} mode.`,
+      intentType: 'manager-control',
+      chatMode: nextMode,
+      effectiveChatMode: nextMode,
+      suggestions: ['Show me the next safe step.', 'Audit the inbox and tell me what still needs attention.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/(switch|set|use).*(manager model|manager)\b/.test(lower)) {
+    const aiStatus = await buildAiStatusPayload(workspaceRoot);
+    const modelMatch = findModelCatalogMatch(text, aiStatus?.remoteModelCatalog || []);
+    if (modelMatch?.model) {
+      store.set('aiRemoteModel', String(modelMatch.model));
+      if (store.get('aiManualMode') !== true && String(store.get('runtime') || '').trim().toLowerCase() === 'openai') {
+        store.set('model', String(modelMatch.model));
+      }
+      await syncAssistantModelProfileSettings(workspaceRoot);
+      return {
+        ok: true,
+        reply: `Manager model set to ${String(modelMatch.label || modelMatch.model)}.`,
+        intentType: 'manager-control',
+        chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+        suggestions: ['Explain when the manager will step in.', 'Run a manager review on the latest run.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
+  }
+
+  if (/(switch|set|use).*(worker model|worker)\b/.test(lower)) {
+    const aiStatus = await buildAiStatusPayload(workspaceRoot);
+    const localCatalog = Array.isArray(aiStatus?.localModelInventory)
+      ? aiStatus.localModelInventory.map((item) => ({ model: item.model, label: item.label || item.model }))
+      : [];
+    const modelMatch = findModelCatalogMatch(text, localCatalog);
+    if (modelMatch?.model) {
+      store.set('trainingOllamaModel', String(modelMatch.model));
+      if (String(store.get('runtime') || '').trim().toLowerCase() !== 'openai') {
+        store.set('model', String(modelMatch.model));
+      }
+      await syncAssistantModelProfileSettings(workspaceRoot);
+      return {
+        ok: true,
+        reply: `Worker model set to ${String(modelMatch.label || modelMatch.model)}.`,
+        intentType: 'manager-control',
+        chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+        suggestions: ['Explain which lane uses the worker.', 'Switch to Agent mode when you want execution.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
+  }
+
+  if (/\bauto[- ]?run\b/.test(lower)) {
+    const enabled = readRequestedBoolean(lower);
+    if (enabled !== null) {
+      store.set('autoRunQueuedTaskLoopFollowups', enabled);
+      writeAssistantAutonomySettings(workspaceRoot, {
+        autoRunQueuedTaskLoopFollowups: enabled,
+      }, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
+      return {
+        ok: true,
+        reply: `Auto-run for queued next tasks is now ${enabled ? 'on' : 'off'}.`,
+        intentType: 'manager-control',
+        chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+        suggestions: ['Audit the inbox for anything still waiting.', 'Explain the current safety gates.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
+  }
+
+  if (/\bauto[- ]?queue\b/.test(lower)) {
+    const enabled = readRequestedBoolean(lower);
+    if (enabled !== null) {
+      store.set('autoQueueTaskLoopFollowups', enabled);
+      writeAssistantAutonomySettings(workspaceRoot, {
+        autoQueueTaskLoopFollowups: enabled,
+      }, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
+      return {
+        ok: true,
+        reply: `Auto-queue for bounded follow-ups is now ${enabled ? 'on' : 'off'}.`,
+        intentType: 'manager-control',
+        chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+        suggestions: ['Explain what the manager will auto-queue next.', 'Show the next safe action.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
+  }
+
+  if (/\b(supervised )?recipes?\b/.test(lower)) {
+    const enabled = readRequestedBoolean(lower);
+    if (enabled !== null) {
+      store.set('supervisedAutoRunRecipes', enabled);
+      writeAssistantAutonomySettings(workspaceRoot, {
+        supervisedAutoRunRecipes: enabled,
+      }, { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
+      return {
+        ok: true,
+        reply: `Supervised recipes are now ${enabled ? 'on' : 'off'}.`,
+        intentType: 'manager-control',
+        chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+        suggestions: ['Explain which recipes can auto-run safely.', 'Audit the inbox and tell me what still needs attention.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
+  }
+
+  if (/\b(open|show)\b.*\btransparency|verbose live view|detailed live view/.test(lower)) {
+    store.set('chatTransparencyLevel', 'verbose');
+    return {
+      ok: true,
+      reply: 'Live transparency is now set to Verbose, so I will surface route choices, audit steps, and run transitions more clearly.',
+      intentType: 'manager-control',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Audit the inbox and tell me what needs attention.', 'Run a manager review on the latest run.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(close|hide)\b.*\btransparency|quiet live view/.test(lower)) {
+    store.set('chatTransparencyLevel', 'quiet');
+    return {
+      ok: true,
+      reply: 'Live transparency is now set to Quiet. I will keep the thread cleaner unless you ask for more detail.',
+      intentType: 'manager-control',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Switch back to balanced live view.', 'Show me the current self-model summary.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\bbalanced\b.*\blive view|\bset\b.*\btransparency\b.*\bbalanced\b/.test(lower)) {
+    store.set('chatTransparencyLevel', 'balanced');
+    return {
+      ok: true,
+      reply: 'Live transparency is back on Balanced. I will keep the important activity visible without flooding the thread.',
+      intentType: 'manager-control',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Audit the inbox and tell me what needs attention.', 'Explain the current route and models.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(pause risky work|turn safe mode on|enable safe mode|engage safe mode)\b/.test(lower)) {
+    const result = await setManualSafeMode({ workspaceRoot, enabled: true });
+    return {
+      ok: true,
+      reply: result?.message || 'Safe mode is active now. Risky work is paused until you release it.',
+      intentType: 'manager-control',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Audit the inbox and tell me what still needs review.', 'Release safe mode when you are ready.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(release risky work|turn safe mode off|disable safe mode|release safe mode)\b/.test(lower)) {
+    const result = await setManualSafeMode({ workspaceRoot, enabled: false });
+    return {
+      ok: true,
+      reply: result?.message || 'Manual safe mode is released. The current safety profile still applies.',
+      intentType: 'manager-control',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Show me the next safe action.', 'Switch to Agent mode when you want execution.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(run manager review|manager review|review the latest run)\b/.test(lower)) {
+    const snapshot = workspaceSnapshot();
+    return {
+      ok: true,
+      reply: buildManagerReviewReply(snapshot),
+      intentType: 'manager-review',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Audit the inbox and tell me what still needs attention.', 'Switch to Agent mode when you want execution.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(run hygiene|hygiene lane|clean up the inbox|clear the inbox|settle stale tasks|dedupe the inbox|fix the inbox)\b/.test(lower)) {
+    const result = runManagerHygiene(workspaceRoot, targetWorkspaceRoot, labRoot);
+    pushMonitorEvent('runtime', {
+      type: 'manager-hygiene',
+      timestamp: nowIso(),
+      workspaceRoot,
+      targetWorkspaceRoot,
+      labRoot,
+      stats: result.stats,
+      ignoredChangedFiles: result.ignoredChangedFiles,
+    });
+    return {
+      ok: true,
+      reply: result.reply,
+      intentType: 'manager-hygiene',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Audit the inbox and tell me what still needs attention.', 'Show me the next safe action.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  if (/\b(audit inbox|review the inbox|what is in the inbox|what still needs attention)\b/.test(lower)) {
+    const snapshot = workspaceSnapshot();
+    return {
+      ok: true,
+      reply: buildInboxAuditReply(snapshot),
+      intentType: 'manager-audit',
+      chatMode: resolveChatModeValue(store.get('chatMode') || 'auto'),
+      suggestions: ['Run manager review on the latest run.', 'Show me the next safe action.'],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
+    };
+  }
+
+  return null;
 }
 
 function applyApprovalDecision(status, note = '', target = {}) {
@@ -7083,15 +7159,50 @@ function importChatAttachments(workspaceRoot, payload = {}) {
   };
 }
 
+async function buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot) {
+  const reportWorkspaceRoot = String(workspaceRoot || targetWorkspaceRoot || '').trim();
+  const reportTargetWorkspaceRoot = String(targetWorkspaceRoot || reportWorkspaceRoot).trim();
+  if (!reportWorkspaceRoot) {
+    return null;
+  }
+  try {
+    const context = await buildSystemCheckContext(reportWorkspaceRoot);
+    return buildSystemCheck({
+      workspaceRoot: reportWorkspaceRoot,
+      targetWorkspaceRoot: reportTargetWorkspaceRoot || reportWorkspaceRoot,
+      labRoot: String(labRoot || '').trim(),
+      taskHub: readHub(reportWorkspaceRoot),
+      ...context,
+    });
+  } catch (_error) {
+    return null;
+  }
+}
+
 ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
   let text = String(payload.text || '').trim();
-  const modeDirective = parseChatModeDirective(text);
-  let chatMode = resolveChatModeValue(payload.chatMode || payload.chatContext?.chatMode || store.get('chatMode'));
-  if (modeDirective.mode) {
-    chatMode = modeDirective.mode;
+  const directive = parseChatModeDirective(text);
+  const initialChatMode = directive.mode || payload.chatContext?.chatMode || store.get('chatMode') || 'auto';
+  const chatMode = resolveChatModeValue(initialChatMode);
+  if (directive.mode) {
     store.set('chatMode', chatMode);
-    text = modeDirective.message;
+    text = directive.message;
+    if (!text) {
+      return {
+        ok: true,
+        reply: chatMode === 'auto'
+          ? 'Auto mode is on. I will decide when to stay conversational, when to plan, and when a bounded agent action is actually appropriate.'
+          : `Switched to ${chatMode.charAt(0).toUpperCase() + chatMode.slice(1)} mode.`,
+        intentType: 'mode-switch',
+        chatMode,
+        effectiveChatMode: chatMode,
+        suggestions: ['Ask for the next bounded step.', 'Explain what to change before running anything.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
   }
   const chatHistory = normalizeChatHistoryPayload(payload.history);
   const attachments = Array.isArray(payload.attachments)
@@ -7099,14 +7210,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     : [];
   const trustedDocs = buildTrustedDocReferences(targetWorkspaceRoot);
   if (!text && attachments.length === 0) {
-    if (modeDirective.mode) {
-      return {
-        ok: true,
-        reply: `Switched to ${chatMode.charAt(0).toUpperCase() + chatMode.slice(1)} mode. Talk to me naturally and I’ll stay inside that mode until you switch again.`,
-        chatMode,
-        modeState: inferChatModeRouting(chatMode, ''),
-      };
-    }
     return { ok: true, reply: 'Please enter a message.' };
   }
   if (!text && attachments.length > 0) {
@@ -7119,28 +7222,21 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     threadId: payload.threadId || '',
     changeSessionId: payload.changeSessionId || '',
   });
-  const aiStatus = await buildAiStatusPayload(targetWorkspaceRoot || workspaceRoot);
-  const modelProvisioning = aiStatus?.provisioning && typeof aiStatus.provisioning === 'object'
-    ? aiStatus.provisioning
-    : {};
   const chatGuidance = buildChatGuidancePayload(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
     chatMode,
-    modelProvisioning,
     message: text,
   });
+  const effectiveChatMode = resolveChatModeValue(chatGuidance.effectiveChatMode || chatMode);
   const chatContext = buildAssistantChatContext(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
     chatMode,
     attachments,
     trustedDocs,
     chatGuidance,
-    modelProvisioning,
   });
-  const modeState = inferChatModeRouting(chatMode, text);
   learningJournal.recordEvent('chat-prompt', {
     text,
-    chatMode,
     threadId: payload.threadId || '',
     changeSessionId: payload.changeSessionId || '',
     attachmentCount: attachments.length,
@@ -7151,9 +7247,36 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       path: item.path || '',
     })),
   });
+  const managerCommandResult = await applyManagerChatCommand(text, {
+    workspaceRoot,
+    targetWorkspaceRoot,
+    labRoot,
+  });
+  if (managerCommandResult) {
+    return managerCommandResult;
+  }
 
   const explicitTicket = String(text.match(/(?:BAT<)?(\d+)>?/i)?.[1] || '').trim();
-  if (!text.startsWith('/') && explicitTicket && chatMode !== 'ask' && chatMode !== 'plan') {
+  if (!text.startsWith('/') && explicitTicket) {
+    if (!['ask', 'plan'].includes(effectiveChatMode)) {
+      // execution-capable or edit-prep modes may materialize task state below
+    } else {
+      const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
+      const ticketSummary = String(batEntry?.summary || batEntry?.desc || '').trim();
+      return {
+        ok: true,
+        reply: `${chatMode === 'plan' ? 'Planned' : 'Discussed'} BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''} without creating a task yet. ${chatGuidance.suggestedNextAction || ''}`.trim(),
+        intentType: 'conversation-only',
+        chatMode,
+        effectiveChatMode,
+        suggestions: effectiveChatMode === 'plan'
+          ? ['Turn this into an execution task in Agent mode when ready.', 'List risks and acceptance checks for this BAT.']
+          : ['Explain the next safe step for this BAT.', 'Summarize the files most likely involved.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
     const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
     const explicitAction = /\bplan\b/i.test(text)
       ? 'plan'
@@ -7176,11 +7299,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         workspaceRoot,
         targetWorkspaceRoot,
         activeView: payload.chatContext?.activeView || '',
-        chatMode,
-        suggestedTaskMode: modeState.suggestedTaskMode,
-        suggestedLaneId: modeState.suggestedLaneId,
-        modeAllowsExecution: modeState.modeAllowsExecution,
-        modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
         compatSource: 'bat-board',
         batTicket: explicitTicket,
         batStatus: batEntry?.status || '',
@@ -7208,7 +7326,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       source: 'chat',
       batTicket: explicitTicket,
     });
-    const run = task && chatMode === 'agent'
+    const run = task
       ? await launchUniversalTaskRun({
         workspaceRoot,
         targetWorkspaceRoot,
@@ -7226,34 +7344,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       source: 'chat',
       batTicket: explicitTicket,
     });
-    const blockedByModelFit = run?.blockedBy === 'model-fit';
-    const createdTaskReply = run?.runId
-      ? `Created an engine task for BAT<${explicitTicket}> and launched ${run.label || 'the run'} (${run.runId}).`
-      : blockedByModelFit
-        ? `Created an engine task for BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''}, but kept it queued because ${run.blockedReason || 'the current model is undersized for that slice'}.`
-        : `Created an engine task for BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''}.`;
-    const createdTaskSuggestions = run?.runId
-      ? ['Review the latest run and summarize any blockers.', 'Open the changed files and show me the diff.']
-      : blockedByModelFit
-        ? ['Rescope the queued task to fit the current model.', 'Open AI settings and verify the model routing before retrying.']
-        : ['Run the newest task now.', 'Open the engine backlog in settings and verify the target.'];
-    const finalCreatedTaskReply = chatMode === 'edit' && !run?.runId
-      ? `Prepared a queued edit task for BAT<${explicitTicket}>${ticketSummary ? ` - ${ticketSummary}` : ''}. I kept it queued because Edit mode does not auto-run code changes.`
-      : createdTaskReply;
-    return {
-      ok: true,
-      reply: finalCreatedTaskReply,
-      intentType: run?.runId ? 'launched-run' : 'created-task',
-      goal,
-      task,
-      run: run?.runId ? run : null,
-      suggestions: createdTaskSuggestions,
-      refs: [],
-      targetWorkspaceRoot,
-      labRoot,
-      chatMode,
-      modeState,
-    };
     return {
       ok: true,
       reply: run?.runId
@@ -7272,7 +7362,27 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     };
   }
 
-  if (!text.startsWith('/') && isActionablePrompt(text) && chatMode !== 'ask' && chatMode !== 'plan') {
+  if (!text.startsWith('/') && isActionablePrompt(text)) {
+    if (effectiveChatMode === 'ask' || effectiveChatMode === 'plan') {
+      const report = await buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot);
+      return {
+        ok: true,
+        reply: buildGroundedModeReply({
+          chatMode: effectiveChatMode,
+          userPrompt: text,
+          report: report || {},
+        }),
+        intentType: 'conversation-only',
+        chatMode,
+        effectiveChatMode,
+        suggestions: effectiveChatMode === 'plan'
+          ? ['Break this into acceptance checks.', 'Switch to Agent mode when you want execution.']
+          : ['Explain the smallest safe step.', 'Show the likely files before changing anything.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
     const bundle = createGoalAndTask(workspaceRoot, {
       source: payload.source || 'chat',
       objective: text,
@@ -7285,11 +7395,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         workspaceRoot,
         targetWorkspaceRoot,
         activeView: payload.chatContext?.activeView || '',
-        chatMode,
-        suggestedTaskMode: modeState.suggestedTaskMode,
-        suggestedLaneId: modeState.suggestedLaneId,
-        modeAllowsExecution: modeState.modeAllowsExecution,
-        modeRequiresEditConfirmation: modeState.modeRequiresEditConfirmation,
         attachments,
         referenceAttachments: attachments,
         trustedDocs,
@@ -7313,7 +7418,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     });
 
     const intentType = inferIntentType(text);
-    if (intentType === 'launched-run' && task && chatMode === 'agent') {
+    if (intentType === 'launched-run' && task && effectiveChatMode === 'agent') {
       const run = await launchUniversalTaskRun({
         workspaceRoot,
         targetWorkspaceRoot,
@@ -7329,31 +7434,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         label: run?.label || '',
         source: 'chat',
       });
-      const blockedByModelFit = run?.blockedBy === 'model-fit';
-      const launchedTaskReply = run?.runId
-        ? `Created goal "${goal?.title || 'Untitled goal'}", queued task "${task.title}", and launched ${run.label || 'the coding run'} (${run.runId}).`
-        : blockedByModelFit
-          ? `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task.title}", but kept it queued because ${run.blockedReason || 'the current model is undersized for that slice'}.`
-          : `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task.title}", but the run did not start cleanly yet.`;
-      const launchedTaskSuggestions = run?.runId
-        ? ['Review the latest run and summarize any blockers.', 'Open the changed files and show me the diff.']
-        : blockedByModelFit
-          ? ['Rescope the queued task to fit the current model.', 'Open AI settings and verify the current model routing.']
-          : ['Run the newest task now.', 'Open AI settings and verify the current model routing.'];
-      return {
-        ok: true,
-        reply: launchedTaskReply,
-        intentType: run?.runId ? 'launched-run' : 'blocked-by-policy',
-        goal,
-        task,
-        run: run?.runId ? run : null,
-        suggestions: launchedTaskSuggestions,
-        refs: [],
-        targetWorkspaceRoot,
-        labRoot,
-        chatMode,
-        modeState,
-      };
       return {
         ok: true,
         reply: run?.runId
@@ -7367,27 +7447,62 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
           ? ['Review the latest run and summarize any blockers.', 'Open the changed files and show me the diff.']
           : ['Run the newest task now.', 'Open AI settings and verify the current model routing.'],
         refs: [],
+        chatMode,
+        effectiveChatMode,
         targetWorkspaceRoot,
         labRoot,
       };
     }
 
-    const queuedTaskReply = chatMode === 'edit'
-      ? `Prepared goal "${goal?.title || 'Untitled goal'}" and queued edit task "${task?.title || 'Untitled task'}". I kept it queued because Edit mode needs confirmation before executing changes.`
-      : `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task?.title || 'Untitled task'}".`;
+    const run = null;
+    if (effectiveChatMode === 'edit' && !run?.runId) {
+      // Edit mode prepares the change but requires confirmation before execution.
+    }
     return {
       ok: true,
-      reply: queuedTaskReply,
+      reply: effectiveChatMode === 'edit'
+        ? `Created goal "${goal?.title || 'Untitled goal'}" and staged task "${task?.title || 'Untitled task'}" for confirmation before execution.`
+        : `Created goal "${goal?.title || 'Untitled goal'}" and queued task "${task?.title || 'Untitled task'}".`,
       intentType: 'created-task',
       goal,
       task,
       run: null,
+      chatMode,
+      effectiveChatMode,
       suggestions: ['Run the newest task now.', 'Create a self-host lab and test the task there first.'],
       refs: [],
       targetWorkspaceRoot,
       labRoot,
+    };
+  }
+
+  if (effectiveChatMode === 'ask' || effectiveChatMode === 'plan') {
+    const report = await buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot);
+    const roadmap = report?.areas?.roadmap && typeof report.areas.roadmap === 'object'
+      ? report.areas.roadmap
+      : {};
+    return {
+      ok: true,
+      reply: buildGroundedModeReply({
+        chatMode: effectiveChatMode,
+        userPrompt: text,
+        report: report || {},
+      }),
+      intentType: 'grounded-conversation',
       chatMode,
-      modeState,
+      effectiveChatMode,
+      suggestions: effectiveChatMode === 'plan'
+        ? [
+            'Turn this plan into a bounded Agent task when you are ready.',
+            'List the checks I should rerun after the slice.',
+          ]
+        : [
+            roadmap.recommendedNextSafeAction || 'Tell me the next safe action.',
+            'Explain what changed in the latest run.',
+          ],
+      refs: [],
+      targetWorkspaceRoot,
+      labRoot,
     };
   }
 
@@ -7395,7 +7510,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     chatHistory,
     chatContext: {
       ...chatContext,
-      chatMode,
       attachments: attachments.map((item) => ({
         kind: item.kind || '',
         name: item.originalName || item.name || '',
@@ -7649,6 +7763,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     ok: true,
     reply,
     intentType: text.startsWith('/') ? 'command' : 'answer-only',
+    chatMode,
+    effectiveChatMode,
     goal: null,
     task: null,
     run: null,
@@ -7656,8 +7772,6 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     refs: buildAssistantReplyRefs(chatContext),
     targetWorkspaceRoot,
     labRoot,
-    chatMode,
-    modeState,
   };
 });
 
@@ -7710,6 +7824,10 @@ ipcMain.handle('tuning:startOllama', async (_event, payload = {}) => {
 });
 ipcMain.handle('tuning:stopOllama', async () => stopOllamaService());
 ipcMain.handle('tuning:importModels', async (_event, payload = {}) => importStoredTrainingModels(payload));
+ipcMain.handle('tuning:mergeCheckpoints', async (_event, payload = {}) => {
+  const workspaceRoot = payload.workspace || payload.workspaceRoot || getWorkspaceRoot() || APP_ROOT;
+  return mergeDesktopLocalCheckpoints(workspaceRoot, payload);
+});
 ipcMain.handle('learning:capture', async (_event, payload = {}) => {
   const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
   updateLearningJournalScope(payload);
@@ -7914,81 +8032,6 @@ ipcMain.handle('review:copyText', async (_event, payload = {}) => {
 ipcMain.handle('review:openInVsCode', async (_event, payload = {}) => {
   const { targetWorkspaceRoot } = resolveRequestRoots(payload);
   return openInVsCode(targetWorkspaceRoot, payload.path, payload.line || 1);
-});
-
-ipcMain.handle('git:getSummary', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return readGitSummary(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:getStatus', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return getGitStatus(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:getDiff', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return getGitDiff(targetWorkspaceRoot, payload.path, { cached: payload.cached === true });
-});
-
-ipcMain.handle('git:stage', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return stagePaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
-});
-
-ipcMain.handle('git:unstage', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return unstagePaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
-});
-
-ipcMain.handle('git:stageAll', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return stageAll(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:unstageAll', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return unstageAll(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:discardPaths', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return discardPaths(targetWorkspaceRoot, Array.isArray(payload.paths) ? payload.paths : [payload.path].filter(Boolean));
-});
-
-ipcMain.handle('git:commit', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return commitStaged(targetWorkspaceRoot, payload.message);
-});
-
-ipcMain.handle('git:pull', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return pullTrackedBranch(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:push', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return pushTrackedBranch(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:listBranches', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return listBranches(targetWorkspaceRoot);
-});
-
-ipcMain.handle('git:createBranch', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return createBranch(targetWorkspaceRoot, payload.name);
-});
-
-ipcMain.handle('git:switchBranch', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return switchBranch(targetWorkspaceRoot, payload.name);
-});
-
-ipcMain.handle('git:publishBranch', async (_event, payload = {}) => {
-  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
-  return publishBranch(targetWorkspaceRoot);
 });
 
 ipcMain.handle('skills:list', async () => {

@@ -211,6 +211,42 @@ function normalizeObjectArray(value) {
     : [];
 }
 
+
+
+function normalizeRuntimeTimeline(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => ({
+    timestamp: String(item?.timestamp || item?.time || '').trim(),
+    stage: String(item?.stage || '').trim(),
+    event: String(item?.event || '').trim(),
+    summary: String(item?.summary || '').trim(),
+    agent: String(item?.agent || '').trim(),
+    provider: String(item?.provider || '').trim(),
+    model: String(item?.model || '').trim(),
+  })).filter((item) => item.stage || item.summary).slice(-24);
+}
+
+function summarizeProviderAccountability(run = {}, seed = {}) {
+  const routing = normalizeSummaryObject(
+    seed.providerRouting
+    || seed.provider_routing
+    || run.providerRouting
+    || run.provider_routing
+    || run.runtimeResult?.provider_routing
+    || run.runtimeResult?.providerRouting
+  );
+  const lanes = Object.entries(routing).map(([lane, value]) => ({
+    lane,
+    provider: String(value?.provider || '').trim(),
+    model: String(value?.model || '').trim(),
+  })).filter((item) => item.provider || item.model);
+  return {
+    lanes,
+    summary: lanes.map((item) => `${item.lane}:${item.provider || 'provider'}${item.model ? `/${item.model}` : ''}`).join(' | '),
+  };
+}
 function clipTail(value, maxChars = 4000) {
   return String(value || '').slice(-maxChars);
 }
@@ -807,6 +843,8 @@ function buildOperatorExecutionSnapshot(run = {}, overrides = {}) {
       autoQueueEligible: recipe.autoQueueEligible === true,
     };
   })();
+  const runtimeTimeline = normalizeRuntimeTimeline(seed.runtimeTimeline || seed.runtime_timeline || run.runtimeTimeline || run.runtime_timeline || runtimeResult.runtimeTimeline || runtimeResult.runtime_timeline || run.decision_timeline || runtimeResult.decision_timeline || []);
+  const providerAccountability = summarizeProviderAccountability(run, seed);
   return {
     task,
     laneId: String(seed.laneId || seed.lane_id || run.laneId || runtimeContext.laneId || runtimeContext.lane_id || '').trim(),
@@ -859,6 +897,8 @@ function buildOperatorExecutionSnapshot(run = {}, overrides = {}) {
     trustSummary,
     runSummary,
     testSummary,
+    runtimeTimeline,
+    providerAccountability,
     benchmarkMetadata: {
       experimentBenchmarkSummary: normalizeSummaryObject(
         seed.benchmarkMetadata?.experimentBenchmarkSummary
@@ -1112,6 +1152,10 @@ class SharedAgentRuntime extends EventEmitter {
       runtimeRun: {},
       runtimeResult: {},
       runtimeFailure: {},
+      runtimeTimeline: [],
+      providerRouting: {},
+      configState: {},
+      docsState: {},
       operatorExecution: {},
     };
     this._recordRun(runSnapshot);
@@ -1168,6 +1212,18 @@ class SharedAgentRuntime extends EventEmitter {
       current.runtimeFailure = (skippedDone || skippedNoop)
         ? {}
         : normalizeSummaryObject(result?.runtimeFailure || artifact.runtime_failure || artifact.runtimeFailure);
+      current.runtimeTimeline = (skippedDone || skippedNoop)
+        ? []
+        : normalizeRuntimeTimeline(result?.runtimeTimeline || result?.decision_timeline || result?.runtimeResult?.runtime_timeline || artifact.runtime_timeline || artifact.decision_timeline || artifact.runtime_result?.runtime_timeline);
+      current.providerRouting = (skippedDone || skippedNoop)
+        ? {}
+        : normalizeSummaryObject(result?.providerRouting || result?.provider_routing || result?.runtimeResult?.provider_routing || artifact.provider_routing || artifact.runtime_result?.provider_routing);
+      current.configState = (skippedDone || skippedNoop)
+        ? {}
+        : normalizeSummaryObject(result?.configState || result?.config_state || result?.runtimeContext?.config_state || artifact.runtime_context?.config_state);
+      current.docsState = (skippedDone || skippedNoop)
+        ? {}
+        : normalizeSummaryObject(result?.docsState || result?.docs_state || result?.runtimeContext?.docs_state || artifact.runtime_context?.docs_state);
       current.reviewSummary = (skippedDone || skippedNoop)
         ? {}
         : normalizeReviewSummary(result?.reviewSummary || artifact.review_summary || artifact.reviewSummary);
@@ -1291,6 +1347,10 @@ class SharedAgentRuntime extends EventEmitter {
         runtimeRun: current.runtimeRun,
         runtimeResult: current.runtimeResult,
         runtimeFailure: current.runtimeFailure,
+        runtimeTimeline: current.runtimeTimeline,
+        providerRouting: current.providerRouting,
+        configState: current.configState,
+        docsState: current.docsState,
         stdoutTail: current.stdoutTail,
         stderrTail: current.stderrTail,
         operatorExecution: current.operatorExecution,

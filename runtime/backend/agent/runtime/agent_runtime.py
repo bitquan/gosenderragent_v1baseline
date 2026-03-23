@@ -113,6 +113,24 @@ def _timeline_event(stage: str, event: str, summary: str, **fields: Any) -> dict
     return payload
 
 
+
+
+def _provider_identity_snapshot(agent_name: str, provider: Any) -> dict[str, Any]:
+    return {
+        'agent': str(agent_name or ''),
+        'provider': str(getattr(provider, 'provider_name', None) or getattr(provider, 'provider', None) or provider.__class__.__name__).strip(),
+        'model': str(getattr(provider, 'model', None) or getattr(provider, 'model_name', None) or '').strip(),
+    }
+
+
+def _append_stage_timeline(result: dict[str, Any], *, stage: str, event: str, summary: str, provider_snapshot: dict[str, Any] | None = None, **fields: Any) -> None:
+    payload = dict(fields)
+    if provider_snapshot:
+        payload['provider'] = provider_snapshot.get('provider')
+        payload['model'] = provider_snapshot.get('model')
+        payload['agent'] = provider_snapshot.get('agent')
+    result.setdefault('decision_timeline', []).append(_timeline_event(stage, event, summary, **payload))
+
 def _runtime_action(args: Any) -> str:
     if bool(getattr(args, "plan", False)):
         return "plan"
@@ -1179,6 +1197,15 @@ def run_ticket_runtime(
     validator_provider = route_provider_for_agent(provider, validator.name, root)
     repair_provider = route_provider_for_agent(provider, repairer.name, root)
     release_provider = route_provider_for_agent(provider, releaser.name, root)
+    result["provider_routing"] = {
+        'planner': _provider_identity_snapshot(planner.name, planner_provider),
+        'implementer': _provider_identity_snapshot(implementer.name, implementer_provider),
+        'validator': _provider_identity_snapshot(validator.name, validator_provider),
+        'repair': _provider_identity_snapshot(repairer.name, repair_provider),
+        'release': _provider_identity_snapshot(releaser.name, release_provider),
+    }
+    for route_name, route_payload in result["provider_routing"].items():
+        _append_stage_timeline(result, stage=route_name, event='route-selected', summary=f"{route_name} routed to {route_payload.get('provider') or 'provider'} {route_payload.get('model') or ''}".strip(), provider_snapshot=route_payload)
 
     planner_result = planner.run(
         adapter,
@@ -1211,6 +1238,7 @@ def run_ticket_runtime(
         strategy=audit.get("strategy"),
         proposed_files=list(plan.get("proposed_files", []) or []),
     )
+    _append_stage_timeline(result, stage="planning", event="planner-finished", summary=str(plan.get("model_summary") or audit.get("strategy") or "planner finished"), provider_snapshot=result.get("provider_routing", {}).get("planner"), confidence=audit.get("confidence"))
     runtime_context = _refresh_runtime_context(
         root,
         ticket_id=ticket_id,
@@ -1321,6 +1349,7 @@ def run_ticket_runtime(
         branch=branch,
         requested_execution=bool(should_exec),
     )
+    _append_stage_timeline(result, stage="implementation", event="implementer-finished", summary=str(result["execution"].get("execution_summary") or "implementer finished"), provider_snapshot=result.get("provider_routing", {}).get("implementer"), changed_count=len(created), should_execute=bool(should_exec))
     runtime_context = _refresh_runtime_context(
         root,
         ticket_id=ticket_id,
@@ -1356,6 +1385,7 @@ def run_ticket_runtime(
     result["agent_results"].append({"agent": validator.name, "ok": validator_result.get("ok", False)})
     result["validation"] = validator_result.get("validation", result["validation"])
     validation = result["validation"]
+    _append_stage_timeline(result, stage="validation", event="validator-finished", summary=f"validator ok={validation.get('ok', True)} commands={len(validation.get('commands', []) or [])}", provider_snapshot=result.get("provider_routing", {}).get("validator"), fingerprint_count=len(validation.get("fingerprints", []) or []))
     _record_agent_output(
         result,
         ticket_id=ticket_id,
@@ -1548,6 +1578,7 @@ def run_ticket_runtime(
     result["experiment_benchmark_summary"] = dict(release_result.get("experiment_benchmark_summary") or {})
     result["owner_experiment_summary"] = dict(release_result.get("owner_experiment_summary") or {})
     result["training_handoff"] = dict(release_result.get("training_handoff") or {})
+    _append_stage_timeline(result, stage="release", event="release-finished", summary="release agent finalized artifacts", provider_snapshot=result.get("provider_routing", {}).get("release"), artifact_count=len(result.get("runtime_artifacts", []) or []))
     _record_agent_output(
         result,
         ticket_id=ticket_id,
@@ -1686,6 +1717,10 @@ def run_ticket_runtime(
     result["runtime_result"]["owner_experiment_summary"] = dict(result.get("owner_experiment_summary") or {})
     result["runtime_result"]["training_handoff"] = dict(result.get("training_handoff") or {})
     result["runtime_result"]["memory_hints"] = dict(validation_memory_hints)
+    result["runtime_result"]["provider_routing"] = dict(result.get("provider_routing") or {})
+    result["runtime_result"]["runtime_timeline"] = list(result.get("decision_timeline") or [])
+    result["runtime_result"]["docs_state"] = dict(result.get("runtime_context", {}).get("docs_state") or {})
+    result["runtime_result"]["config_state"] = dict(result.get("runtime_context", {}).get("config_state") or {})
     result["runtime_result"]["summary"] = execution_summary
     result["operator_execution"] = build_operator_execution_result(
         task=str(desc or ticket_id or ""),

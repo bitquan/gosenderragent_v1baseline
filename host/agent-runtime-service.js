@@ -1,137 +1,21 @@
 'use strict';
 
 const { applySafetyLevelToRequest } = require('../core/autonomy');
+const {
+  TASK_LOOP_LANE_MAP,
+  normalizeTaskLoopLane,
+  normalizeTaskLoopMode,
+  resolveExecutionModelRole,
+  resolveModelProfileSelection,
+  resolveTaskLoopAction,
+  resolveTaskLoopLane,
+  taskModeFromAction,
+} = require('../core/engine-contract');
 const { applySafetyModeToRequest } = require('../core/safety-controller');
+const { createLab } = require('../core/labs');
 
 function isFinalRunState(state) {
   return state === 'pass' || state === 'fail' || state === 'skipped' || state === 'cancelled';
-}
-
-const TASK_LOOP_LANE_MAP = Object.freeze({
-  'chat-fast': { laneId: 'chat-fast', laneLabel: 'Chat fast', taskMode: 'chat', action: 'chat' },
-  'plan-reasoning': { laneId: 'plan-reasoning', laneLabel: 'Plan reasoning', taskMode: 'planner', action: 'plan' },
-  'code-main': { laneId: 'code-main', laneLabel: 'Code main', taskMode: 'coder', action: 'implement' },
-  'repair-fast': { laneId: 'repair-fast', laneLabel: 'Repair fast', taskMode: 'repair', action: 'repair' },
-  'review-verify': { laneId: 'review-verify', laneLabel: 'Review verify', taskMode: 'validator', action: 'run' },
-  'research-docs': { laneId: 'research-docs', laneLabel: 'Research docs', taskMode: 'research', action: 'research' },
-  'ops-summary': { laneId: 'ops-summary', laneLabel: 'Ops summary', taskMode: 'summarizer', action: 'summarize' },
-});
-
-function normalizeTaskLoopLane(laneId) {
-  const normalized = String(laneId || '').trim().toLowerCase();
-  return TASK_LOOP_LANE_MAP[normalized] ? normalized : 'code-main';
-}
-
-function resolveTaskLoopLane(laneId) {
-  return TASK_LOOP_LANE_MAP[normalizeTaskLoopLane(laneId)];
-}
-
-function taskModeFromAction(action) {
-  const normalized = String(action || '').trim().toLowerCase();
-  if (normalized === 'plan') {
-    return 'planner';
-  }
-  if (normalized === 'run') {
-    return 'validator';
-  }
-  if (normalized === 'repair') {
-    return 'repair';
-  }
-  if (normalized === 'summarize') {
-    return 'summarizer';
-  }
-  if (normalized === 'research') {
-    return 'research';
-  }
-  if (normalized === 'chat') {
-    return 'chat';
-  }
-  return 'coder';
-}
-
-function normalizeTaskLoopMode(mode) {
-  const normalized = String(mode || '').trim().toLowerCase();
-  if (normalized === 'repair') {
-    return 'repair';
-  }
-  if (normalized === 'research') {
-    return 'research';
-  }
-  if (normalized === 'chat') {
-    return 'chat';
-  }
-  if (normalized === 'planner') {
-    return 'planner';
-  }
-  if (normalized === 'validator') {
-    return 'validator';
-  }
-  if (normalized === 'summarizer') {
-    return 'summarizer';
-  }
-  return 'coder';
-}
-
-function resolveTaskLoopAction(mode) {
-  const normalized = normalizeTaskLoopMode(mode);
-  if (normalized === 'repair') {
-    return 'repair';
-  }
-  if (normalized === 'research') {
-    return 'research';
-  }
-  if (normalized === 'chat') {
-    return 'chat';
-  }
-  if (normalized === 'planner') {
-    return 'plan';
-  }
-  if (normalized === 'validator') {
-    return 'run';
-  }
-  if (normalized === 'summarizer') {
-    return '';
-  }
-  return 'implement';
-}
-
-function resolveExecutionModelRole({ taskMode = '', action = '', laneId = '' } = {}) {
-  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
-  if (normalizedLaneId === 'chat-fast' || normalizedLaneId === 'code-main' || normalizedLaneId === 'repair-fast') {
-    return 'workspace';
-  }
-  if (normalizedLaneId === 'plan-reasoning' || normalizedLaneId === 'review-verify' || normalizedLaneId === 'research-docs' || normalizedLaneId === 'ops-summary') {
-    return 'engine';
-  }
-  const normalizedTaskMode = normalizeTaskLoopMode(taskMode || taskModeFromAction(action));
-  if (['planner', 'validator', 'summarizer', 'research'].includes(normalizedTaskMode)) {
-    return 'engine';
-  }
-  return 'workspace';
-}
-
-function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', action = '', laneId = '' } = {}) {
-  const modelRole = resolveExecutionModelRole({ taskMode, action, laneId });
-  const workspace = {
-    modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-    modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
-    baseModel: String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-    baseProvider: String(assistantConfig.workspaceBaseProvider || assistantConfig.baseProvider || '').trim().toLowerCase(),
-    providerSource: String(assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
-  };
-  const engine = {
-    modelProfileId: String(assistantConfig.engineModelProfileId || workspace.modelProfileId || '').trim(),
-    modelDisplayName: String(assistantConfig.engineModelDisplayName || workspace.modelDisplayName || '').trim(),
-    baseModel: String(assistantConfig.engineBaseModel || workspace.baseModel || '').trim(),
-    baseProvider: String(assistantConfig.engineBaseProvider || workspace.baseProvider || '').trim().toLowerCase(),
-    providerSource: String(assistantConfig.engineProviderSource || workspace.providerSource || '').trim().toLowerCase(),
-  };
-  return {
-    modelRole,
-    workspace,
-    engine,
-    active: modelRole === 'engine' ? engine : workspace,
-  };
 }
 
 function normalizeRepairAction(action) {
@@ -510,7 +394,48 @@ class DesktopAgentRuntimeService {
   }
 
   handleRun(action, payload = {}) {
-    const request = this.buildRunRequest(action, payload);
+    let request = this.buildRunRequest(action, payload);
+    const safetyStatus = request.safetyStatus || request.hostBoundary?.safetyStatus || {};
+    const canAutoCreateLab = payload.autoCreateLab !== false
+      && !String(request.labRoot || '').trim()
+      && safetyStatus.restrictToLabs === true
+      && ['run', 'implement', 'repair', 'autopilot', 'self-improve'].includes(String(action || '').trim().toLowerCase());
+
+    if (request.blockedBySafety && canAutoCreateLab) {
+      try {
+        const autoLab = createLab(request.workspaceRoot, {
+          sourceRoot: request.workspaceRoot,
+          recipe: 'engine-self-host',
+          name: `engine-${String(action || 'run').trim().toLowerCase() || 'run'}`,
+          kind: 'scratch',
+          cloneStrategy: 'auto',
+        });
+        const nextPayload = {
+          ...payload,
+          workspaceRoot: request.workspaceRoot,
+          targetWorkspaceRoot: autoLab.labRoot,
+          workspace: autoLab.labRoot,
+          projectRoot: autoLab.labRoot,
+          labRoot: autoLab.labRoot,
+          autoCreatedLabRoot: autoLab.labRoot,
+          autoLabMetadata: autoLab,
+        };
+        request = this.buildRunRequest(action, nextPayload);
+        request.autoCreatedLab = true;
+        request.autoLabMetadata = autoLab;
+      } catch (error) {
+        return {
+          ok: false,
+          blocked: true,
+          blockedBy: 'safe-mode',
+          message: request.safeModeReason || 'Safe mode blocked this run.',
+          safetyStatus,
+          autoLabAttempted: true,
+          autoLabError: String(error?.message || error || 'Unable to create a lab workspace.'),
+        };
+      }
+    }
+
     if (request.blockedBySafety) {
       return {
         ok: false,
@@ -521,7 +446,16 @@ class DesktopAgentRuntimeService {
       };
     }
     this.runtime.setWorkspaceRoot(request.workspace);
-    return this.runtime.run(request);
+    const run = this.runtime.run(request);
+    if (run && request.autoCreatedLab && request.autoLabMetadata) {
+      return {
+        ...run,
+        autoCreatedLab: true,
+        autoLabMetadata: request.autoLabMetadata,
+        message: `${String(run.message || run.label || 'Engine run started.').trim()} Using lab ${request.autoLabMetadata.labRoot}.`,
+      };
+    }
+    return run;
   }
 
   startScheduler(payload = {}) {

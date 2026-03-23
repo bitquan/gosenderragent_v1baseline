@@ -572,3 +572,21 @@ __all__ = [
     "load_recent_runs",
     "select_hotspot",
 ]
+
+def build_closed_loop_evaluation_snapshot(project_root: Path) -> dict[str, Any]:
+    from backend.agent.core.memory_service import summarize_docs_ingestion_health, summarize_pattern_quality
+    recent_runs = load_recent_runs(project_root)
+    runtime_runs = [run for run in recent_runs if is_runtime_execution_run(run)]
+    pass_count = sum(1 for run in runtime_runs if _artifact_terminal_state(run) in {"pass", "succeeded"})
+    fail_count = sum(1 for run in runtime_runs if _artifact_terminal_state(run) in {"fail", "failed"})
+    blocked_count = sum(1 for run in runtime_runs if _artifact_terminal_state(run) in {"blocked"})
+    pattern_quality = summarize_pattern_quality(project_root)
+    docs_health = summarize_docs_ingestion_health(project_root)
+    return {
+        'pass_count': pass_count,
+        'fail_count': fail_count,
+        'blocked_count': blocked_count,
+        'pattern_quality': pattern_quality,
+        'docs_health': docs_health,
+        'summary': f'Runs: {pass_count} pass, {fail_count} fail, {blocked_count} blocked. {docs_health.get("summary", "")}'.strip(),
+    }

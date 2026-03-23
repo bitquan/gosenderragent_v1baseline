@@ -64,14 +64,25 @@ def run_training(project_root: Path, config: dict[str, Any], args: Any, run_mode
         return {"ok": True, "triggered": False, "command": []}
     cmd = build_training_command(
         project_root,
-        openai=bool(getattr(args, "openai", False)),
-        fine_tune_model=getattr(args, "fine_tune_model", None),
+        openai=bool(getattr(args, "openai", False) or config.get("assistant_training_openai", False)),
+        fine_tune_model=getattr(args, "fine_tune_model", None) or config.get("assistant_training_fine_tune_model"),
+        local_export_format=str(config.get("assistant_training_local_export_format") or "").strip() or None,
+        local_base_model=str(config.get("assistant_training_local_base_model") or config.get("assistant_training_ollama_model") or "").strip() or None,
         min_examples=int(config.get("assistant_training_min_examples", 2) or 2),
         min_log_examples=int(config.get("assistant_training_min_log_examples", 1) or 1),
         min_artifact_examples=int(config.get("assistant_training_min_artifact_examples", 1) or 1),
         fail_on_quality_gate=bool(config.get("assistant_training_fail_on_quality_gate", False)),
     )
     proc = subprocess.run(cmd, cwd=str(project_root), capture_output=True, text=True, check=False)
+    summary_bits = []
+    if any(part == "--openai" for part in cmd):
+        summary_bits.append("OpenAI fine-tune/export enabled")
+    local_export_format = next((cmd[index + 1] for index, part in enumerate(cmd[:-1]) if part == "--local-export-format"), "")
+    local_base_model = next((cmd[index + 1] for index, part in enumerate(cmd[:-1]) if part == "--local-base-model"), "")
+    if local_export_format:
+        summary_bits.append(f"local export: {local_export_format}")
+    if local_base_model:
+        summary_bits.append(f"base model: {local_base_model}")
     return {
         "ok": proc.returncode == 0,
         "triggered": True,
@@ -79,4 +90,5 @@ def run_training(project_root: Path, config: dict[str, Any], args: Any, run_mode
         "stdout": proc.stdout,
         "stderr": proc.stderr,
         "returncode": proc.returncode,
+        "summary": "; ".join(summary_bits) if summary_bits else "Training executed with the configured defaults.",
     }

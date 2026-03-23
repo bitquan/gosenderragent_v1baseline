@@ -1437,6 +1437,8 @@ function buildRoadmapArea(readiness = {}, autonomy = {}, selfImprovement = {}, l
   const autonomyProof = acceptanceArea?.autonomyProof && typeof acceptanceArea.autonomyProof === 'object'
     ? acceptanceArea.autonomyProof
     : {};
+  const acceptanceStatus = String(acceptanceArea?.status || '').trim().toLowerCase();
+  const acceptanceBlocked = acceptanceStatus === 'fail' || acceptanceStatus === 'blocked';
   const phaseScorecards = Array.isArray(readiness.phaseScorecards) ? readiness.phaseScorecards : [];
   const latestModelLabel = String(latestRunSummary.modelDisplayName || latestRunSummary.modelProfileId || '').trim();
   const latestTask = String(latestRunSummary.task || '').trim();
@@ -1444,18 +1446,29 @@ function buildRoadmapArea(readiness = {}, autonomy = {}, selfImprovement = {}, l
     ? `${latestModelLabel || 'Model'} handled "${latestTask}" on ${latestRunSummary.laneLabel || 'the current lane'} (${latestRunSummary.status || 'unknown'}).`
     : 'No engine-assisted execution proof is recorded yet for this workspace.';
   const dailyQuotaProof = buildDailyQuotaProof(readiness, autonomy, selfImprovement, validation, taskHubDaily);
+  const derivedStatus = acceptanceBlocked
+    ? 'blocked'
+    : String(phaseGate.status || hardGate.status || readiness.phaseStatus || readiness.status || 'unknown').trim().toLowerCase();
+  const derivedSummary = acceptanceBlocked
+    ? shortText(
+        acceptanceArea.blockerSummary
+        || acceptanceArea.summary
+        || acceptanceArea.nextSafeAction
+        || 'Engine acceptance is still blocking roadmap progress.',
+      )
+    : shortText(
+        phaseCloseout.summary
+        || phaseGate.summary
+        || readiness.phaseProof
+        || readiness.phaseSummary
+        || readiness.summary
+        || hardGate.summary
+        || dailyQuotaProof.doNotWidenYetBecause
+        || 'Roadmap status is available.',
+      );
   return {
-    status: String(phaseGate.status || hardGate.status || readiness.phaseStatus || readiness.status || 'unknown').trim().toLowerCase(),
-    summary: shortText(
-      phaseCloseout.summary
-      || phaseGate.summary
-      || readiness.phaseProof
-      || readiness.phaseSummary
-      || readiness.summary
-      || hardGate.summary
-      || dailyQuotaProof.doNotWidenYetBecause
-      || 'Roadmap status is available.',
-    ),
+    status: derivedStatus,
+    summary: derivedSummary,
     currentPhase: {
       id: String(currentPhase.id || '').trim(),
       number: Number(currentPhase.number || 0),

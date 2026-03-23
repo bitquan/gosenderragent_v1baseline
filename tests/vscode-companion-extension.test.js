@@ -13,6 +13,7 @@ const {
   buildSelfImprovementProofViewModel,
   buildQueuedFollowupViewModel,
   buildChatModeViewModel,
+  buildGroundedReplyViewModel,
   buildRepairObjective,
   buildReviewBundleViewModel,
   buildTaskObjective,
@@ -201,6 +202,12 @@ test('buildSelfImprovementProofViewModel exposes one readable supervised self-im
 });
 
 test('buildChatModeViewModel maps the shared runtime lane into a readable companion mode summary', () => {
+  const autoView = buildChatModeViewModel({
+    chatMode: 'auto',
+    effectiveChatMode: 'plan',
+    laneId: 'plan-reasoning',
+    taskMode: 'plan-reasoning',
+  });
   const planView = buildChatModeViewModel({
     laneId: 'plan-reasoning',
     taskMode: 'plan-reasoning',
@@ -210,14 +217,34 @@ test('buildChatModeViewModel maps the shared runtime lane into a readable compan
     taskMode: 'code-main',
   });
 
+  assert.equal(autoView.mode, 'auto');
+  assert.equal(autoView.effectiveMode, 'plan');
+  assert.match(autoView.meta, /effective: plan/i);
   assert.equal(planView.mode, 'plan');
   assert.match(planView.meta, /Scoped planning/i);
   assert.equal(editView.mode, 'edit');
   assert.match(editView.meta, /confirmation before execution/i);
 });
 
+test('buildGroundedReplyViewModel reuses the shared grounded Ask and Plan path', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const view = buildGroundedReplyViewModel({
+    repoRoot,
+    workspaceRoot: repoRoot,
+    lastObjective: 'Plan the safest next slice for the routing drift.',
+  }, {
+    task: 'Plan the safest next slice for the routing drift.',
+  }, {
+    mode: 'plan',
+  });
+
+  assert.equal(view.label, 'Grounded plan');
+  assert.match(view.reply, /safest next slice/i);
+});
+
 test('companion workbench includes git handoff controls and mode visibility', () => {
   assert.match(extensionSource, /Chat mode/);
+  assert.match(extensionSource, /Grounded reply/);
   assert.match(extensionSource, /Git/);
   assert.match(extensionSource, /Open Source Control/);
   assert.match(extensionSource, /Open Git history/);

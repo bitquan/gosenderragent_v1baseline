@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from backend.agent.core.config_loader import load_project_config
+from backend.agent.core.config_loader import load_project_config, validate_config_coherence
 
 
 def _load_cfg(project_root: Path) -> dict[str, Any]:
@@ -401,3 +401,28 @@ def assistant_tmp_dir(project_root: Path) -> Path:
     if root is not None:
         return root / "tmp"
     return project_root / "tmp"
+
+
+def assistant_docs_registry_dir(project_root: Path) -> Path:
+    explicit = _cfg_or_env_path(project_root, env_key="GOSENDERR_ASSISTANT_DOCS_REGISTRY_DIR", cfg_key="assistant_docs_registry_dir")
+    if explicit is not None:
+        return explicit
+    return assistant_runs_dir(project_root) / "trusted_docs"
+
+
+def assistant_docs_cache_dir(project_root: Path) -> Path:
+    explicit = _cfg_or_env_path(project_root, env_key="GOSENDERR_ASSISTANT_DOCS_CACHE_DIR", cfg_key="assistant_docs_cache_dir")
+    if explicit is not None:
+        return explicit
+    return assistant_docs_registry_dir(project_root) / "cache"
+
+
+def assistant_docs_import_queue_path(project_root: Path) -> Path:
+    explicit = _cfg_or_env_path(project_root, env_key="GOSENDERR_ASSISTANT_DOCS_IMPORT_QUEUE_PATH", cfg_key="assistant_docs_import_queue_path")
+    if explicit is not None:
+        return explicit
+    return assistant_docs_registry_dir(project_root) / "import_queue.json"
+
+
+def assistant_config_validation(project_root: Path) -> dict[str, Any]:
+    return validate_config_coherence(project_root)

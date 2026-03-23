@@ -90,3 +90,25 @@ test('buildApprovalQueue only honors keyed decisions for protected BAT handoffs'
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test('buildApprovalQueue can skip plain changed files when only manual review items should count', () => {
+  const queue = buildApprovalQueue({
+    workspaceRoot: '/workspace',
+    review: {
+      changedFiles: [
+        { path: 'renderer/app.js', status: 'modified' },
+        { path: 'core/engine.js', status: 'modified' },
+      ],
+      failingLocations: [],
+      recentArtifacts: [],
+    },
+    recentRuns: [],
+    decisions: {},
+    includeChangedFiles: false,
+    approvalRequiredPath: () => true,
+    collectRuntimeApprovalSignals: () => [],
+    collectProtectedBatReviewSignals: () => [],
+  });
+
+  assert.equal(queue.length, 0);
+});

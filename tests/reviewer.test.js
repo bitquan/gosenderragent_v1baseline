@@ -30,6 +30,27 @@ test('reviewer requests a revision when the latest run failed', () => {
   assert.ok(summary.revisionCandidates.some((candidate) => String(candidate.source || '') === 'reviewer-docs'));
 });
 
+test('reviewer does not misclassify runtime startup failures as code revisions', () => {
+  const summary = buildReviewerSummary('/workspace', {
+    review: {
+      changedFiles: [{ path: 'src/app.ts', status: 'M' }],
+      failingLocations: [],
+      recentArtifacts: [],
+    },
+    latestRun: {
+      state: 'fail',
+      label: 'Repair latest failed run',
+      stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+    },
+    approvalQueue: [],
+  });
+
+  assert.equal(summary.status, 'ready');
+  assert.match(summary.summary, /engine launch issue/i);
+  assert.equal(summary.revisionCandidates.length, 0);
+  assert.ok(summary.notes.some((note) => /engine launch issue/i.test(String(note.title || ''))));
+});
+
 test('reviewer stays in review mode when only approvals are pending', () => {
   const summary = buildReviewerSummary('/workspace', {
     review: {

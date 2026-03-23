@@ -32,6 +32,14 @@ function buildCandidateId(prefix, value = '') {
   return `${prefix}:${String(value || '').trim().toLowerCase() || 'item'}`;
 }
 
+function looksInfrastructureFailure(...values) {
+  const haystack = values.map((value) => String(value || '').trim()).filter(Boolean).join(' \n').toLowerCase();
+  if (!haystack) {
+    return false;
+  }
+  return /could not start the python runtime|spawn .*py\.exe enonent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+}
+
 function looksDocsSensitiveReviewContext(targetPath = '', detail = '') {
   const haystack = `${String(targetPath || '')} ${String(detail || '')}`.toLowerCase();
   return /(config|settings|setup|install|runtime|extension|vscode|electron|python|schema|migration|api|provider|model|autonomy|learning|training)/.test(haystack);
@@ -101,26 +109,45 @@ function buildReviewerSummary(targetWorkspaceRoot, payload = {}) {
   };
 
   if (String(latestRun.state || latestRun.runtimeState || latestRun.status || '').trim().toLowerCase() === 'fail') {
-    status = 'needs-revision';
-    summary = 'Reviewer found a failed run that should be repaired before approval.';
-    nextAction = 'Create a revision task and repair the failing validation path first.';
-    notes.push({
-      level: 'critical',
-      title: 'Latest run failed',
-      detail: clipText(latestRun.blockedReason || latestRun.message || latestRun.label || latestRun.runtimeLabel || 'The latest run failed validation.'),
-      path: String(failingLocations[0]?.path || ''),
-    });
-    const firstFailure = failingLocations[0] || {};
-    pushCandidate({
-      id: buildCandidateId('repair-failed-run', firstFailure.path || latestRun.runId || latestRun.id || latestRun.label),
-      kind: 'revision',
-      title: `Repair ${basenameLabel(firstFailure.path) || 'the latest failed run'}`,
-      objective: clipText(firstFailure.message || latestRun.blockedReason || 'Repair the latest failed validation path and rerun the relevant checks.', 140),
-      summary: 'Reviewer detected a failing run and wants a bounded repair task before promotion.',
-      targetPaths: firstFailure.path ? [String(firstFailure.path)] : [],
-      riskClass: 'medium',
-      source: 'reviewer',
-    });
+    const latestFailureDetail = latestRun.blockedReason || latestRun.stderrTail || latestRun.message || latestRun.label || latestRun.runtimeLabel || 'The latest run failed validation.';
+    const latestFailureLooksInfra = looksInfrastructureFailure(
+      latestFailureDetail,
+      latestRun.stdoutTail,
+      latestRun.logTail,
+    );
+    if (latestFailureLooksInfra) {
+      notes.push({
+        level: 'warn',
+        title: 'Engine launch issue',
+        detail: clipText(latestFailureDetail),
+        path: '',
+      });
+      if (status === 'ready') {
+        summary = 'Reviewer is clear; the latest blocker is an engine launch issue, not a code-review failure.';
+        nextAction = 'Repair the engine/runtime startup path or rerun the task from a healthy runtime before asking for another revision pass.';
+      }
+    } else {
+      status = 'needs-revision';
+      summary = 'Reviewer found a failed run that should be repaired before approval.';
+      nextAction = 'Create a revision task and repair the failing validation path first.';
+      notes.push({
+        level: 'critical',
+        title: 'Latest run failed',
+        detail: clipText(latestFailureDetail),
+        path: String(failingLocations[0]?.path || ''),
+      });
+      const firstFailure = failingLocations[0] || {};
+      pushCandidate({
+        id: buildCandidateId('repair-failed-run', firstFailure.path || latestRun.runId || latestRun.id || latestRun.label),
+        kind: 'revision',
+        title: `Repair ${basenameLabel(firstFailure.path) || 'the latest failed run'}`,
+        objective: clipText(firstFailure.message || latestRun.blockedReason || 'Repair the latest failed validation path and rerun the relevant checks.', 140),
+        summary: 'Reviewer detected a failing run and wants a bounded repair task before promotion.',
+        targetPaths: firstFailure.path ? [String(firstFailure.path)] : [],
+        riskClass: 'medium',
+        source: 'reviewer',
+      });
+    }
   }
 
   if (failingLocations.length > 0) {

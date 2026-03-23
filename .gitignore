@@ -9,3 +9,6 @@ __pycache__/
 tmp-*.js
 tmp-*.json
 WINDOWS_APP/win-unpacked/
+docs/assistant_runs/
+.assistant_checkpoint_merges/
+.assistant_dev_data/

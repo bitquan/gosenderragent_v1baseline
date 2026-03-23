@@ -14,6 +14,7 @@ const {
 } = require('./acceptance-report');
 const { recordBenchmarkRun } = require('./benchmarks');
 const { LearningJournalService } = require('./learning-journal');
+const { buildAutonomyGraduationPlan } = require('./autonomous-actions');
 const { runLabRecipe } = require('./labs');
 const { listPromotionState } = require('./promotions');
 const { completeTaskRun, createTask, recordTaskRun } = require('./task-hub');
@@ -774,6 +775,8 @@ async function runEngineAcceptanceSuite(workspaceRoot, options = {}) {
     checks,
     training,
   });
+  const autonomyLadder = buildAutonomyGraduationPlan(autonomyProof, { autonomyLadder: { stage: Math.max(1, Number((selfImprovementProof && selfImprovementProof.safeCount) || 1)), difficulty_ceiling: Math.max(1, Number((selfImprovementProof && selfImprovementProof.safeCount) || 1)) } });
+
   const report = {
     ok: summary.overallStatus !== 'fail',
     runId,
@@ -792,6 +795,7 @@ async function runEngineAcceptanceSuite(workspaceRoot, options = {}) {
     autonomyProof,
     selfImprovementProof,
     builderProof,
+    autonomyLadder,
     overallStatus: summary.overallStatus,
     counts: summary.counts,
     summary: summary.summary,

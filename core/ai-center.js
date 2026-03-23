@@ -116,7 +116,7 @@ const MODEL_EXECUTION_ROLE_DEFAULTS = Object.freeze({
 });
 
 const CAPABILITY_LANE_PROFILE_ROLE_MAP = Object.freeze({
-  'chat-fast': 'workspace',
+  'chat-fast': 'engine',
   'code-main': 'workspace',
   'repair-fast': 'workspace',
   'plan-reasoning': 'engine',
@@ -147,6 +147,9 @@ function normalizeWrappedProfileRole(value) {
 
 function capabilityLaneTaskMode(laneId) {
   const normalized = String(laneId || '').trim().toLowerCase();
+  if (normalized === 'chat-fast') {
+    return 'planner';
+  }
   if (normalized === 'plan-reasoning') {
     return 'planner';
   }
@@ -188,7 +191,7 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
   const localModel = String(options.localModel || 'qwen2.5-coder:7b').trim() || 'qwen2.5-coder:7b';
   const benchmarkModel = String(options.benchmarkModel || localModel).trim() || localModel;
   const remoteProvider = String(options.remoteProvider || 'openai').trim().toLowerCase() || 'openai';
-  const remoteModel = String(options.remoteModel || options.modelLabel || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const remoteModel = String(options.remoteModel || options.modelLabel || 'gpt-5-mini').trim() || 'gpt-5-mini';
   const preferRemote = ['planner', 'validator', 'summarizer'].includes(taskMode) && currentProvider !== 'ollama';
 
   if (taskMode === 'planner') {
@@ -275,7 +278,7 @@ function normalizeWrappedProfile(value = {}, options = {}) {
     localModel: baseModel,
     benchmarkModel: options.benchmarkModel || baseModel,
     remoteProvider: options.remoteProvider || 'openai',
-    remoteModel: options.remoteModel || options.modelLabel || 'gpt-4o-mini',
+    remoteModel: options.remoteModel || options.modelLabel || 'gpt-5-mini',
     modelLabel: options.modelLabel || baseModel,
   });
   return {
@@ -333,7 +336,7 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
   const remoteAvailable = selectedRemoteProvider?.available === true;
   const baseModel = ['ollama', 'local'].includes(currentProvider)
     ? String(settings.trainingOllamaModel || settings.model || 'qwen2.5-coder:7b').trim() || 'qwen2.5-coder:7b'
-    : String(settings.aiRemoteModel || settings.model || remotePreset.models?.[0]?.id || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+    : String(settings.aiRemoteModel || settings.model || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim() || 'gpt-5-mini';
   const benchmarkModel = String(benchmarkSummary[0]?.model || baseModel).trim() || baseModel;
   const defaultWorkspaceProfile = normalizeWrappedProfile({
     id: 'gs-dev-1-default',
@@ -347,7 +350,7 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
     providerSource: currentProvider,
     benchmarkModel,
     remoteProvider,
-    remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-4o-mini').trim(),
+    remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim(),
     modelLabel: String(settings.model || baseModel).trim(),
   });
   const defaultEngineProvider = remoteAvailable ? remoteProvider : inferProviderForModel(benchmarkModel, currentProvider);
@@ -383,7 +386,7 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
       providerSource: currentProvider,
       benchmarkModel,
       remoteProvider,
-      remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-4o-mini').trim(),
+      remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim(),
       modelLabel: String(settings.model || baseModel).trim(),
     });
     if (!profiles.some((item) => item.id === normalized.id)) {
@@ -431,12 +434,13 @@ const REMOTE_PROVIDER_PRESETS = Object.freeze([
     id: 'openai',
     label: 'OpenAI',
     summary: 'Official OpenAI-compatible remote route for hard reasoning, review, and vision follow-ups.',
-    baseUrl: 'https://api.openai.com/v1',
-    apiKeyName: 'OPENAI_API_KEY',
-    models: [
-      { id: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-      { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-    ],
+      baseUrl: 'https://api.openai.com/v1',
+      apiKeyName: 'OPENAI_API_KEY',
+      models: [
+        { id: 'gpt-5-mini', label: 'GPT-5 Mini' },
+        { id: 'gpt-5.4', label: 'GPT-5.4' },
+        { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+      ],
   },
   {
     id: 'openrouter',
@@ -1065,7 +1069,7 @@ function buildLaneAssignments(settings = {}, benchmarkSummary = [], providers = 
   const currentProvider = resolveCurrentProvider(currentRuntime, providers, settings);
   const currentModel = ['ollama', 'local'].includes(currentProvider)
     ? (String(settings.trainingOllamaModel || settings.model || '').trim() || 'qwen2.5-coder:7b')
-    : (String(settings.aiRemoteModel || settings.model || selectedRemotePreset.models?.[0]?.id || 'gpt-4o-mini').trim() || 'gpt-4o-mini');
+    : (String(settings.aiRemoteModel || settings.model || selectedRemotePreset.models?.[0]?.id || 'gpt-5-mini').trim() || 'gpt-5-mini');
   const routingPolicy = normalizeRoutingPolicy(settings.aiRoutingPolicy, settings.aiProfile || 'hybrid-default');
   const bestModel = benchmarkSummary[0]?.model || currentModel;
   const bestProvider = inferProviderForModel(bestModel, currentProvider);
@@ -1405,6 +1409,7 @@ function buildModelProvisioningStatus(options = {}) {
 }
 
 function buildAiStatus(options = {}) {
+  const workspaceRoot = String(options.workspaceRoot || '').trim();
   const settings = options.settings && typeof options.settings === 'object' ? options.settings : {};
   const tuningStatus = options.tuningStatus && typeof options.tuningStatus === 'object' ? options.tuningStatus : {};
   const benchmarkRuns = Array.isArray(options.benchmarkRuns) ? options.benchmarkRuns : [];
@@ -1451,12 +1456,17 @@ function buildAiStatus(options = {}) {
   const capabilityLanes = buildLaneAssignments(settings, benchmarkSummary, providers, tuningStatus, wrappedProfiles);
   const modelRoles = buildExplicitModelRoles(capabilityLanes, wrappedProfiles, provisioning);
   const localModelInventory = buildLocalModelInventory({
+    workspaceRoot,
     settings,
     telemetry,
     wrappedProfiles,
     foundryStatus: options.modelFoundry,
     benchmarkSummary,
   });
+  const activeLocalInventoryEntry = localModelInventory.entries.find((entry) => (
+    entry.kind === 'wrapped-profile'
+    && String(entry.wrappedProfileId || '').trim() === String(activeWrappedProfile?.id || '').trim()
+  )) || null;
   const routingPolicies = AI_ROUTING_POLICIES.map((policy) => ({
     ...policy,
     active: policy.id === normalizeRoutingPolicy(settings.aiRoutingPolicy, profileId),
@@ -1478,6 +1488,7 @@ function buildAiStatus(options = {}) {
     wrappedProfiles,
     taskModes: GS_DEV1_TASK_MODES,
     current: {
+      workspaceRoot,
       runtime: String(settings.runtime || 'ollama').trim().toLowerCase() || 'ollama',
       provider: currentProvider,
       modelLabel: String(settings.model || '').trim(),
@@ -1497,6 +1508,10 @@ function buildAiStatus(options = {}) {
       workspaceWrappedProfile,
       engineWrappedProfileId: engineWrappedProfile?.id || '',
       engineWrappedProfile,
+      workerFamily: String(activeLocalInventoryEntry?.workerFamily || localModelInventory.workerFamilies?.primary || '').trim(),
+      workerVariantId: String(activeLocalInventoryEntry?.workerVariantId || '').trim(),
+      workerVariantType: String(activeLocalInventoryEntry?.workerVariantType || '').trim(),
+      promotionPolicy: String(localModelInventory.promotionPolicy || '').trim(),
     },
     availableModels,
     modelCatalog,
@@ -1517,10 +1532,7 @@ function buildAiStatus(options = {}) {
     gsDev1: {
       wrappedProfiles,
       activeWrappedProfile,
-      localInventoryEntry: localModelInventory.entries.find((entry) => (
-        entry.kind === 'wrapped-profile'
-        && String(entry.wrappedProfileId || '').trim() === String(activeWrappedProfile?.id || '').trim()
-      )) || null,
+      localInventoryEntry: activeLocalInventoryEntry,
       benchmarkReady: benchmarkSummary.length > 0,
       benchmarkLeader: benchmarkSummary[0] || null,
       datasetExportEligible: activeWrappedProfile?.datasetExport?.eligible === true,

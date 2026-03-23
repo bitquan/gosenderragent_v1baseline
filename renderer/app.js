@@ -21839,7 +21839,7 @@
       messages: [{
         id: makeId("msg"),
         role: "system",
-        text: "Model-connected workbench ready. Ask for planning, implementation, repair, review, or a direct coding task.",
+        text: "Model-connected workbench ready. Use Ask for conversation, Plan for scoped next steps, Edit for change prep, or Agent for bounded execution.",
         createdAt
       }]
     };
@@ -21882,13 +21882,29 @@
     const latest = [...messages].reverse().find((message) => message.role === "assistant" || message.role === "system");
     return String(latest?.id || "").trim();
   }
+  function normalizeChatPath(value) {
+    return String(value || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  }
+  function isIgnoredChatPath(relativePath) {
+    const normalized = normalizeChatPath(relativePath).toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (normalized.startsWith("docs/assistant_runs/") || normalized.startsWith("assistant_runs/") || normalized.includes("/assistant_runs/")) {
+      return true;
+    }
+    if (normalized.startsWith("__pycache__/") || normalized.includes("/__pycache__/") || normalized.startsWith(".pytest_cache/") || normalized.includes("/.pytest_cache/") || normalized.startsWith(".mypy_cache/") || normalized.includes("/.mypy_cache/") || normalized.startsWith(".ruff_cache/") || normalized.includes("/.ruff_cache/") || normalized.startsWith(".cache/") || normalized.includes("/.cache/") || normalized.startsWith("node_modules/") || normalized.includes("/node_modules/") || normalized.startsWith(".venv/") || normalized.includes("/.venv/") || normalized.startsWith("venv/") || normalized.includes("/venv/")) {
+      return true;
+    }
+    return normalized.endsWith(".pyc") || normalized.endsWith(".pyo");
+  }
   function readChangedFileItems(snapshot) {
     const review = snapshot?.review || {};
     if (Array.isArray(review.changedFiles)) {
-      return review.changedFiles;
+      return review.changedFiles.filter((item) => !isIgnoredChatPath(item?.path || item));
     }
     const changedFiles = Array.isArray(snapshot?.changedFiles) ? snapshot.changedFiles : [];
-    return changedFiles.map((entry) => ({ path: String(entry).slice(3).trim(), status: "modified" }));
+    return changedFiles.map((entry) => ({ path: String(entry).slice(3).trim(), status: "modified" })).filter((item) => !isIgnoredChatPath(item?.path || item));
   }
   function readApprovalItems(snapshot) {
     const queue = snapshot?.manager?.approvalQueue;
@@ -21904,6 +21920,8 @@
     const approvals = readApprovalItems(snapshot);
     const changedFiles = readChangedFileItems(snapshot);
     const taskRuns = Array.isArray(snapshot?.taskHub?.runs) ? snapshot?.taskHub?.runs : [];
+    const tasks = Array.isArray(snapshot?.taskHub?.tasks) ? snapshot.taskHub.tasks : [];
+    const tasksById = /* @__PURE__ */ new Map(tasks.map((task) => [String(task?.id || ""), task]));
     const reviewer = snapshot?.reviewer && typeof snapshot.reviewer === "object" ? snapshot.reviewer : {};
     const regression = snapshot?.regression && typeof snapshot.regression === "object" ? snapshot.regression : {};
     const updates = snapshot?.updates || {};
@@ -21916,6 +21934,7 @@
         reasons.slice(0, 2).forEach((reason, index) => {
           items.push({
             id: `safety-${reason.id || index}`,
+            dedupeKey: `safety:${reason.id || index}:${safeMode.active ? "active" : "watch"}`,
             severity: safeMode.active ? "critical" : "warn",
             title: String(reason.title || "Safety notice"),
             detail: String(reason.detail || safeMode.summary || "Safety guardrails are active."),
@@ -21927,6 +21946,7 @@
       } else {
         items.push({
           id: "safety-summary",
+          dedupeKey: `safety:${safeMode.active ? "active" : "watch"}:summary`,
           severity: safeMode.active ? "critical" : "warn",
           title: safeMode.active ? "Safe mode is active" : "Safety watch is active",
           detail: String(safeMode.summary || "Safety guardrails are monitoring this workspace."),
@@ -21939,6 +21959,7 @@
     approvals.slice(0, 6).forEach((item, index) => {
       items.push({
         id: `approval-${item.approvalKey || item.path || index}`,
+        dedupeKey: `approval:${item.approvalKey || normalizeChatPath(item.path || "") || index}`,
         severity: "warn",
         title: shortPath(item.path) || `Approval ${index + 1}`,
         detail: `${item.ticket ? `BAT<${item.ticket}> \u2022 ` : ""}${item.nextAction || item.source || "Needs review"}`,
@@ -21948,19 +21969,45 @@
         actionLabel: "Open file"
       });
     });
-    taskRuns.filter((item) => ["fail", "blocked", "cancelled"].includes(String(item.runtimeState || item.state || item.status || "").toLowerCase())).slice(0, 3).forEach((item, index) => {
+    const taskRunBuckets = /* @__PURE__ */ new Map();
+    taskRuns.forEach((item, index) => {
+      const runtimeState = String(item.runtimeState || item.state || item.status || "").toLowerCase();
+      if (!["fail", "blocked", "cancelled"].includes(runtimeState)) {
+        return;
+      }
+      const linkedTask = tasksById.get(String(item.taskId || "")) || null;
+      const taskStatus = String(linkedTask?.status || "").toLowerCase();
+      if (["completed", "archived"].includes(taskStatus)) {
+        return;
+      }
+      const taskObjective = String(linkedTask?.title || linkedTask?.objective || item.task || item.title || item.label || "").trim().toLowerCase();
+      const taskKey = String(item.taskId || taskObjective || item.runId || item.id || index).trim();
+      const current = taskRunBuckets.get(taskKey);
+      const currentTime = Date.parse(String(current?.updatedAt || current?.endedAt || current?.startedAt || 0)) || 0;
+      const nextTime = Date.parse(String(item.updatedAt || item.endedAt || item.startedAt || 0)) || 0;
+      if (!current || nextTime >= currentTime) {
+        taskRunBuckets.set(taskKey, item);
+      }
+    });
+    Array.from(taskRunBuckets.values()).slice(0, 3).forEach((item, index) => {
       items.push({
         id: `run-${item.runId || item.id || index}`,
+        dedupeKey: `run:${String(item.taskId || item.task || item.label || item.runId || item.id || index).trim().toLowerCase()}`,
         severity: String(item.runtimeState || item.state || item.status || "").toLowerCase() === "blocked" ? "warn" : "critical",
         title: String(item.runtimeLabel || item.label || item.title || "Run needs attention"),
         detail: summarizeText(String(item.blockedReason || item.message || item.summary || item.status || "Run needs review."), 140),
-        targetTab: "inbox"
+        targetTaskId: String(item.taskId || ""),
+        targetRunId: String(item.runId || item.id || ""),
+        openModule: "monitor",
+        targetTab: "runs",
+        actionLabel: "Open run"
       });
     });
     const reviewerStatus = String(reviewer.status || "").trim().toLowerCase();
     if (["needs-review", "needs-revision"].includes(reviewerStatus)) {
       items.push({
         id: "reviewer-summary",
+        dedupeKey: `reviewer:${reviewerStatus}:${String(reviewer.summary || reviewer.nextAction || "").trim().toLowerCase()}`,
         severity: reviewerStatus === "needs-revision" ? "warn" : "info",
         title: reviewerStatus === "needs-revision" ? "Reviewer wants a revision pass" : "Reviewer wants a manual review pass",
         detail: String(reviewer.summary || reviewer.nextAction || "Open Monitor to inspect the Test Bench review results."),
@@ -21973,6 +22020,7 @@
     if (regressionCount > 0) {
       items.push({
         id: "regression-candidates",
+        dedupeKey: `regression:${regressionCount}`,
         severity: "info",
         title: `${regressionCount} regression candidate${regressionCount === 1 ? "" : "s"} ready`,
         detail: String(regression.summary || "Open Monitor to turn the latest fix into replayable coverage."),
@@ -21987,6 +22035,7 @@
     if (pendingCandidates > 0) {
       items.push({
         id: "learning-pending",
+        dedupeKey: `learning:${pendingCandidates}`,
         severity: "info",
         title: `${pendingCandidates} learning candidate${pendingCandidates === 1 ? "" : "s"} ready`,
         detail: "Review the change journal and training handoff before promoting new self-improvement patterns.",
@@ -22000,6 +22049,7 @@
       const newestCandidate = readyPromotionCandidates[0] || {};
       items.push({
         id: `promotion-${newestCandidate.id || "candidate"}`,
+        dedupeKey: `promotion:${newestCandidate.id || newestCandidate.name || readyPromotionCandidates.length}`,
         severity: "info",
         title: `${readyPromotionCandidates.length} candidate ring item${readyPromotionCandidates.length === 1 ? "" : "s"} ready`,
         detail: `${newestCandidate.name || newestCandidate.id || "Candidate"} is ready for monitored promotion.`,
@@ -22013,6 +22063,7 @@
     if (["failed", "rolled-back"].includes(updateState) || hasUpdates) {
       items.push({
         id: "updates-status",
+        dedupeKey: `updates:${updateState || (hasUpdates ? "available" : "idle")}`,
         severity: updateState === "failed" ? "critical" : "info",
         title: updateState === "failed" ? "Update flow needs review" : "Workspace update available",
         detail: String(updates?.workspace?.message || updates?.message || "A new update is available."),
@@ -22023,6 +22074,7 @@
     if (["fail", "warn"].includes(acceptanceStatus)) {
       items.push({
         id: "engine-acceptance-status",
+        dedupeKey: `acceptance:${acceptanceStatus}`,
         severity: acceptanceStatus === "fail" ? "critical" : "warn",
         title: acceptanceStatus === "fail" ? "Engine acceptance needs review" : "Engine acceptance raised warnings",
         detail: String(acceptance?.summary || acceptance?.nextAction || "Open Monitor to review the latest engine acceptance report."),
@@ -22034,6 +22086,7 @@
     input.benchmarkEvents.filter((item) => ["fail", "failed", "warn", "warning"].includes(String(item.state || item.status || "").toLowerCase())).slice(0, 2).forEach((item, index) => {
       items.push({
         id: `benchmark-${item.runId || item.id || index}`,
+        dedupeKey: `benchmark:${item.runId || item.id || index}`,
         severity: String(item.state || item.status || "").toLowerCase().startsWith("fail") ? "critical" : "warn",
         title: String(item.label || item.name || "Benchmark signal"),
         detail: summarizeText(String(item.message || item.summary || "Benchmark emitted a warning."), 140),
@@ -22043,6 +22096,7 @@
     if (items.length === 0 && changedFiles.length > 0) {
       items.push({
         id: "changed-files",
+        dedupeKey: `changed-files:${changedFiles.length}`,
         severity: "info",
         title: `${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"}`,
         detail: "Open the file inspector to review the latest workspace edits.",
@@ -22050,7 +22104,48 @@
         actionLabel: "Open files"
       });
     }
-    return items.slice(0, 12);
+    return dedupeInboxItems(items).slice(0, 12);
+  }
+  function rankInboxSeverity(value) {
+    return value === "critical" ? 3 : value === "warn" ? 2 : value === "info" ? 1 : 0;
+  }
+  function deriveInboxDedupeKey(item) {
+    const targetKey = [
+      String(item.source || "").trim().toLowerCase(),
+      String(item.approvalKey || "").trim(),
+      String(item.targetTaskId || "").trim(),
+      String(item.targetRunId || "").trim(),
+      normalizeChatPath(item.path || ""),
+      String(item.openModule || "").trim(),
+      String(item.targetTab || "").trim()
+    ].filter(Boolean).join("|");
+    if (targetKey) {
+      return targetKey;
+    }
+    const summaryKey = [
+      String(item.title || "").trim().toLowerCase(),
+      String(item.detail || "").trim().toLowerCase()
+    ].filter(Boolean).join("|");
+    if (summaryKey) {
+      return summaryKey;
+    }
+    return "";
+  }
+  function dedupeInboxItems(items) {
+    const buckets = /* @__PURE__ */ new Map();
+    (Array.isArray(items) ? items : []).forEach((item, index) => {
+      const normalized = item && typeof item === "object" ? item : {};
+      const dedupeKey = String(normalized.dedupeKey || deriveInboxDedupeKey(normalized) || normalized.id || `inbox-${index}`).trim();
+      const candidate = {
+        ...normalized,
+        dedupeKey
+      };
+      const current = buckets.get(dedupeKey);
+      if (!current || rankInboxSeverity(candidate.severity) > rankInboxSeverity(current.severity)) {
+        buckets.set(dedupeKey, candidate);
+      }
+    });
+    return Array.from(buckets.values());
   }
   function pushUniqueSuggestion(target, value) {
     const normalized = String(value || "").trim();
@@ -22338,6 +22433,7 @@
     const activeTaskRun = taskRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.runtimeState || item.status || "").toLowerCase())) || (Array.isArray(state.snapshot?.recentRuns) ? state.snapshot.recentRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.state || item.status || "").toLowerCase())) : null);
     const refreshTimerRef = import_react2.default.useRef(null);
     const refreshInFlightRef = import_react2.default.useRef(false);
+    const rendererErrorCacheRef = import_react2.default.useRef(/* @__PURE__ */ new Set());
     const refreshApp = (0, import_react2.useEffectEvent)(async (mode = "lite") => {
       if (refreshInFlightRef.current) {
         return;
@@ -22364,6 +22460,44 @@
         void refreshApp("lite");
       }, delay);
     });
+    (0, import_react2.useEffect)(() => {
+      const reportRendererIssue = (payload) => {
+        const signature = [
+          String(payload?.message || "").trim(),
+          String(payload?.source || payload?.filename || "").trim(),
+          String(payload?.stack || "").trim().split("\n").slice(0, 2).join("\n")
+        ].filter(Boolean).join("|");
+        if (!signature || rendererErrorCacheRef.current.has(signature) || typeof window.gosAgent?.reportRendererError !== "function") {
+          return;
+        }
+        rendererErrorCacheRef.current.add(signature);
+        window.gosAgent.reportRendererError(payload).catch(() => {
+        });
+      };
+      const onError = (event) => {
+        reportRendererIssue({
+          message: event?.message || "Renderer error",
+          source: event?.filename || "renderer",
+          stack: event?.error?.stack || "",
+          lineno: event?.lineno || 0,
+          colno: event?.colno || 0
+        });
+      };
+      const onUnhandledRejection = (event) => {
+        const reason = event?.reason;
+        reportRendererIssue({
+          message: reason instanceof Error ? reason.message : String(reason || "Unhandled promise rejection"),
+          source: "renderer:unhandledrejection",
+          stack: reason instanceof Error ? reason.stack || "" : ""
+        });
+      };
+      window.addEventListener("error", onError);
+      window.addEventListener("unhandledrejection", onUnhandledRejection);
+      return () => {
+        window.removeEventListener("error", onError);
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      };
+    }, []);
     (0, import_react2.useEffect)(() => {
       void (async () => {
         try {
@@ -22560,6 +22694,7 @@
           history: currentThread.messages.slice(-8).map((entry) => ({ role: entry.role, text: entry.text })),
           attachments,
           chatContext: {
+            chatMode: snapshot.settings?.chatMode || "ask",
             activeView: store.getState().activeModuleId,
             activeFile: store.getState().inspector.selectedPath,
             changedFiles: changedItems.length,
@@ -22575,6 +22710,8 @@
           role: "assistant",
           text: String(reply?.reply || reply?.message || "No response."),
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          chatMode: String(reply?.chatMode || snapshot?.settings?.chatMode || "auto"),
+          effectiveChatMode: String(reply?.effectiveChatMode || reply?.chatMode || snapshot?.settings?.chatMode || "auto"),
           suggestions: Array.isArray(reply?.suggestions) ? reply.suggestions : [],
           refs: Array.isArray(reply?.refs) ? reply.refs : []
         };
@@ -22685,7 +22822,7 @@
         return;
       }
       if (item.openModule === "monitor") {
-        onOpenMonitorTab(item.targetTab === "learning" ? "learning" : item.targetTab === "overview" ? "overview" : "promotions");
+        onOpenMonitorTab(item.targetTab || "overview");
         return;
       }
       if (item.path) {
@@ -23237,7 +23374,10 @@
                 }
               },
               onOpenInbox,
-              onRollbackLatestBackup
+              onRollbackLatestBackup,
+              onUpdateSetting,
+              onSetManualSafeMode,
+              onOpenMonitorTab
             }
           ) : null,
           state.activeModuleId === "settings" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -23372,8 +23512,55 @@
     const latestGoal = props.goalList[0] || null;
     const latestTask = props.taskList[0] || null;
     const latestRun = props.taskRuns[0] || null;
+    const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant") || null;
+    const chatMode = String(settings.chatMode || "auto").trim().toLowerCase() || "auto";
+    const effectiveChatMode = String(latestAssistantMessage?.effectiveChatMode || (chatMode === "auto" ? "ask" : chatMode)).trim().toLowerCase() || "ask";
+    const chatModes = ["auto", "ask", "plan", "edit", "agent"];
+    const [managerPanelOpen, setManagerPanelOpen] = import_react2.default.useState(false);
+    const chatLogRef = import_react2.default.useRef(null);
+    const followLatestRef = import_react2.default.useRef(true);
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
     const docsContext = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
+    const managerSnapshot = props.snapshot?.manager && typeof props.snapshot.manager === "object" ? props.snapshot.manager : {};
+    const selfModel = managerSnapshot.selfModel && typeof managerSnapshot.selfModel === "object" ? managerSnapshot.selfModel : {};
+    const liveActivity = managerSnapshot.liveActivity && typeof managerSnapshot.liveActivity === "object" ? managerSnapshot.liveActivity : {};
+    const autonomySettings = settings.autonomy && typeof settings.autonomy === "object" ? settings.autonomy : {};
+    const executionRoles = Array.isArray(props.aiStatus?.current?.executionRoles) ? props.aiStatus.current.executionRoles : [];
+    const managerRole = executionRoles.find((item) => String(item?.role || "").trim().toLowerCase() === "engine") || null;
+    const workerRole = executionRoles.find((item) => String(item?.role || "").trim().toLowerCase() === "workspace") || null;
+    const remoteModelOptions = Array.isArray(props.aiStatus?.remoteModelCatalog) && props.aiStatus.remoteModelCatalog.length ? props.aiStatus.remoteModelCatalog : [
+      { model: "gpt-5-mini", label: "GPT-5 Mini" },
+      { model: "gpt-5.4", label: "GPT-5.4" },
+      { model: "gpt-5.2-codex", label: "GPT-5.2 Codex" }
+    ];
+    const localModelOptions = Array.isArray(props.aiStatus?.localModelInventory) && props.aiStatus.localModelInventory.length ? props.aiStatus.localModelInventory.map((item) => ({
+      model: String(item.model || ""),
+      label: String(item.label || item.model || "")
+    })) : [{
+      model: String(settings.trainingOllamaModel || settings.model || "qwen2.5-coder:14b"),
+      label: String(settings.trainingOllamaModel || settings.model || "qwen2.5-coder:14b")
+    }];
+    const currentManagerModel = String(managerRole?.baseModel || settings.aiRemoteModel || remoteModelOptions[0]?.model || "gpt-5-mini");
+    const currentWorkerModel = String(workerRole?.baseModel || settings.trainingOllamaModel || settings.model || localModelOptions[0]?.model || "qwen2.5-coder:14b");
+    const composerHeight = String(settings.chatComposerHeight || "comfortable").trim().toLowerCase() || "comfortable";
+    const transparencyLevel = String(settings.chatTransparencyLevel || liveActivity.transparencyLevel || "balanced").trim().toLowerCase() || "balanced";
+    const composerRows = composerHeight === "compact" ? 5 : composerHeight === "tall" ? 10 : 7;
+    const modeMeta = {
+      auto: "Auto stays conversational by default and steps into Plan, Edit, or Agent only when the request and current gates support it.",
+      ask: "Ask keeps this conversational and grounded in the repo.",
+      plan: "Plan scopes the next slice without starting edits.",
+      edit: "Edit prepares change-focused work and waits for confirmation.",
+      agent: "Agent can run bounded actions through the supervised loop."
+    };
+    const modeRouteSummary = {
+      auto: `auto resolved to ${effectiveChatMode} â€¢ hybrid manager + worker`,
+      ask: "chat-fast • manager",
+      plan: "plan-reasoning • manager",
+      edit: "code-main • worker",
+      agent: "supervised engine loop • manager + worker"
+    };
+    const branchLabel = String(props.snapshot?.updates?.workspace?.branch || "").trim() || "no branch";
+    const safetyLabel = props.safeMode.active ? "safe mode" : props.safeMode.watchOnly ? "safety watch" : props.chatSignalState === "active" ? "working" : props.chatSignalState === "message" ? "new reply" : "ready";
     const composerSuggestions = buildComposerSuggestions({
       composerText: props.composerText,
       learningStatus: props.learningStatus,
@@ -23388,6 +23575,31 @@
       "Review the current repo and tell me what needs fixing first.",
       "Set up the coding model and verify the engine is ready."
     ];
+    const updateFollowLatest = () => {
+      const node = chatLogRef.current;
+      if (!node) {
+        followLatestRef.current = true;
+        return;
+      }
+      const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+      followLatestRef.current = distanceFromBottom <= 88;
+    };
+    (0, import_react2.useEffect)(() => {
+      followLatestRef.current = true;
+      const node = chatLogRef.current;
+      if (node) {
+        node.scrollTop = node.scrollHeight;
+      }
+    }, [props.thread?.id]);
+    (0, import_react2.useEffect)(() => {
+      const node = chatLogRef.current;
+      if (!node) {
+        return;
+      }
+      if (followLatestRef.current) {
+        node.scrollTop = node.scrollHeight;
+      }
+    }, [messages.length]);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel workbench-panel", "data-panel": "workbench", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-home", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -23413,7 +23625,7 @@
               " \u2022 ",
               String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b")
             ] })
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", ref: chatLogRef, onScroll: updateFollowLatest, children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
@@ -23432,37 +23644,39 @@
             message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
           ] }, message.id)) }) }),
           isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip chat-compact-strip", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Lane" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.aiStatus?.profileId || settings.aiProfile || "hybrid-default" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.aiStatus?.current?.ollamaModel || settings.trainingOllamaModel || settings.model || "qwen2.5-coder:7b" })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Mode" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: chatMode === "auto" ? `Auto -> ${effectiveChatMode.charAt(0).toUpperCase() + effectiveChatMode.slice(1)}` : chatMode.charAt(0).toUpperCase() + chatMode.slice(1) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: modeMeta[chatMode] || modeMeta.ask })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest goal" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestGoal?.title || "No goal yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestGoal ? `${latestGoal.status || "active"} \u2022 ${shortPath(latestGoal.labRoot || latestGoal.targetWorkspaceRoot || latestGoal.workspaceRoot || "") || "workspace target"}` : "Plain-English chat prompts can create goals automatically." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest task" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestTask?.title || "No task yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestTask ? `${latestTask.status || "ready"} \u2022 ${latestTask.riskClass || "medium"} risk` : "Chat can create scoped tasks automatically." })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestGoal?.title || latestTask?.title || "No goal yet" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestGoal ? `${latestGoal.status || "active"} \u2022 ${shortPath(latestGoal.labRoot || latestGoal.targetWorkspaceRoot || latestGoal.workspaceRoot || "") || "workspace target"}` : latestTask ? `${latestTask.status || "ready"} \u2022 ${latestTask.riskClass || "medium"} risk` : "Start in Ask or Plan and the engine will keep the scope bounded." })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest run" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestRun?.runtimeLabel || latestRun?.label || "No run yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestRun ? `${latestRun.runtimeState || latestRun.status || "idle"}${latestRun.blockedReason ? ` \u2022 ${summarizeText(latestRun.blockedReason, 80)}` : ""}` : "The first actionable prompt can launch a run automatically." })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestRun ? `${latestRun.runtimeState || latestRun.status || "idle"}${latestRun.blockedReason ? ` \u2022 ${summarizeText(latestRun.blockedReason, 80)}` : ""}` : "When you switch to Agent, bounded runs will settle here." })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Inbox" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.inboxItems.length ? `${props.inboxItems.length} item${props.inboxItems.length === 1 ? "" : "s"}` : "Clear" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
                 props.unreadCount > 0 ? `${props.unreadCount} unread thread${props.unreadCount === 1 ? "" : "s"} \u2022 ` : "",
-                props.safeMode.active ? "Safe mode needs review." : "Approvals, learning, and warnings stay in one place."
+                props.safeMode.active ? "Safe mode needs review." : "Approvals, learning, and warnings stay close by."
               ] })
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "activity-copy", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: liveActivity.currentAction || "Manager is ready" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: liveActivity.summary || modeRouteSummary[chatMode] || modeRouteSummary.ask })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: `toolbar-chip${managerPanelOpen ? " active" : ""}`, onClick: () => setManagerPanelOpen((current) => !current), children: managerPanelOpen ? "Hide manager panel" : "Manager panel" })
+            ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-toolbar", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
@@ -23487,21 +23701,87 @@
                 onChange: (event) => props.onComposerChange(event.target.value),
                 onFocus: () => props.onChatFocusChange(true),
                 onBlur: () => props.onChatFocusChange(false),
+                rows: composerRows,
                 onKeyDown: (event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     props.onSendChat();
                   }
                 },
-                placeholder: "Ask the coding model what to build, fix, review, or explain."
+                placeholder: chatMode === "plan" ? "Ask for a scoped plan, risks, or the next safe slice." : chatMode === "edit" ? "Describe the code change you want prepared or reviewed." : chatMode === "agent" ? "Tell the engine what bounded task to run next." : chatMode === "auto" ? "Talk to the engine normally. Auto will decide when to Ask, Plan, Edit, or Agent." : "Talk to the engine like a teammate. Ask what to build, fix, review, or explain."
               }
             ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: currentManagerModel, onChange: (event) => void props.onUpdateSetting("aiRemoteModel", event.target.value), children: remoteModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: currentWorkerModel, onChange: (event) => void props.onUpdateSetting("trainingOllamaModel", event.target.value), children: localModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: chatMode, onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode.charAt(0).toUpperCase() + mode.slice(1) }, mode)) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "selector-chip info", children: modeRouteSummary[chatMode] || modeRouteSummary.ask }),
+              chatMode === "auto" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "selector-chip info", children: `effective ${effectiveChatMode}` }) : null,
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "selector-chip info", children: `${branchLabel}${props.changedItems.length ? ` • ${props.changedItems.length} file${props.changedItems.length === 1 ? "" : "s"}` : ""}` }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `selector-chip info signal-${props.chatSignalState}`, children: safetyLabel }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: `toolbar-chip${managerPanelOpen ? " active" : ""}`, onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" })
+            ] }),
+            managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-drawer-grid", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Self model" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(selfModel.workspaceRoot) || "No workspace" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: [selfModel.branch || branchLabel, selfModel.changedFileCount ? `${selfModel.changedFileCount} changed` : "clean", selfModel.safetyState || safetyLabel].filter(Boolean).join(" â€¢ ") }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selfModel.latestBlocker || selfModel.nextSafeAction || "The manager is ready for the next bounded step." })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Live activity" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: liveActivity.currentAction || "No active run" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: liveActivity.summary || "Balanced live view keeps the important activity visible here." }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: `${transparencyLevel.charAt(0).toUpperCase() + transparencyLevel.slice(1)} live view` })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Inbox" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.inboxItems.length ? `${props.inboxItems.length} active item${props.inboxItems.length === 1 ? "" : "s"}` : "Inbox clear" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selfModel.inboxSummary || "Audit the inbox when you want a concise plan." }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("Audit the inbox and tell me what still needs attention."), children: "Audit inbox" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("Run the hygiene lane and settle stale inbox items."), children: "Run hygiene" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("Run manager review on the latest run."), children: "Manager review" })
+                  ] })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-control-row", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: autonomySettings.autoRunQueuedTaskLoopFollowups === true, onChange: (event) => void props.onUpdateSetting("autoRunQueuedTaskLoopFollowups", event.target.checked) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: autonomySettings.autoQueueTaskLoopFollowups === true, onChange: (event) => void props.onUpdateSetting("autoQueueTaskLoopFollowups", event.target.checked) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-queue follow-ups" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: autonomySettings.supervisedAutoRunRecipes === true, onChange: (event) => void props.onUpdateSetting("supervisedAutoRunRecipes", event.target.checked) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Supervised recipes" })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-control-row", children: [
+                ["quiet", "balanced", "verbose"].map((level) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: `toolbar-chip${transparencyLevel === level ? " active" : ""}`, onClick: () => void props.onUpdateSetting("chatTransparencyLevel", level), children: `${level.charAt(0).toUpperCase() + level.slice(1)} view` }, level)),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("Switch to auto mode and keep the thread conversational unless execution is clearly the right move."), children: "Use auto manager" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: props.safeMode.active ? "ghost" : "primary", onClick: () => props.onSetManualSafeMode(props.safeMode.active ? false : true), children: props.safeMode.active ? "Release risky work" : "Pause risky work" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenMonitorTab("overview"), children: "Open monitor" })
+              ] })
+            ] }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-meta", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b") }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(settings.runtime || "ollama") }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: currentWorkerModel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: managerRole?.providerSource || settings.aiRemoteProvider || "openai" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "no workspace" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `signal-indicator signal-${props.chatSignalState}`, children: props.chatSignalState === "alert" ? "safe mode" : props.chatSignalState === "active" ? "working" : props.chatSignalState === "message" ? "new reply" : "ready" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `signal-indicator signal-${props.chatSignalState}`, children: safetyLabel })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
             ] })
@@ -23673,6 +23953,7 @@
     const derivedModelLabel = String(props.aiStatus?.current?.derivedModelLabel || settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b");
     const currentProvider = String(props.aiStatus?.current?.provider || settings.runtime || "ollama");
     const selectedRuntime = String(settings.runtime || "ollama");
+    const composerHeight = String(settings.chatComposerHeight || "comfortable").trim().toLowerCase() || "comfortable";
     const selectedRemoteProviderId = String(settings.aiRemoteProvider || props.aiStatus?.current?.remoteProvider || "openai");
     const selectedRemoteProvider = aiRemoteProviders.find((provider) => String(provider?.id || "") === selectedRemoteProviderId) || aiRemoteProviders[0] || null;
     const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || "");
@@ -23681,6 +23962,7 @@
     const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
     const recommendedInstallPresets = installPresets.filter((item) => item.hardwareRecommended);
     const [providerKeyBusy, setProviderKeyBusy] = import_react2.default.useState(false);
+    const [providerKeyDraft, setProviderKeyDraft] = import_react2.default.useState("");
     const visibleBridgeProfiles = (aiBridgeProfiles.length ? aiBridgeProfiles : [{ id: "llama-bridge", label: "Llama Bridge" }, { id: "gpt4all-bridge", label: "GPT4All Bridge" }, { id: "custom", label: "Custom" }]).filter((profile) => aiManualMode || String(profile?.id || "") !== "custom");
     const selectedBridgeProfile = visibleBridgeProfiles.find((profile) => String(profile?.id || "") === aiBridgeProfile) || visibleBridgeProfiles[0] || null;
     const nextFoundryCandidate = modelFoundry?.nextCandidate || (Array.isArray(modelFoundry?.suggested) ? modelFoundry.suggested[0] : null) || null;
@@ -23709,13 +23991,14 @@
         return;
       }
       const secretName = String(selectedRemoteProvider.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY").trim() || "OPENAI_API_KEY";
-      const nextValue = clear ? "" : window.prompt(`Paste the API key for ${selectedRemoteProvider.label || selectedRemoteProvider.id} (${secretName}).`, "");
-      if (nextValue === null) {
+      const nextValue = clear ? "" : String(providerKeyDraft || "").trim();
+      if (!clear && !nextValue) {
         return;
       }
       setProviderKeyBusy(true);
       try {
         await window.gosAgent.setSecret(secretName, String(nextValue || "").trim());
+        setProviderKeyDraft("");
         props.onRefresh();
       } finally {
         setProviderKeyBusy(false);
@@ -23752,6 +24035,14 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Inspector mode" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: settings.chatUtilityMode || "context", onChange: (event) => void props.onUpdateSetting("chatUtilityMode", event.target.value), children: ["context", "diff", "review"].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Composer height" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: composerHeight, onChange: (event) => void props.onUpdateSetting("chatComposerHeight", event.target.value), children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "compact", children: "Compact" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "comfortable", children: "Comfortable" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "tall", children: "Tall" })
+            ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat instruction mode" }),
@@ -23829,6 +24120,18 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.selectedLabRoot ? "A lab is currently active." : "Runs will target the real workspace unless you select a lab." })
           ] })
         ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "stacked-input", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "password",
+              value: providerKeyDraft,
+              onChange: (event) => setProviderKeyDraft(event.target.value),
+              placeholder: `Paste the API key for ${selectedRemoteProvider?.label || selectedRemoteProvider?.id || "the selected provider"}`
+            }
+          )
+        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPickWorkspace, children: "Switch workspace" }),
           vscodeSetup?.ok ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -23842,6 +24145,17 @@
               children: "Bootstrap VS Code"
             }
           ) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              className: "ghost",
+              onClick: () => void window.gosAgent.installWorkspaceVsCodeCompanion({
+                workspaceRoot: props.snapshot?.workspaceRoot,
+                targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
+              }).then(props.onRefresh),
+              children: "Install companion"
+            }
+          ),
           groupedWorkspace.selectedLabRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onClearLab, children: "Leave active lab" }) : null
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
@@ -23864,6 +24178,11 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension health" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? extensionHealth?.status === "ready" ? "Ready" : "Needs attention" : "Not detected" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(extensionHealth?.summary || "Check the VS Code extension path here so the desktop app and editor flow do not drift.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion install" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? "Available" : "Ready to install" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Install the current companion build into VS Code from the workspace root." })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Goals" }),
@@ -24029,7 +24348,7 @@
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote model" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteModel, onChange: (event) => void props.onUpdateSetting("aiRemoteModel", event.target.value), children: (aiRemoteModelOptions.length ? aiRemoteModelOptions : [{ model: "gpt-4o-mini", label: "GPT-4o Mini" }]).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteModel, onChange: (event) => void props.onUpdateSetting("aiRemoteModel", event.target.value), children: (aiRemoteModelOptions.length ? aiRemoteModelOptions : [{ model: "gpt-5-mini", label: "GPT-5 Mini" }, { model: "gpt-5.4", label: "GPT-5.4" }, { model: "gpt-5.2-codex", label: "GPT-5.2 Codex" }]).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "AI profile" }),
@@ -24116,7 +24435,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh), children: "Import selected model" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Import all stored models" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", "data-run-benchmark": "true", onClick: props.onRunBenchmark, children: "Run benchmark" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy, onClick: () => void configureSelectedRemoteKey(false), children: providerKeyBusy ? "Saving key\u2026" : `Set ${selectedRemoteProvider?.label || "remote"} key` }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy || !String(providerKeyDraft || "").trim(), onClick: () => void configureSelectedRemoteKey(false), children: providerKeyBusy ? "Saving key\u2026" : `Save ${selectedRemoteProvider?.label || "remote"} key` }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", disabled: !selectedRemoteProvider || providerKeyBusy, onClick: () => void configureSelectedRemoteKey(true), children: "Clear key" }),
           nextFoundryCandidate ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "button",
@@ -24367,6 +24686,8 @@
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toggle-grid", children: [
           ["autoSynthesizeBats", "Auto synthesize follow-up tasks", groupedAutonomy.autoSynthesizeBats],
+          ["autoQueueTaskLoopFollowups", "Auto-queue bounded next task after the run settles", groupedAutonomy.autoQueueTaskLoopFollowups],
+          ["autoRunQueuedTaskLoopFollowups", "Auto-run queued next task when safe", groupedAutonomy.autoRunQueuedTaskLoopFollowups],
           ["autoRetryUntilPass", "Auto retry failing coding runs", groupedAutonomy.autoRetryUntilPass],
           ["autoBrainstormOnFailure", "Brainstorm repair options on failure", groupedAutonomy.autoBrainstormOnFailure],
           ["autoApproveLowRisk", "Auto approve low-risk patches", groupedAutonomy.autoApproveLowRisk],
@@ -24546,6 +24867,7 @@
     ] });
   }
   function MonitorPanel(props) {
+    const activeMonitorTab = MONITOR_TABS.includes(String(props.activeTab || "").trim().toLowerCase()) ? String(props.activeTab || "").trim().toLowerCase() : "overview";
     const safeMode = readSafeMode(props.snapshot);
     const taskRuns = Array.isArray(props.snapshot?.taskHub?.runs) ? props.snapshot?.taskHub?.runs : [];
     const promotions = props.snapshot?.promotions || {};
@@ -24645,8 +24967,8 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onExportDebugBundle, children: "Export debug bundle" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-tabs", children: MONITOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: props.activeTab === tab ? "active" : "", onClick: () => props.onSetActiveTab(tab), children: tab.charAt(0).toUpperCase() + tab.slice(1) }, tab)) }),
-      props.activeTab === "overview" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-tabs", children: MONITOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: activeMonitorTab === tab ? "active" : "", onClick: () => props.onSetActiveTab(tab), children: tab.charAt(0).toUpperCase() + tab.slice(1) }, tab)) }),
+      activeMonitorTab === "overview" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Ring" }),
@@ -24817,7 +25139,7 @@
           ] }, String(milestone.id || milestone.label)))
         ] })
       ] }) : null,
-      props.activeTab === "runs" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+      activeMonitorTab === "runs" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Test Bench" }),
@@ -25012,7 +25334,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EventStream, { tab: "runtime", state: { ...store.getState(), runtimeEvents: [...props.runtimeEvents, ...props.benchmarkEvents] } })
         ] })
       ] }) : null,
-      props.activeTab === "learning" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+      activeMonitorTab === "learning" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Journal" }),
@@ -25030,7 +25352,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EventStream, { tab: "learning", state: { ...store.getState(), learningEvents: props.learningEvents } })
         ] })
       ] }) : null,
-      props.activeTab === "promotions" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+      activeMonitorTab === "promotions" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onCreateCandidate, disabled: !selectedLabRoot, children: "Create candidate from active lab" }),
           candidates.find((candidate) => candidate.status === "candidate") ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => props.onPromoteCandidate(String(candidates.find((candidate) => candidate.status === "candidate")?.id || "")), children: "Promote newest candidate" }) : null,
@@ -25102,7 +25424,7 @@
           promotionHistory.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No promotion history yet." }) : null
         ] })
       ] }) : null,
-      props.activeTab === "debug" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+      activeMonitorTab === "debug" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace" }),

@@ -21,6 +21,41 @@ function normalizeReviewPath(value) {
   return String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+function isIgnoredWorkspacePath(relativePath) {
+  const normalized = normalizeReviewPath(relativePath).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    normalized.startsWith('docs/assistant_runs/') ||
+    normalized.startsWith('assistant_runs/') ||
+    normalized.includes('/assistant_runs/')
+  ) {
+    return true;
+  }
+  if (
+    normalized.startsWith('__pycache__/') ||
+    normalized.includes('/__pycache__/') ||
+    normalized.startsWith('.pytest_cache/') ||
+    normalized.includes('/.pytest_cache/') ||
+    normalized.startsWith('.mypy_cache/') ||
+    normalized.includes('/.mypy_cache/') ||
+    normalized.startsWith('.ruff_cache/') ||
+    normalized.includes('/.ruff_cache/') ||
+    normalized.startsWith('.cache/') ||
+    normalized.includes('/.cache/') ||
+    normalized.startsWith('node_modules/') ||
+    normalized.includes('/node_modules/') ||
+    normalized.startsWith('.venv/') ||
+    normalized.includes('/.venv/') ||
+    normalized.startsWith('venv/') ||
+    normalized.includes('/venv/')
+  ) {
+    return true;
+  }
+  return normalized.endsWith('.pyc') || normalized.endsWith('.pyo');
+}
+
 function isApprovalRequiredPath(relativePath) {
   const normalized = normalizeReviewPath(relativePath).toLowerCase();
   if (!normalized) {
@@ -48,7 +83,7 @@ function parseChangedFileLine(line) {
   const rest = raw.slice(2).trim();
   const currentPath = rest.includes('->') ? rest.split('->').pop().trim() : rest;
   const relativePath = normalizeReviewPath(currentPath);
-  if (!relativePath) {
+  if (!relativePath || isIgnoredWorkspacePath(relativePath)) {
     return null;
   }
   return {
@@ -286,7 +321,7 @@ function normalizeRuntimeChangedFiles(runtimeContext) {
         path: normalizeReviewPath(item.path || item.file || ''),
       };
     })
-    .filter((item) => item?.path);
+    .filter((item) => item?.path && !isIgnoredWorkspacePath(item.path));
 }
 
 function buildReviewSnapshot(workspaceRoot, payload = {}) {
@@ -377,6 +412,7 @@ module.exports = {
   saveWorkspaceFile,
   getWorkspaceDiff,
   summarizeUnifiedDiff,
+  isIgnoredWorkspacePath,
   collectArtifactEntriesForRun,
   buildReviewSnapshot,
 };

@@ -303,6 +303,125 @@ def _normalize_ticket_id(value: str | None) -> str:
     raise RuntimeApiError(f"invalid ticket id: {value}")
 
 
+def _normalize_runtime_task_mode(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"coder", "repair", "planner", "validator", "research", "chat", "summarizer"}:
+        return normalized
+    return ""
+
+
+def _normalize_runtime_lane_id(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _orchestration_expects_mutation(payload: dict[str, Any] | None, result: dict[str, Any] | None = None) -> bool:
+    source = dict(payload or {})
+    runtime_result = dict(result or {})
+    metadata = dict(source.get("metadata") or {})
+    runtime_task = dict(runtime_result.get("runtime_task") or {})
+    lane_id = _normalize_runtime_lane_id(
+        source.get("laneId")
+        or source.get("lane_id")
+        or metadata.get("lane_id")
+        or metadata.get("laneId")
+        or runtime_task.get("lane_id")
+        or runtime_task.get("laneId")
+    )
+    if lane_id in {"code-main", "repair-fast"}:
+        return True
+    task_mode = _normalize_runtime_task_mode(
+        source.get("taskMode")
+        or source.get("task_mode")
+        or metadata.get("taskMode")
+        or metadata.get("task_mode")
+        or runtime_task.get("task_mode")
+        or runtime_task.get("taskMode")
+    )
+    return task_mode in {"coder", "repair"}
+
+
+def _orchestration_changed_paths(result: dict[str, Any] | None) -> list[str]:
+    runtime_result = dict(result or {})
+    runtime_context = dict(runtime_result.get("runtime_context") or {})
+    changed_files = list(runtime_context.get("changed_files") or runtime_context.get("changedFiles") or [])
+    paths: list[str] = []
+    for item in changed_files:
+        if isinstance(item, dict):
+            path_value = str(item.get("path") or "").strip()
+            if path_value:
+                paths.append(path_value)
+    return paths
+
+
+def _orchestration_has_mutating_tool_events(result: dict[str, Any] | None) -> bool:
+    runtime_result = dict(result or {})
+    for item in list(runtime_result.get("runtime_events") or []):
+        if not isinstance(item, dict):
+            continue
+        data = dict(item.get("data") or {})
+        tool = str(data.get("tool") or item.get("tool") or "").strip().lower()
+        if tool in {"edit_file", "smart_patch", "write_file"}:
+            return True
+    return False
+
+
+def _mark_orchestration_noop_failure(result: dict[str, Any] | None, objective: str = "") -> dict[str, Any]:
+    runtime_result = dict(result or {})
+    failure_message = (
+        f'The coding run did not apply any file changes for "{objective}".'
+        if str(objective or "").strip()
+        else "The coding run did not apply any file changes."
+    )
+    runtime_failure = dict(runtime_result.get("runtime_failure") or {})
+    runtime_failure.update(
+        {
+            "kind": "no-op-edit",
+            "message": failure_message,
+            "stage": "apply",
+            "retryable": True,
+            "blocking": True,
+            "retry_policy": {
+                "action": "repair-loop",
+                "reason": "no-op-edit",
+            },
+        }
+    )
+    review_summary = dict(runtime_result.get("review_summary") or {})
+    review_summary["summary"] = failure_message
+    review_summary["requires_manual_review"] = False
+    run_summary = dict(runtime_result.get("run_summary") or {})
+    run_summary["summary"] = failure_message
+    runtime_status = dict(runtime_result.get("runtime_result") or {})
+    runtime_status["ok"] = False
+    runtime_status["status"] = "failed"
+    runtime_status["final_state"] = "failed"
+    runtime_events = list(runtime_result.get("runtime_events") or [])
+    runtime_events.append(
+        {
+            "schema_version": "2026-03-13",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "run_id": str((runtime_result.get("runtime_run") or {}).get("run_id") or ""),
+            "task_id": str((runtime_result.get("runtime_run") or {}).get("task_id") or ""),
+            "ticket": str(runtime_result.get("ticket") or ""),
+            "stage": "apply",
+            "event": "no-op-detected",
+            "state": "failed",
+            "level": "warning",
+            "summary": failure_message,
+            "data": {
+                "reason": "no-op-edit",
+            },
+        }
+    )
+    runtime_result["ok"] = False
+    runtime_result["runtime_failure"] = runtime_failure
+    runtime_result["review_summary"] = review_summary
+    runtime_result["run_summary"] = run_summary
+    runtime_result["runtime_result"] = runtime_status
+    runtime_result["runtime_events"] = runtime_events
+    return runtime_result
+
+
 def _solo_namespace(command: str, ticket_id: str | None = None, payload: dict[str, Any] | None = None) -> SimpleNamespace:
     data = dict(payload or {})
     selected_action = str(data.get("action") or command or "").strip().lower()
@@ -1678,6 +1797,67 @@ def train(options: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def checkpoint_merge(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    merger = _load_script_module("runtime_api_merge_local_checkpoints", "merge_local_checkpoints.py")
+    payload = dict(options or {})
+    project_root = _selected_project_root(payload)
+    base_path = Path(
+        payload.get("basePath")
+        or payload.get("base_path")
+        or payload.get("baseModelPath")
+        or payload.get("base_model_path")
+        or ""
+    )
+    secondary_path = Path(
+        payload.get("secondaryPath")
+        or payload.get("secondary_path")
+        or payload.get("secondaryModelPath")
+        or payload.get("secondary_model_path")
+        or ""
+    )
+    if not str(base_path).strip():
+        raise RuntimeApiError("checkpoint-merge requires basePath")
+    if not str(secondary_path).strip():
+        raise RuntimeApiError("checkpoint-merge requires secondaryPath")
+    requested_output = str(
+        payload.get("outputPath")
+        or payload.get("output_path")
+        or payload.get("outputDir")
+        or payload.get("output_dir")
+        or ""
+    ).strip()
+    if requested_output:
+        output_dir = Path(requested_output)
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        merge_name = str(payload.get("mergeName") or payload.get("merge_name") or secondary_path.name or "merge").strip()
+        output_dir = _default_training_output_path(project_root).parent / "checkpoint_merges" / f"{stamp}-{merge_name.lower().replace(' ', '-')}"
+    result = merger.merge_checkpoint_bundle(
+        base_path=base_path,
+        secondary_path=secondary_path,
+        output_dir=output_dir,
+        merge_name=str(payload.get("mergeName") or payload.get("merge_name") or "").strip(),
+        alpha=float(payload.get("alpha", payload.get("mergeAlpha", payload.get("merge_alpha", 0.2))) or 0.2),
+        method=str(payload.get("method") or "linear").strip().lower() or "linear",
+        ollama_model_name=str(payload.get("ollamaModelName") or payload.get("ollama_model_name") or "").strip(),
+        dry_run=bool(payload.get("dryRun", payload.get("dry_run", False))),
+    )
+    manifest = dict(result.get("checkpoint_merge") or {})
+    artifact_paths = [str(output_dir)]
+    manifest_path = str(result.get("manifest_path") or "").strip()
+    if manifest_path:
+        artifact_paths.append(manifest_path)
+    return {
+        "ok": bool(result.get("ok", False)),
+        "projectRoot": str(project_root),
+        "outputPath": str(output_dir),
+        "artifactPaths": artifact_paths,
+        "checkpointMerge": manifest,
+        "summary": str(result.get("summary") or "Prepared checkpoint merge."),
+        "label": "CHECKPOINT MERGE",
+    }
+
+
 def summarize_experiments(options: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(options or {})
     dataset_path = Path(payload.get("dataset") or payload.get("datasetPath") or _default_experiment_dataset_path())
@@ -2881,6 +3061,7 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
     objective = str(payload.get("objective") or payload.get("prompt") or "").strip()
     if not objective:
         raise RuntimeApiError("orchestrate requires an objective")
+    selected_root = _selected_project_root(payload)
     approved_ids = {str(item) for item in payload.get("approvedRequests", []) if str(item).strip()}
     approval_protected_only = bool(payload.get("approvalProtectedOnly", payload.get("approval_protected_only", True)))
     gate = ApprovalGate(
@@ -2893,16 +3074,21 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
             continue
         gate.decide(str(item.get("id") or ""), str(item.get("decision") or ""), note=str(item.get("note") or ""))
     result = run_tool_loop(
-        project_root=REPO_ROOT,
+        project_root=selected_root,
         objective=objective,
         ticket=str(payload.get("ticket") or "").strip() or None,
         context={
             **dict(payload.get("context") or {}),
             "host_boundary": payload.get("hostBoundary") or payload.get("host_boundary") or {},
+            "project_root": str(selected_root),
         },
         approval_gate=gate,
         max_steps=int(payload.get("maxSteps", 10) or 10),
     )
+    if _orchestration_expects_mutation(payload, result):
+        changed_paths = _orchestration_changed_paths(result)
+        if not changed_paths and not _orchestration_has_mutating_tool_events(result):
+            result = _mark_orchestration_noop_failure(result, objective)
     trust_summary = _extract_trust_summary(result)
     operator_execution = _build_operator_execution_payload(
         task=objective,
@@ -2952,6 +3138,7 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
         "ticket": str(payload.get("ticket") or ""),
         "exitCode": 0 if result.get("ok") else (2 if result.get("pending_approvals") else 1),
         "checks": [],
+        "projectRoot": str(selected_root),
         "artifact": result,
         "artifactPaths": [],
         "label": "ORCHESTRATE TOOL LOOP",
@@ -3077,6 +3264,8 @@ def dispatch_action(request: dict[str, Any]) -> dict[str, Any]:
         return prepare_training_handoff(request)
     if action == "train":
         return train(request)
+    if action == "checkpoint-merge":
+        return checkpoint_merge(request)
     if action == "orchestrate":
         return orchestrate(request)
     if action == "lab-train":

@@ -36,11 +36,22 @@ function parseStatusReply(statusPayload) {
   if (typeof statusPayload === 'string') {
     return statusPayload;
   }
+  const activeRuns = Array.isArray(statusPayload.activeRuns) ? statusPayload.activeRuns : [];
+  if (activeRuns.length > 0) {
+    const lead = activeRuns[0] && typeof activeRuns[0] === 'object' ? activeRuns[0] : {};
+    const task = String(lead.task || lead.label || '').trim();
+    const runId = String(lead.runId || lead.id || '').trim();
+    const taskMode = String(lead.taskMode || lead.mode || '').trim();
+    const provider = String(lead.providerSource || lead.provider || '').trim().toLowerCase();
+    const model = String(lead.modelDisplayName || lead.baseModel || lead.modelProfileId || '').trim();
+    const stage = String(lead.currentStage || lead.stage || lead.status || '').trim();
+    const focus = [task, runId ? `run ${runId}` : '', taskMode ? `mode ${taskMode}` : '', provider && model ? `${provider}:${model}` : (model || provider), stage ? `stage ${stage}` : '']
+      .filter(Boolean)
+      .join(' • ');
+    return `Active runs: ${activeRuns.length}.${focus ? ` Working on ${focus}.` : ''}`;
+  }
   if (typeof statusPayload.activeCount === 'number') {
     return `Active runs: ${statusPayload.activeCount}.`;
-  }
-  if (Array.isArray(statusPayload.activeRuns)) {
-    return `Active runs: ${statusPayload.activeRuns.length}.`;
   }
   return '';
 }

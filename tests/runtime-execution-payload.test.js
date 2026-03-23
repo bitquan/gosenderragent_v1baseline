@@ -3,9 +3,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 
 const { buildOperatorExecutionSnapshot } = require('../shared-runtime/runtime');
+
+function resolvePythonCommand() {
+  const candidates = process.platform === 'win32' ? ['py', 'python', 'python.exe'] : ['python3', 'python'];
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ['--version'], { encoding: 'utf8' });
+    if (!probe.error && probe.status === 0) {
+      return candidate;
+    }
+  }
+  throw new Error('Python runtime is required for runtime execution payload tests.');
+}
 
 test('shared runtime normalizes operator execution snapshots for the task loop', () => {
   const payload = buildOperatorExecutionSnapshot({
@@ -502,4 +513,40 @@ test('runtime api forwards backend memory hints so cold payloads still tune the 
   assert.equal(snapshot.nextAction.command, 'repair-loop');
   assert.equal(snapshot.nextAction.learned, true);
   assert.equal(snapshot.queuedFollowup.recipe.steps[0].metadata.phaseId, 'phase-1-safe-engine-core');
+});
+
+test('runtime api marks no-op coding orchestrations as failures instead of approved passes', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const runtimeRoot = path.join(repoRoot, 'runtime');
+  const python = resolvePythonCommand();
+  const script = [
+    'import json',
+    'import sys',
+    `sys.path.insert(0, r"${runtimeRoot.replace(/\\/g, '\\\\')}")`,
+    'from backend.agent.runtime.runtime_api import _mark_orchestration_noop_failure',
+    'payload = _mark_orchestration_noop_failure({',
+    '    "ok": True,',
+    '    "runtime_run": {"run_id": "run-1", "task_id": "task-1"},',
+    '    "runtime_context": {"changed_files": []},',
+    '    "runtime_events": [{"data": {"tool": "read_file"}}],',
+    '    "runtime_result": {"ok": True, "status": "succeeded", "final_state": "succeeded"},',
+    '    "review_summary": {"summary": "no manual review blockers detected"},',
+    '    "run_summary": {},',
+    '}, "Add a brief comment above describeTask.")',
+    'print(json.dumps(payload))',
+  ].join('\n');
+  const raw = execFileSync(python, ['-c', script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PYTHONPATH: runtimeRoot,
+    },
+    encoding: 'utf8',
+  });
+  const payload = JSON.parse(raw);
+
+  assert.equal(payload.ok, false);
+  assert.equal(payload.runtime_failure.kind, 'no-op-edit');
+  assert.equal(payload.runtime_result.status, 'failed');
+  assert.match(String(payload.review_summary.summary || ''), /did not apply any file changes/i);
 });

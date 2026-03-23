@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const {
+  buildCheckpointMergeCommand,
   buildModelInstallPresets,
   buildLocalModelInventory,
   buildTrainingModelSelectorOptions,
@@ -290,6 +291,84 @@ test('buildLocalModelInventory connects wrapped profiles and foundry candidates 
   assert.equal(candidateEntry.localReadiness, 'ready');
 });
 
+test('buildLocalModelInventory discovers adapter exports and checkpoint merges from workspace artifact roots', () => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-training-lifecycle-'));
+  const artifactsRoot = path.join(workspaceRoot, 'artifacts');
+  const exportsRoot = path.join(artifactsRoot, 'dev_data', 'local_training_exports', 'qwen-ollama', '20260323T010000Z');
+  const mergesRoot = path.join(artifactsRoot, 'model_foundry', 'checkpoint_merges', '20260323T020000Z-qwen-merge');
+  try {
+    fs.mkdirSync(exportsRoot, { recursive: true });
+    fs.mkdirSync(mergesRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceRoot, 'dev_assistant.local.yaml'),
+      `assistant_artifacts_root: ${artifactsRoot}\nassistant_model_foundry_root: ${path.join(artifactsRoot, 'model_foundry')}\nassistant_dev_data_dir: ${path.join(artifactsRoot, 'dev_data')}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(path.join(exportsRoot, 'manifest.json'), JSON.stringify({
+      kind: 'assistant-local-training-export',
+      generated_at: '2026-03-23T01:00:00Z',
+      variant_id: 'qwen-export',
+      worker_family: 'qwen',
+      worker_variant_type: 'adapter-export',
+      base_model: 'qwen2.5-coder:14b',
+      bundle_dir: exportsRoot,
+      adapter_artifact: path.join(exportsRoot, 'adapter'),
+      ollama_model_name: 'gosenderr-qwen-local',
+      promotion_policy_default: 'manual-promote',
+    }, null, 2), 'utf8');
+    fs.writeFileSync(path.join(mergesRoot, 'merge-manifest.json'), JSON.stringify({
+      kind: 'assistant-checkpoint-merge',
+      generated_at: '2026-03-23T02:00:00Z',
+      merge_id: 'qwen-merge',
+      variant_id: 'qwen-merge',
+      worker_family: 'qwen',
+      base_model_path: 'E:\\models\\qwen-base',
+      secondary_model_path: 'E:\\models\\qwen-adapter',
+      output_dir: mergesRoot,
+      output_model_path: path.join(mergesRoot, 'model.safetensors'),
+      output_weight_format: 'safetensors',
+      ollama_model_name: 'gosenderr-qwen-merged:latest',
+      merge_ready: true,
+      promotion_policy_default: 'manual-promote',
+      rollback_source: 'E:\\models\\qwen-base',
+      compatible_tensor_count: 128,
+      merged_tensor_count: 128,
+    }, null, 2), 'utf8');
+
+    const inventory = buildLocalModelInventory({
+      workspaceRoot,
+      settings: {
+        trainingPromotionPolicy: 'auto-in-labs',
+        trainingPrimaryWorkerFamily: 'qwen',
+        trainingBackupWorkerFamily: 'deepseek-coder',
+        trainingReasoningFallbackFamily: 'qwen3',
+        trainingOllamaModel: 'qwen2.5-coder:14b',
+      },
+      telemetry: {
+        trustSummary: {
+          status: 'ready',
+          summary: 'Lifecycle checks are ready.',
+        },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+          ],
+          discovered: [],
+          registered: [],
+        },
+      },
+    });
+
+    assert.equal(inventory.trainingExports.entries.length, 1);
+    assert.equal(inventory.checkpointMerges.entries.length, 1);
+    assert.equal(inventory.entries.some((entry) => entry.kind === 'training-export' && entry.workerVariantType === 'adapter-export'), true);
+    assert.equal(inventory.entries.some((entry) => entry.kind === 'checkpoint-merge' && entry.rollbackReady === true), true);
+    assert.equal(inventory.promotionPolicy, 'auto-in-labs');
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('normalizeTrainingTuningSettings applies the Windows hardware target preset', () => {
   const settings = normalizeTrainingTuningSettings({
     trainingHardwareTarget: 'windows-i9-32gb-rtx4060-8gb',
@@ -312,6 +391,38 @@ test('buildModelInstallPresets includes curated Hugging Face metadata and downlo
   assert.match(String(qwen14b.sourceUrl || ''), /huggingface\.co\/Qwen\/Qwen2\.5-Coder-14B-Instruct-GGUF/i);
   assert.equal(qwen14b.hardwareRecommended, true);
   assert.match(String(qwen14b.downloadCommand || ''), /ollama pull/i);
+});
+
+test('normalizeTrainingTuningSettings keeps worker families and promotion policy canonical', () => {
+  const settings = normalizeTrainingTuningSettings({
+    trainingPromotionPolicy: 'auto-everywhere',
+    trainingPrimaryWorkerFamily: 'qwen',
+    trainingBackupWorkerFamily: 'deepseek-coder',
+    trainingReasoningFallbackFamily: 'qwen3',
+  });
+
+  assert.equal(settings.trainingPromotionPolicy, 'auto-everywhere');
+  assert.equal(settings.trainingPrimaryWorkerFamily, 'qwen');
+  assert.equal(settings.trainingBackupWorkerFamily, 'deepseek-coder');
+  assert.equal(settings.trainingReasoningFallbackFamily, 'qwen3');
+  assert.equal(Array.isArray(settings.workerFamilyOptions), true);
+  assert.equal(Array.isArray(settings.promotionPolicyOptions), true);
+});
+
+test('buildCheckpointMergeCommand renders a repeatable runtime command', () => {
+  const command = buildCheckpointMergeCommand('E:\\dev\\projects\\gosenderr-desktop-agent-PC', {
+    basePath: 'E:\\models\\qwen-base',
+    secondaryPath: 'E:\\models\\qwen-adapter',
+    outputPath: 'E:\\merges\\qwen-merge',
+    alpha: 0.25,
+    mergeName: 'qwen-merge',
+  });
+
+  assert.match(command, /backend\.agent\.runtime\.runtime_api action/i);
+  assert.match(command, /"action":"checkpoint-merge"/i);
+  assert.match(command, /"basePath":"E:\\\\models\\\\qwen-base"/i);
+  assert.match(command, /"secondaryPath":"E:\\\\models\\\\qwen-adapter"/i);
+  assert.match(command, /"alpha":0\.25/i);
 });
 
 test('discoverConfiguredOllamaModels reads registered manifests from the configured Ollama store', () => {

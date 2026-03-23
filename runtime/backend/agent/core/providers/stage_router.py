@@ -8,7 +8,7 @@ from backend.agent.core.model_routing import resolve_agent_model_route
 
 from .base import ModelProvider, NullProvider, ProviderConfig
 from .factory import create_provider
-from .provider_resolver import resolve_provider_name
+from .provider_resolver import provider_candidates, resolve_provider_name
 
 
 def _provider_config(provider: Any) -> ProviderConfig | None:
@@ -47,16 +47,22 @@ def route_provider_for_agent(provider: Any, agent_name: str, project_root: Path 
         routed_fallback_model_name=route.fallback_model,
         routed_role=route.role,
     )
-    provider_name = transport_provider_name if transport_provider_name == 'local' else target_provider_name
-    primary_config = _route_config(routed_base_config, provider_name=provider_name, model_name=route.model)
-    primary_provider = create_provider(primary_config, explicit=provider_name)
-    if not isinstance(primary_provider, NullProvider):
-        return primary_provider
 
-    if route.fallback_model and provider_name in {'ollama', 'openai', 'local'}:
-        fallback_config = _route_config(routed_base_config, provider_name=provider_name, model_name=route.fallback_model)
-        fallback_provider = create_provider(fallback_config, explicit=provider_name)
-        if not isinstance(fallback_provider, NullProvider):
-            return fallback_provider
+    provider_order: list[str] = []
+    for candidate in [target_provider_name, route.fallback_provider, transport_provider_name, *provider_candidates(base_config, preferred=target_provider_name)]:
+        normalized = str(candidate or '').strip().lower()
+        if normalized and normalized not in provider_order:
+            provider_order.append(normalized)
+
+    for provider_name in provider_order:
+        primary_config = _route_config(routed_base_config, provider_name=provider_name, model_name=route.model)
+        primary_provider = create_provider(primary_config, explicit=provider_name)
+        if not isinstance(primary_provider, NullProvider):
+            return primary_provider
+        if route.fallback_model and provider_name in {'ollama', 'openai', 'local'}:
+            fallback_config = _route_config(routed_base_config, provider_name=provider_name, model_name=route.fallback_model)
+            fallback_provider = create_provider(fallback_config, explicit=provider_name)
+            if not isinstance(fallback_provider, NullProvider):
+                return fallback_provider
 
     return provider

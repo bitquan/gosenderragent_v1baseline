@@ -18,6 +18,14 @@ const INTERNAL_PROMOTION_PATHS = new Set([
   '.gos-lab.json',
 ]);
 
+function normalizeWorkspacePath(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  return path.resolve(text).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 function slugify(value, fallback = 'candidate') {
   const normalized = String(value || '')
     .trim()
@@ -263,6 +271,27 @@ function normalizeCandidate(candidate = {}) {
   };
 }
 
+function candidateMatchesWorkspace(candidate = {}, workspaceRoot = '', selectedLabRoot = '') {
+  const workspace = normalizeWorkspacePath(workspaceRoot);
+  const selectedLab = normalizeWorkspacePath(selectedLabRoot);
+  if (!workspace && !selectedLab) {
+    return true;
+  }
+  const roots = [
+    candidate.workspaceRoot,
+    candidate.targetWorkspaceRoot,
+    candidate.sourceRoot,
+    candidate.labRoot,
+  ].map((value) => normalizeWorkspacePath(value)).filter(Boolean);
+  if (selectedLab && roots.includes(selectedLab)) {
+    return true;
+  }
+  if (!workspace) {
+    return false;
+  }
+  return roots.includes(workspace);
+}
+
 function readPromotionAcceptanceState(workspaceRoot) {
   const acceptance = readLatestAcceptanceReport(workspaceRoot);
   const report = acceptance?.report && typeof acceptance.report === 'object' ? acceptance.report : null;
@@ -328,6 +357,51 @@ function buildChangeSummary(entries = []) {
   };
 }
 
+
+
+function verifyPromotionState(targetWorkspaceRoot, changedEntries = []) {
+  const missing = [];
+  const present = [];
+  for (const entry of changedEntries) {
+    const safeTarget = sanitizeTargetPath(targetWorkspaceRoot, entry.path);
+    if (!safeTarget) {
+      continue;
+    }
+    const exists = fs.existsSync(safeTarget.resolved);
+    if (String(entry.status || '').trim().toLowerCase() === 'deleted') {
+      if (!exists) {
+        present.push(entry.path);
+      } else {
+        missing.push(entry.path);
+      }
+      continue;
+    }
+    if (exists) {
+      present.push(entry.path);
+    } else {
+      missing.push(entry.path);
+    }
+  }
+  return {
+    ok: missing.length === 0,
+    verifiedCount: present.length,
+    missingCount: missing.length,
+    missingPaths: missing.slice(0, 20),
+    summary: missing.length === 0 ? `Verified ${present.length} promoted path(s).` : `Missing ${missing.length} promoted path(s).`,
+  };
+}
+
+function buildPromotionGovernance(candidate, acceptanceState, changedEntries = []) {
+  const gate = buildPromotionGate(candidate, acceptanceState);
+  return {
+    canPromote: gate.canPromote === true,
+    hold: gate.canPromote !== true,
+    rollbackRecommended: gate.status === 'blocked' || gate.status === 'warn',
+    changedPathCount: Array.isArray(changedEntries) ? changedEntries.length : 0,
+    summary: gate.summary,
+    status: gate.status,
+  };
+}
 function createCandidate(workspaceRoot, payload = {}) {
   const promotionsRoot = ensurePromotionsRoot(workspaceRoot);
   const labRoot = path.resolve(String(payload.labRoot || '').trim());
@@ -357,6 +431,7 @@ function createCandidate(workspaceRoot, payload = {}) {
     verification: { ok: verified },
   }, acceptanceState);
 
+  const governance = buildPromotionGovernance({ verification: { ok: verified } }, acceptanceState, changedEntries);
   const candidate = normalizeCandidate({
     id: payload.id || randomId(`candidate_${slugify(payload.name || path.basename(labRoot), 'candidate')}`),
     name: payload.name || path.basename(labRoot),
@@ -380,6 +455,7 @@ function createCandidate(workspaceRoot, payload = {}) {
     notes: String(payload.notes || '').trim(),
     promotionState: promotionGate.status,
     promotionSummary: promotionGate.summary,
+    governance,
     modelProfileId: String(payload.modelProfileId || latestBenchmark?.modelProfileId || latestBenchmark?.wrappedProfileId || '').trim(),
     variantType: String(payload.variantType || 'wrapped').trim().toLowerCase() || 'wrapped',
     baseModel: String(payload.baseModel || latestBenchmark?.baseModel || latestBenchmark?.model || '').trim(),
@@ -494,13 +570,41 @@ function promoteCandidate(workspaceRoot, payload = {}) {
   if (!changedEntries.length) {
     throw new Error('This candidate has no changed files to promote.');
   }
+  const targetWorkspaceRoot = candidate.targetWorkspaceRoot || workspaceRoot;
+  if (payload.dryRun === true) {
+    return {
+      ok: true,
+      dryRun: true,
+      candidate,
+      changedEntries,
+      verification: verifyPromotionState(targetWorkspaceRoot, changedEntries),
+      governance: buildPromotionGovernance(candidate, acceptanceState, changedEntries),
+    };
+  }
   const backup = createPromotionBackup(workspaceRoot, {
     candidateId,
-    targetWorkspaceRoot: candidate.targetWorkspaceRoot || workspaceRoot,
+    targetWorkspaceRoot,
     labRoot: candidate.labRoot,
     changedEntries,
   });
-  applyChangedEntries(candidate.targetWorkspaceRoot || workspaceRoot, candidate.labRoot, changedEntries);
+  let verification = null;
+  try {
+    applyChangedEntries(targetWorkspaceRoot, candidate.labRoot, changedEntries);
+    verification = verifyPromotionState(targetWorkspaceRoot, changedEntries);
+    if (!verification.ok) {
+      throw new Error(verification.summary);
+    }
+  } catch (error) {
+    rollbackPromotion(workspaceRoot, { backupId: backup.id });
+    appendHistory(workspaceRoot, {
+      kind: 'promotion-auto-rollback',
+      candidateId,
+      backupId: backup.id,
+      targetWorkspaceRoot,
+      reason: String(error?.message || error || 'promotion verification failed'),
+    });
+    throw error;
+  }
 
   const nextCandidate = normalizeCandidate({
     ...candidate,
@@ -511,6 +615,7 @@ function promoteCandidate(workspaceRoot, payload = {}) {
     changeSummary: buildChangeSummary(changedEntries),
     promotionState: 'promoted',
     promotionSummary: `Promoted from ${candidate.labRoot || 'lab'} into ${candidate.targetWorkspaceRoot || workspaceRoot}.`,
+    governance: buildPromotionGovernance({ ...candidate, status: 'promoted' }, acceptanceState, changedEntries),
   });
   candidates[candidateIndex] = nextCandidate;
   writeCandidates(workspaceRoot, candidates);
@@ -526,6 +631,7 @@ function promoteCandidate(workspaceRoot, payload = {}) {
     ok: true,
     candidate: nextCandidate,
     backup,
+    verification,
   };
 }
 
@@ -618,6 +724,7 @@ function listPromotionState(workspaceRoot, payload = {}) {
           promotionGate: gate,
         };
       })
+      .filter((candidate) => candidateMatchesWorkspace(candidate, workspaceRoot, selectedLabRoot))
     : [];
   const backups = promotionsRoot ? listBackupMetadata(workspaceRoot) : [];
   const history = promotionsRoot ? readHistory(workspaceRoot) : [];
@@ -633,6 +740,8 @@ function listPromotionState(workspaceRoot, payload = {}) {
   const effectivePromotionGate = effectiveCandidate?.promotionGate && typeof effectiveCandidate.promotionGate === 'object'
     ? effectiveCandidate.promotionGate
     : buildPromotionGate({}, acceptanceState);
+  const holdCandidates = candidates.filter((candidate) => candidate?.promotionGate?.canPromote !== true);
+  const rollbackCandidates = candidates.filter((candidate) => String(candidate.status || "").trim().toLowerCase() === "promoted" && String(candidate.promotionState || "").trim().toLowerCase() !== "promoted");
   return {
     ok: true,
     promotionsRoot: promotionsRoot || '',
@@ -641,6 +750,8 @@ function listPromotionState(workspaceRoot, payload = {}) {
     candidates,
     candidateCount: candidates.length,
     readyCandidates,
+    holdCandidates,
+    rollbackCandidates,
     backups,
     backupCount: backups.length,
     latestBackupId: String(backups[0]?.id || '').trim(),

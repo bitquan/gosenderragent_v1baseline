@@ -51,6 +51,8 @@ test('buildModelFoundryStatus derives suggestions from benchmarks and reusable p
   assert.equal(status.ok, true);
   assert.ok(status.exists);
   assert.ok(status.suggested.some((candidate) => String(candidate.type || '') === 'route-bundle'));
+  assert.ok(status.suggested.some((candidate) => String(candidate.type || '') === 'adapter-bundle'));
+  assert.ok(status.suggested.some((candidate) => String(candidate.type || '') === 'checkpoint-merge'));
   assert.ok(status.suggested.some((candidate) => String(candidate.type || '') === 'prompt-distill'));
   assert.ok(status.suggested.some((candidate) => String(candidate.type || '') === 'self-host'));
   assert.equal(status.nextCandidateIdentity.wrappedProfileId, 'gs-dev-1-default');
@@ -74,6 +76,7 @@ test('seedModelFoundryCandidate persists a candidate and updates status', () => 
   assert.equal(result.ok, true);
   assert.equal(result.status.candidateCount, 1);
   assert.equal(typeof result.candidate.modelProfileId, 'string');
+  assert.equal(typeof result.candidate.workerVariantType, 'string');
   const candidatesRoot = path.join(artifactsRoot, 'model_foundry', 'candidates');
   assert.ok(fs.existsSync(candidatesRoot));
   assert.ok(fs.readdirSync(candidatesRoot).some((name) => name.endsWith('.json')));

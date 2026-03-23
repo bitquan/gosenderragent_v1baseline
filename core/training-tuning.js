@@ -6,6 +6,10 @@ const path = require('path');
 const http = require('http');
 const childProcess = require('child_process');
 const { TRAINING_TRUST_REASON_CODES } = require('../shared-ui/trainingTrustReasons');
+const {
+  getConfiguredAssistantCheckpointMergesRoot,
+  getConfiguredAssistantLocalTrainingExportsRoot,
+} = require('./assistant-paths');
 
 const APP_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MODEL_STORAGE_ROOT = path.join(os.homedir(), 'large-storage', 'models');
@@ -14,6 +18,8 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
   Object.freeze({
     id: 'qwen-coder-7b-q4km',
     label: 'Qwen2.5 Coder 7B',
+    workerFamily: 'qwen',
+    variantType: 'base',
     ollamaModel: 'qwen2.5-coder:7b',
     fileName: 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
     sizeLabel: '4.7 GB',
@@ -27,6 +33,8 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
   Object.freeze({
     id: 'qwen-coder-14b-q4km',
     label: 'Qwen2.5 Coder 14B',
+    workerFamily: 'qwen',
+    variantType: 'base',
     ollamaModel: 'qwen2.5-coder:14b',
     fileName: 'Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf',
     sizeLabel: '9.0 GB',
@@ -40,7 +48,9 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
   Object.freeze({
     id: 'deepseek-coder-v2-lite-q4km',
     label: 'DeepSeek Coder V2 Lite',
-    ollamaModel: '',
+    workerFamily: 'deepseek-coder',
+    variantType: 'backup',
+    ollamaModel: 'deepseek-coder-v2-lite-instruct:q4-k-m',
     fileName: 'DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf',
     sizeLabel: '10.4 GB',
     makeTarget: 'model-download-deepseek-coder-v2-lite',
@@ -50,6 +60,33 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceUrl: 'https://huggingface.co/QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
     recommendedTargets: ['creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
+  Object.freeze({
+    id: 'qwen3-14b-q4km',
+    label: 'Qwen3 14B',
+    workerFamily: 'qwen3',
+    variantType: 'reasoning-fallback',
+    ollamaModel: 'qwen3-14b:q4-k-m',
+    fileName: 'Qwen3-14B-Q4_K_M.gguf',
+    sizeLabel: '9.1 GB',
+    makeTarget: 'model-download-qwen3-14b',
+    sourcePortal: 'huggingface',
+    sourceLabel: 'Hugging Face',
+    repoId: 'Qwen/Qwen3-14B-GGUF',
+    sourceUrl: 'https://huggingface.co/Qwen/Qwen3-14B-GGUF',
+    recommendedTargets: ['creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+]);
+
+const WORKER_FAMILY_OPTIONS = Object.freeze([
+  Object.freeze({ id: 'qwen', label: 'Qwen', summary: 'Primary tunable local worker family for coding and repair.' }),
+  Object.freeze({ id: 'deepseek-coder', label: 'DeepSeek Coder', summary: 'Backup coding family for comparison and fallback.' }),
+  Object.freeze({ id: 'qwen3', label: 'Qwen3', summary: 'Local reasoning fallback when the primary worker is unavailable.' }),
+]);
+
+const PROMOTION_POLICY_OPTIONS = Object.freeze([
+  Object.freeze({ id: 'manual-promote', label: 'Manual promote', summary: 'Only promote local worker variants after explicit review and approval.' }),
+  Object.freeze({ id: 'auto-in-labs', label: 'Auto in labs', summary: 'Allow local worker promotion inside labs after proof and rollback are ready.' }),
+  Object.freeze({ id: 'auto-everywhere', label: 'Auto everywhere', summary: 'Allow the engine to promote ready local worker variants across all surfaces.' }),
 ]);
 
 const HARDWARE_TARGET_PRESETS = Object.freeze([
@@ -194,6 +231,10 @@ const TRAINING_TUNING_KEY_MAP = Object.freeze({
   trainingModelStorageRoot: 'assistant_training_model_storage_root',
   trainingLiveSamplingSec: 'assistant_training_live_sampling_sec',
   trainingHardwareTarget: 'assistant_training_hardware_target',
+  trainingPromotionPolicy: 'assistant_training_promotion_policy',
+  trainingPrimaryWorkerFamily: 'assistant_training_primary_worker_family',
+  trainingBackupWorkerFamily: 'assistant_training_backup_worker_family',
+  trainingReasoningFallbackFamily: 'assistant_training_reasoning_fallback_family',
 });
 
 const DEFAULT_TUNING_SETTINGS = Object.freeze({
@@ -212,6 +253,10 @@ const DEFAULT_TUNING_SETTINGS = Object.freeze({
   trainingModelStorageRoot: DEFAULT_MODEL_STORAGE_ROOT,
   trainingLiveSamplingSec: 5,
   trainingHardwareTarget: 'auto',
+  trainingPromotionPolicy: 'manual-promote',
+  trainingPrimaryWorkerFamily: 'qwen',
+  trainingBackupWorkerFamily: 'deepseek-coder',
+  trainingReasoningFallbackFamily: 'qwen3',
 });
 const TRAINING_TELEMETRY_STALE_MS = 90 * 1000;
 const LOCAL_PROVIDER_SOURCES = new Set(['ollama', 'local']);
@@ -289,6 +334,22 @@ function normalizeProfile(value) {
 function normalizeLaunchSurface(value) {
   const surface = String(value || '').trim().toLowerCase();
   return ['app', 'terminal', 'vscode'].includes(surface) ? surface : DEFAULT_TUNING_SETTINGS.trainingLaunchSurface;
+}
+
+function normalizePromotionPolicy(value) {
+  const policy = String(value || '').trim().toLowerCase();
+  return PROMOTION_POLICY_OPTIONS.some((item) => item.id === policy)
+    ? policy
+    : DEFAULT_TUNING_SETTINGS.trainingPromotionPolicy;
+}
+
+function normalizeWorkerFamily(value, fallback = DEFAULT_TUNING_SETTINGS.trainingPrimaryWorkerFamily) {
+  const family = String(value || '').trim().toLowerCase();
+  if (WORKER_FAMILY_OPTIONS.some((item) => item.id === family)) {
+    return family;
+  }
+  return String(fallback || DEFAULT_TUNING_SETTINGS.trainingPrimaryWorkerFamily).trim().toLowerCase()
+    || DEFAULT_TUNING_SETTINGS.trainingPrimaryWorkerFamily;
 }
 
 function normalizeHardwareTarget(value) {
@@ -852,12 +913,18 @@ function normalizeTrainingTuningSettings(input = {}) {
     trainingModelStorageRoot: normalizeModelStorageRoot(patchedSource.trainingModelStorageRoot),
     trainingLiveSamplingSec: parseNumber(patchedSource.trainingLiveSamplingSec, DEFAULT_TUNING_SETTINGS.trainingLiveSamplingSec, 2, 30),
     trainingHardwareTarget,
+    trainingPromotionPolicy: normalizePromotionPolicy(patchedSource.trainingPromotionPolicy),
+    trainingPrimaryWorkerFamily: normalizeWorkerFamily(patchedSource.trainingPrimaryWorkerFamily, DEFAULT_TUNING_SETTINGS.trainingPrimaryWorkerFamily),
+    trainingBackupWorkerFamily: normalizeWorkerFamily(patchedSource.trainingBackupWorkerFamily, DEFAULT_TUNING_SETTINGS.trainingBackupWorkerFamily),
+    trainingReasoningFallbackFamily: normalizeWorkerFamily(patchedSource.trainingReasoningFallbackFamily, DEFAULT_TUNING_SETTINGS.trainingReasoningFallbackFamily),
   };
   normalized.trainingThermalCeilingC = resolveThermalCeilingC(normalized);
   normalized.profileLabel = preset.label;
   normalized.preset = preset;
   normalized.effective = resolveEffectiveTuning(normalized);
   normalized.recommendedModels = RECOMMENDED_LOCAL_MODELS;
+  normalized.workerFamilyOptions = WORKER_FAMILY_OPTIONS;
+  normalized.promotionPolicyOptions = PROMOTION_POLICY_OPTIONS;
   normalized.hardwareTargetPreset = hardwarePreset;
   return normalized;
 }
@@ -1070,6 +1137,34 @@ function buildTerminalTrainingCommand(workspaceRoot, settings = {}, action = 'tr
   return `cd ${shellQuote(root)} && ${envPrefix}make train-assistant-profile PROFILE=${profile}`;
 }
 
+function buildCheckpointMergeCommand(workspaceRoot, options = {}) {
+  const root = String(workspaceRoot || '').trim();
+  if (!root) {
+    return '';
+  }
+  const basePath = String(options.basePath || '').trim();
+  const secondaryPath = String(options.secondaryPath || '').trim();
+  const outputPath = String(options.outputPath || '').trim();
+  const alpha = Number.isFinite(Number(options.alpha)) ? Number(options.alpha) : 0.2;
+  const mergeName = String(options.mergeName || '').trim();
+  const parts = [
+    `cd ${shellQuote(root)}`,
+    'python -m backend.agent.runtime.runtime_api action --payload-json',
+  ];
+  const payload = {
+    action: 'checkpoint-merge',
+    targetWorkspaceRoot: root,
+    projectRoot: root,
+    basePath,
+    secondaryPath,
+    outputPath,
+    alpha,
+    mergeName,
+  };
+  parts.push(shellQuote(JSON.stringify(payload)));
+  return parts.join(' ');
+}
+
 function buildModelDownloadCommand(workspaceRoot, settings = {}, modelId = 'pack') {
   const normalized = normalizeTrainingTuningSettings(settings);
   const root = String(workspaceRoot || '').trim();
@@ -1109,6 +1204,8 @@ function buildModelInstallPresets(workspaceRoot, settings = {}) {
     return {
       id: model.id,
       label: model.label,
+      workerFamily: String(model.workerFamily || inferModelFamily(model.ollamaModel || model.fileName)).trim(),
+      variantType: String(model.variantType || 'base').trim(),
       sizeLabel: model.sizeLabel,
       sourcePortal: String(model.sourcePortal || 'curated'),
       sourceLabel: String(model.sourceLabel || 'Curated source'),
@@ -1457,6 +1554,15 @@ function inferModelFamily(value) {
   if (!base) {
     return '';
   }
+  if (base.startsWith('qwen3')) {
+    return 'qwen3';
+  }
+  if (base.startsWith('qwen')) {
+    return 'qwen';
+  }
+  if (base.startsWith('deepseek')) {
+    return 'deepseek-coder';
+  }
   return base.split(':')[0].trim();
 }
 
@@ -1539,6 +1645,7 @@ function findFoundryCandidateLink(target = {}, foundryStatus = {}) {
   return {
     id: String(match.id || '').trim(),
     title: String(match.title || '').trim(),
+    type: String(match.type || '').trim().toLowerCase(),
     safetyLevel: String(match.safetyLevel || '').trim().toLowerCase(),
     modelProfileId: String(match.modelProfileId || '').trim(),
     baseModel: String(match.baseModel || '').trim(),
@@ -1548,7 +1655,181 @@ function findFoundryCandidateLink(target = {}, foundryStatus = {}) {
   };
 }
 
-function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSummary = [], foundryStatus = {}, tuningTrust = {}) {
+function safeReadJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function listLifecycleManifestFiles(root, fileName = 'manifest.json') {
+  if (!root || !fs.existsSync(root)) {
+    return [];
+  }
+  return walkDirectoryFiles(root)
+    .filter((filePath) => path.basename(filePath).toLowerCase() === String(fileName || 'manifest.json').toLowerCase())
+    .sort((left, right) => right.localeCompare(left));
+}
+
+function buildDefaultOllamaVariantName(baseModel = '', workerFamily = 'qwen', variantType = 'adapter-export') {
+  const normalizedBase = String(baseModel || '').trim().toLowerCase();
+  if (variantType === 'checkpoint-merge') {
+    if (workerFamily === 'deepseek-coder') {
+      return 'gosenderr-deepseek-merged:latest';
+    }
+    if (workerFamily === 'qwen3') {
+      return 'gosenderr-qwen3-merged:latest';
+    }
+    return 'gosenderr-qwen-merged:latest';
+  }
+  if (workerFamily === 'deepseek-coder') {
+    return 'gosenderr-deepseek-local:latest';
+  }
+  if (workerFamily === 'qwen3' || normalizedBase.startsWith('qwen3')) {
+    return 'gosenderr-qwen3-local:latest';
+  }
+  return 'gosenderr-qwen-local:latest';
+}
+
+function discoverLocalTrainingExports(workspaceRoot) {
+  const root = getConfiguredAssistantLocalTrainingExportsRoot(workspaceRoot);
+  const manifests = listLifecycleManifestFiles(root, 'manifest.json');
+  const entries = manifests
+    .map((manifestPath) => {
+      const manifest = safeReadJson(manifestPath);
+      if (!manifest || String(manifest.kind || '').trim() !== 'assistant-local-training-export') {
+        return null;
+      }
+      const bundleDir = String(manifest.bundle_dir || manifest.bundleDir || path.dirname(manifestPath)).trim();
+      const baseModel = String(manifest.base_model || manifest.baseModel || '').trim();
+      const workerFamily = inferModelFamily(baseModel) || 'qwen';
+      const ollamaModelName = String(manifest.ollama_model_name || manifest.ollamaModelName || '').trim()
+        || buildDefaultOllamaVariantName(baseModel, workerFamily, 'adapter-export');
+      const adapterDir = String(manifest.adapter_dir || manifest.adapterDir || path.join(bundleDir, 'adapter')).trim();
+      return {
+        id: `adapter-export:${path.basename(bundleDir || path.dirname(manifestPath))}`,
+        kind: 'assistant-local-training-export',
+        title: String(manifest.variant_name || manifest.variantName || `Adapter export for ${baseModel || 'local worker'}`).trim(),
+        label: String(manifest.variant_name || manifest.variantName || `Adapter export for ${baseModel || 'local worker'}`).trim(),
+        summary: String(manifest.summary || manifest.notes?.[0] || '').trim(),
+        baseModel,
+        providerSource: 'ollama',
+        workerFamily,
+        workerVariantType: 'adapter-export',
+        workerVariantId: String(manifest.variant_id || manifest.variantId || `adapter-export:${path.basename(bundleDir || path.dirname(manifestPath))}`).trim(),
+        bundleDir,
+        manifestPath,
+        messagesPath: String(manifest.messages_path || manifest.messagesPath || '').trim(),
+        modelfilePath: String(manifest.modelfile_path || manifest.modelfilePath || '').trim(),
+        adapterArtifact: adapterDir,
+        ollamaModelName,
+        exampleCount: Number(manifest.example_count || manifest.exampleCount || 0),
+        benchmarkIdentity: null,
+        rollbackSource: baseModel,
+        registered: false,
+      };
+    })
+    .filter(Boolean);
+  return {
+    root,
+    exists: !!root && fs.existsSync(root),
+    entries,
+  };
+}
+
+function discoverCheckpointMergeArtifacts(workspaceRoot) {
+  const root = getConfiguredAssistantCheckpointMergesRoot(workspaceRoot);
+  const manifests = [
+    ...listLifecycleManifestFiles(root, 'manifest.json'),
+    ...listLifecycleManifestFiles(root, 'merge-manifest.json'),
+  ];
+  const seen = new Set();
+  const entries = manifests
+    .map((manifestPath) => {
+      const manifest = safeReadJson(manifestPath);
+      if (!manifest || !['assistant-checkpoint-merge', 'assistant-model-checkpoint-merge'].includes(String(manifest.kind || '').trim())) {
+        return null;
+      }
+      const outputDir = String(manifest.output_dir || manifest.outputDir || path.dirname(manifestPath)).trim();
+      const mergeId = String(manifest.merge_id || manifest.mergeId || path.basename(outputDir || path.dirname(manifestPath))).trim();
+      if (!mergeId || seen.has(mergeId)) {
+        return null;
+      }
+      seen.add(mergeId);
+      const baseModel = String(manifest.base_model_name || manifest.baseModelName || manifest.base_model || manifest.baseModel || '').trim();
+      const workerFamily = inferModelFamily(baseModel) || 'qwen';
+      const ollamaModelName = String(manifest.ollama_model_name || manifest.ollamaModelName || '').trim()
+        || buildDefaultOllamaVariantName(baseModel, workerFamily, 'checkpoint-merge');
+      return {
+        id: `checkpoint-merge:${mergeId}`,
+        kind: 'assistant-checkpoint-merge',
+        title: String(manifest.variant_name || manifest.variantName || `Checkpoint merge ${mergeId}`).trim(),
+        label: String(manifest.variant_name || manifest.variantName || `Checkpoint merge ${mergeId}`).trim(),
+        summary: String(manifest.summary || manifest.method_summary || '').trim(),
+        baseModel,
+        providerSource: 'ollama',
+        workerFamily,
+        workerVariantType: 'checkpoint-merge',
+        workerVariantId: mergeId,
+        outputDir,
+        manifestPath,
+        checkpointMergeArtifact: outputDir,
+        ollamaModelName,
+        mergeMethod: String(manifest.method || 'linear').trim().toLowerCase(),
+        alpha: Number(manifest.alpha ?? 0),
+        rollbackSource: String(manifest.rollback_source || manifest.rollbackSource || baseModel).trim(),
+        mergedTensorCount: Number(manifest.merged_tensor_count || manifest.mergedTensorCount || 0),
+        compatibleTensorCount: Number(manifest.compatible_tensor_count || manifest.compatibleTensorCount || 0),
+        benchmarkIdentity: null,
+      };
+    })
+    .filter(Boolean);
+  return {
+    root,
+    exists: !!root && fs.existsSync(root),
+    entries,
+  };
+}
+
+function inferWorkerVariantType(kind, payload = {}) {
+  const explicit = String(payload.workerVariantType || payload.variantType || '').trim().toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+  if (kind === 'training-export') {
+    return 'adapter-export';
+  }
+  if (kind === 'checkpoint-merge') {
+    return 'checkpoint-merge';
+  }
+  const candidateType = String(payload.type || '').trim().toLowerCase();
+  if (candidateType === 'adapter-bundle') {
+    return 'adapter-candidate';
+  }
+  if (candidateType === 'checkpoint-merge') {
+    return 'checkpoint-merge-candidate';
+  }
+  if (kind === 'foundry-candidate') {
+    return candidateType || 'candidate';
+  }
+  return kind === 'wrapped-profile' ? 'route-profile' : 'variant';
+}
+
+function buildPromotionReadiness({ localReady = false, benchmarkIdentity = null, foundryCandidate = null, rollbackSource = '' } = {}) {
+  if (!localReady) {
+    return 'not-ready';
+  }
+  if (foundryCandidate && benchmarkIdentity && rollbackSource) {
+    return 'candidate-ready';
+  }
+  if (benchmarkIdentity) {
+    return 'benchmarked';
+  }
+  return 'manual-review';
+}
+
+function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSummary = [], foundryStatus = {}, tuningTrust = {}, settings = {}) {
   const label = String(payload.label || payload.displayName || payload.title || payload.id || 'Local model').trim();
   const wrappedProfileId = String(payload.wrappedProfileId || payload.modelProfileId || payload.id || '').trim();
   const baseModel = String(payload.baseModel || '').trim();
@@ -1561,33 +1842,72 @@ function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSu
     : localReady
       ? 'installed'
       : (selectorMatch.discovered ? 'import-needed' : 'unknown');
+  const benchmarkIdentity = payload.benchmarkIdentity && typeof payload.benchmarkIdentity === 'object'
+    ? payload.benchmarkIdentity
+    : findBenchmarkIdentity({
+      wrappedProfileId,
+      baseModel,
+      providerSource,
+    }, benchmarkSummary);
+  const foundryCandidate = payload.foundryCandidate && typeof payload.foundryCandidate === 'object'
+    ? payload.foundryCandidate
+    : findFoundryCandidateLink({
+      wrappedProfileId,
+      baseModel,
+      providerSource,
+    }, foundryStatus);
+  const workerFamily = String(payload.workerFamily || inferModelFamily(baseModel) || payload.family).trim() || settings.trainingPrimaryWorkerFamily || 'qwen';
+  const workerVariantType = inferWorkerVariantType(kind, payload);
+  const workerVariantId = String(payload.workerVariantId || payload.variantId || payload.id || payload.modelProfileId || baseModel || label).trim();
+  const ollamaModelName = String(
+    payload.ollamaModelName
+    || payload.ollamaModel
+    || payload.importTag
+    || payload.baseModel
+    || '',
+  ).trim();
+  const rollbackSource = String(payload.rollbackSource || payload.baseModel || '').trim();
   return {
     id: `${kind}:${String(payload.id || payload.modelProfileId || payload.baseModel || label).trim()}`,
     kind,
     label,
     wrappedProfileId,
     wrappedProfileRole: String(payload.role || payload.wrappedProfileRole || '').trim().toLowerCase(),
-    modelFamily: String(payload.family || inferModelFamily(baseModel)).trim(),
+    modelFamily: workerFamily,
+    workerFamily,
+    workerVariantId,
+    workerVariantType,
     baseModel,
     providerSource,
+    ollamaModelName,
     localReadiness: !localVisible ? 'not-local' : (localReady ? 'ready' : 'not-ready'),
     localReady,
     installState,
     importState: installState,
     tuningStatus: String(tuningTrust?.status || '').trim().toLowerCase(),
     tuningSummary: String(tuningTrust?.summary || '').trim(),
-    foundryCandidate: findFoundryCandidateLink({
-      wrappedProfileId,
-      baseModel,
-      providerSource,
-    }, foundryStatus),
-    benchmarkIdentity: findBenchmarkIdentity({
-      wrappedProfileId,
-      baseModel,
-      providerSource,
-    }, benchmarkSummary),
+    promotionPolicy: normalizePromotionPolicy(settings.trainingPromotionPolicy),
+    promotionReadiness: buildPromotionReadiness({
+      localReady,
+      benchmarkIdentity,
+      foundryCandidate,
+      rollbackSource,
+    }),
+    rollbackReady: !!rollbackSource,
+    rollbackSource,
+    foundryCandidate,
+    benchmarkIdentity,
+    adapterArtifact: String(payload.adapterArtifact || '').trim(),
+    checkpointMergeArtifact: String(payload.checkpointMergeArtifact || '').trim(),
     fileName: String(selectorMatch.discovered?.fileName || '').trim(),
     source: String(selectorMatch.option?.source || selectorMatch.discovered?.source || selectorMatch.registered?.source || '').trim(),
+    manifestPath: String(payload.manifestPath || '').trim(),
+    bundleDir: String(payload.bundleDir || payload.outputDir || '').trim(),
+    exampleCount: Number(payload.exampleCount || 0),
+    mergeMethod: String(payload.mergeMethod || '').trim().toLowerCase(),
+    alpha: Number(payload.alpha || 0),
+    mergedTensorCount: Number(payload.mergedTensorCount || 0),
+    compatibleTensorCount: Number(payload.compatibleTensorCount || 0),
   };
 }
 
@@ -1597,6 +1917,8 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
   const readyCount = localEntries.filter((item) => item.localReady).length;
   const importNeededCount = localEntries.filter((item) => item.installState === 'import-needed').length;
   const candidateCount = items.filter((item) => item.kind === 'foundry-candidate').length;
+  const exportCount = items.filter((item) => item.kind === 'training-export').length;
+  const mergeCount = items.filter((item) => item.kind === 'checkpoint-merge').length;
   let status = 'ready';
   if (localEntries.length === 0) {
     status = 'idle';
@@ -1612,6 +1934,12 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
   if (candidateCount > 0) {
     parts.push(`${candidateCount} foundry candidate link${candidateCount === 1 ? '' : 's'}`);
   }
+  if (exportCount > 0) {
+    parts.push(`${exportCount} adapter export${exportCount === 1 ? '' : 's'}`);
+  }
+  if (mergeCount > 0) {
+    parts.push(`${mergeCount} checkpoint merge${mergeCount === 1 ? '' : 's'}`);
+  }
   if (tuningTrust?.status) {
     parts.push(`tuning ${String(tuningTrust.status).trim().toLowerCase()}`);
   }
@@ -1625,6 +1953,7 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
 }
 
 function buildLocalModelInventory(options = {}) {
+  const workspaceRoot = String(options.workspaceRoot || '').trim();
   const settings = normalizeTrainingTuningSettings(options.settings || {});
   const telemetry = options.telemetry && typeof options.telemetry === 'object' ? options.telemetry : {};
   const wrappedProfiles = toArray(options.wrappedProfiles).filter((item) => item && typeof item === 'object');
@@ -1632,10 +1961,12 @@ function buildLocalModelInventory(options = {}) {
   const benchmarkSummary = toArray(options.benchmarkSummary);
   const selector = resolveSelectorSnapshot(settings, telemetry);
   const tuningTrust = telemetry?.trustSummary && typeof telemetry.trustSummary === 'object' ? telemetry.trustSummary : {};
+  const trainingExports = workspaceRoot ? discoverLocalTrainingExports(workspaceRoot) : { root: '', exists: false, entries: [] };
+  const checkpointMerges = workspaceRoot ? discoverCheckpointMergeArtifacts(workspaceRoot) : { root: '', exists: false, entries: [] };
 
   const wrappedEntries = wrappedProfiles
     .filter((profile) => isLocalProviderSource(profile?.providerSource || profile?.baseProvider))
-    .map((profile) => buildLocalInventoryEntry('wrapped-profile', profile, selector, benchmarkSummary, foundryStatus, tuningTrust));
+    .map((profile) => buildLocalInventoryEntry('wrapped-profile', profile, selector, benchmarkSummary, foundryStatus, tuningTrust, settings));
 
   const candidateEntries = toArray(foundryStatus?.candidates)
     .filter((candidate) => {
@@ -1651,9 +1982,14 @@ function buildLocalModelInventory(options = {}) {
       ...candidate,
       label: String(candidate?.title || candidate?.id || 'Foundry candidate').trim(),
       baseModel: String(candidate?.baseModel || toArray(candidate?.recommendedModels)[0] || '').trim(),
-    }, selector, benchmarkSummary, foundryStatus, tuningTrust));
+    }, selector, benchmarkSummary, foundryStatus, tuningTrust, settings));
 
-  const entries = [...wrappedEntries, ...candidateEntries];
+  const exportEntries = trainingExports.entries
+    .map((entry) => buildLocalInventoryEntry('training-export', entry, selector, benchmarkSummary, foundryStatus, tuningTrust, settings));
+  const mergeEntries = checkpointMerges.entries
+    .map((entry) => buildLocalInventoryEntry('checkpoint-merge', entry, selector, benchmarkSummary, foundryStatus, tuningTrust, settings));
+
+  const entries = [...wrappedEntries, ...candidateEntries, ...exportEntries, ...mergeEntries];
   const summary = summarizeLocalModelInventory(entries, tuningTrust);
   return {
     status: summary.status,
@@ -1663,8 +1999,16 @@ function buildLocalModelInventory(options = {}) {
     candidateCount: summary.candidateCount,
     tuningStatus: String(tuningTrust?.status || '').trim().toLowerCase(),
     tuningSummary: String(tuningTrust?.summary || '').trim(),
+    workerFamilies: {
+      primary: settings.trainingPrimaryWorkerFamily,
+      backup: settings.trainingBackupWorkerFamily,
+      reasoningFallback: settings.trainingReasoningFallbackFamily,
+    },
+    promotionPolicy: settings.trainingPromotionPolicy,
     storageRoot: String(selector.storageRoot || settings.trainingModelStorageRoot || '').trim(),
     registeredRoot: String(selector.configuredOllamaRoot || '').trim(),
+    trainingExports,
+    checkpointMerges,
     entries,
   };
 }
@@ -1785,11 +2129,33 @@ async function collectTrainingTelemetry(options = {}) {
   };
 }
 
+
+
+function buildPatternMemorySummary(evaluationSnapshot = {}) {
+  const memory = evaluationSnapshot && typeof evaluationSnapshot === 'object'
+    ? (evaluationSnapshot.memory && typeof evaluationSnapshot.memory === 'object' ? evaluationSnapshot.memory : evaluationSnapshot)
+    : {};
+  const goodPatterns = Array.isArray(memory.good_patterns) ? memory.good_patterns : (Array.isArray(memory.goodPatterns) ? memory.goodPatterns : []);
+  const badPatterns = Array.isArray(memory.bad_patterns) ? memory.bad_patterns : (Array.isArray(memory.badPatterns) ? memory.badPatterns : []);
+  const ladder = memory.autonomy_ladder && typeof memory.autonomy_ladder === 'object' ? memory.autonomy_ladder : {};
+  return {
+    goodPatternCount: goodPatterns.length,
+    badPatternCount: badPatterns.length,
+    topGoodPattern: String(goodPatterns[0]?.value || ''),
+    topBadPattern: String(badPatterns[0]?.value || ''),
+    autonomyStage: Number(ladder.stage || ladder.difficulty_ceiling || 1) || 1,
+    summary: goodPatterns.length || badPatterns.length
+      ? `${goodPatterns.length} good pattern(s), ${badPatterns.length} risky pattern(s), autonomy stage ${Number(ladder.stage || ladder.difficulty_ceiling || 1) || 1}.`
+      : 'No pattern memory has been summarized yet.',
+  };
+}
 module.exports = {
   DEFAULT_MODEL_STORAGE_ROOT,
   PROFILE_PRESETS,
   RECOMMENDED_LOCAL_MODELS,
   HARDWARE_TARGET_PRESETS,
+  WORKER_FAMILY_OPTIONS,
+  PROMOTION_POLICY_OPTIONS,
   TRAINING_TUNING_KEY_MAP,
   DEFAULT_TUNING_SETTINGS,
   TRAINING_TELEMETRY_STALE_MS,
@@ -1804,11 +2170,14 @@ module.exports = {
   buildLearnRunPayload,
   buildSelfImproveRunPayload,
   buildTerminalTrainingCommand,
+  buildCheckpointMergeCommand,
   buildModelDownloadCommand,
   buildModelInstallPresets,
   buildTrainingModelSelectorOptions,
   discoverStoredModels,
   discoverConfiguredOllamaModels,
+  discoverLocalTrainingExports,
+  discoverCheckpointMergeArtifacts,
   buildImportTagFromFileName,
   resolveExistingModelStorageRoot,
   resolveOllamaHomeRoot,
@@ -1819,4 +2188,5 @@ module.exports = {
   buildTrainingTrustSummary,
   buildLocalModelInventory,
   collectTrainingTelemetry,
+  buildPatternMemorySummary,
 };

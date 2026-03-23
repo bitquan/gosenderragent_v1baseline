@@ -54,6 +54,7 @@ function buildFoundryCandidateIdentity(candidate = {}) {
   const baseModel = String(candidate.baseModel || candidate.recommendedModels?.[0] || '').trim();
   const providerSource = String(candidate.providerSource || '').trim().toLowerCase();
   const taskMode = String(candidate.taskMode || '').trim().toLowerCase();
+  const workerVariantType = String(candidate.workerVariantType || candidate.variantType || candidate.type || '').trim().toLowerCase();
   const benchmarkId = Array.isArray(candidate.sourceBenchmarks)
     ? candidate.sourceBenchmarks.map((item) => String(item || '').trim()).find(Boolean) || ''
     : '';
@@ -74,12 +75,14 @@ function buildFoundryCandidateIdentity(candidate = {}) {
     baseModel,
     providerSource,
     taskMode,
+    workerVariantType,
     benchmarkIdentity,
     summary: [
       modelRole ? `role ${modelRole}` : '',
       wrappedProfileId ? `profile ${wrappedProfileId}` : '',
       providerSource && baseModel ? `${providerSource}:${baseModel}` : baseModel,
       taskMode ? `mode ${taskMode}` : '',
+      workerVariantType ? `variant ${workerVariantType}` : '',
       benchmarkIdentity?.id ? `bench ${benchmarkIdentity.id}` : '',
     ].filter(Boolean).join(' | '),
   };
@@ -140,6 +143,12 @@ function deriveFoundrySuggestions(workspaceRoot, payload = {}) {
   const candidates = [];
 
   if (benchmarkLeader) {
+    const baseModel = String(benchmarkLeader.baseModel || benchmarkLeader.model || '').trim();
+    const providerSource = String(benchmarkLeader.providerSource || '').trim().toLowerCase();
+    const normalizedModel = baseModel.toLowerCase();
+    const workerFamily = normalizedModel.startsWith('deepseek')
+      ? 'deepseek-coder'
+      : (normalizedModel.startsWith('qwen3') ? 'qwen3' : (normalizedModel.startsWith('qwen') ? 'qwen' : ''));
     candidates.push({
       id: `route-bundle:${slugify(benchmarkLeader.model || benchmarkLeader.name || 'leader', 'leader')}`,
       type: 'route-bundle',
@@ -150,10 +159,46 @@ function deriveFoundrySuggestions(workspaceRoot, payload = {}) {
       targetLanes: ['code-main', 'repair-fast', 'review-verify'],
       safetyLevel: 'candidate',
       modelProfileId: String(benchmarkLeader.modelProfileId || benchmarkLeader.wrappedProfileId || '').trim(),
-      baseModel: String(benchmarkLeader.baseModel || benchmarkLeader.model || '').trim(),
+      baseModel,
       taskMode: String(benchmarkLeader.taskMode || 'coder').trim().toLowerCase(),
-      providerSource: String(benchmarkLeader.providerSource || '').trim().toLowerCase(),
+      providerSource,
+      workerFamily,
+      workerVariantType: 'route-bundle',
     });
+    if (providerSource === 'ollama' && workerFamily) {
+      candidates.push({
+        id: `adapter-bundle:${slugify(baseModel, workerFamily)}`,
+        type: 'adapter-bundle',
+        title: 'Promote an adapter-backed local worker variant',
+        summary: clipText(`Export a supervised ${workerFamily} adapter bundle from the current benchmark leader so it can be benchmarked and promoted with rollback.`),
+        recommendedModels: [baseModel].filter(Boolean),
+        sourceBenchmarks: [String(benchmarkLeader.id || benchmarkLeader.outputPath || '').trim()].filter(Boolean),
+        targetLanes: ['code-main', 'repair-fast'],
+        safetyLevel: 'candidate',
+        modelProfileId: String(benchmarkLeader.modelProfileId || benchmarkLeader.wrappedProfileId || '').trim(),
+        baseModel,
+        taskMode: 'coder',
+        providerSource,
+        workerFamily,
+        workerVariantType: 'adapter-export',
+      });
+      candidates.push({
+        id: `checkpoint-merge:${slugify(baseModel, workerFamily)}-lab`,
+        type: 'checkpoint-merge',
+        title: 'Prepare a tensor-level checkpoint merge in a lab',
+        summary: clipText(`Create a lab-only tensor merge candidate for ${baseModel} so a merged worker variant can be benchmarked before promotion.`),
+        recommendedModels: [baseModel].filter(Boolean),
+        sourceBenchmarks: [String(benchmarkLeader.id || benchmarkLeader.outputPath || '').trim()].filter(Boolean),
+        targetLanes: ['code-main'],
+        safetyLevel: 'lab-only',
+        modelProfileId: String(benchmarkLeader.modelProfileId || benchmarkLeader.wrappedProfileId || '').trim(),
+        baseModel,
+        taskMode: 'coder',
+        providerSource,
+        workerFamily,
+        workerVariantType: 'checkpoint-merge',
+      });
+    }
   }
 
   if (Number(resourcePolicy.memoryUsedPercent || payload.telemetry?.memoryUsedPercent || 0) >= 85) {
@@ -242,6 +287,12 @@ function seedModelFoundryCandidate(workspaceRoot, payload = {}) {
     targetLanes: Array.isArray(candidate.targetLanes) ? candidate.targetLanes.map((item) => String(item || '').trim()).filter(Boolean) : [],
     modelProfileId: String(candidate.modelProfileId || '').trim(),
     baseModel: String(candidate.baseModel || '').trim(),
+    workerFamily: String(candidate.workerFamily || '').trim(),
+    workerVariantType: String(candidate.workerVariantType || candidate.variantType || candidate.type || '').trim().toLowerCase(),
+    adapterArtifact: String(candidate.adapterArtifact || '').trim(),
+    checkpointMergeArtifact: String(candidate.checkpointMergeArtifact || '').trim(),
+    ollamaModelName: String(candidate.ollamaModelName || candidate.ollamaModel || '').trim(),
+    rollbackSource: String(candidate.rollbackSource || '').trim(),
     taskMode: String(candidate.taskMode || '').trim().toLowerCase(),
     providerSource: String(candidate.providerSource || '').trim().toLowerCase(),
     safetyLevel: String(candidate.safetyLevel || 'candidate').trim().toLowerCase(),

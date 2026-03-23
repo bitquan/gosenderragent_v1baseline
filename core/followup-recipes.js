@@ -247,9 +247,35 @@ function buildNextActionRecipe(execution = {}) {
   };
 }
 
+
+
+function clampRecipeToAutonomyStage(recipe, context = {}) {
+  if (!recipe || typeof recipe !== 'object') {
+    return recipe;
+  }
+  const evaluation = context.evaluation && typeof context.evaluation === 'object' ? context.evaluation : {};
+  const ladder = evaluation.autonomyLadder && typeof evaluation.autonomyLadder === 'object'
+    ? evaluation.autonomyLadder
+    : (evaluation.memory && evaluation.memory.autonomy_ladder && typeof evaluation.memory.autonomy_ladder === 'object'
+      ? evaluation.memory.autonomy_ladder
+      : {});
+  const ceiling = Math.max(1, Number(ladder.difficulty_ceiling || ladder.stage || 1) || 1);
+  const steps = Array.isArray(recipe.steps) ? recipe.steps.map((step) => ({
+    ...step,
+    metadata: {
+      ...(step.metadata && typeof step.metadata === 'object' ? step.metadata : {}),
+      autonomyDifficultyCeiling: Math.min(ceiling, Number(step.metadata?.autonomyDifficultyCeiling || ceiling) || ceiling),
+    },
+  })) : [];
+  return {
+    ...recipe,
+    autoQueueEligible: Boolean(recipe.autoQueueEligible) && ceiling <= 3,
+    steps,
+  };
+}
 function buildAutoFollowupPlan(execution = {}, context = {}) {
   const normalizedExecution = normalizeExecution(execution);
-  const recipe = buildNextActionRecipe(normalizedExecution);
+  const recipe = clampRecipeToAutonomyStage(buildNextActionRecipe(normalizedExecution), context);
   const settings = context.settings && typeof context.settings === 'object' ? context.settings : {};
   const safeMode = context.safeMode && typeof context.safeMode === 'object' ? context.safeMode : {};
   const readiness = context.readiness && typeof context.readiness === 'object' ? context.readiness : {};
@@ -649,6 +675,7 @@ module.exports = {
   buildAutoFollowupPlan,
   buildFollowupRecipe,
   buildNextActionRecipe,
+  clampRecipeToAutonomyStage,
   buildQueuedRecipePayload,
   queueFollowupRecipeTasks,
 };

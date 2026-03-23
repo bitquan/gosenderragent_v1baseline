@@ -15,6 +15,7 @@ const appApi = {
   setWorkspace: (workspaceRoot) => ipcRenderer.invoke('app:setWorkspace', { workspaceRoot }),
   setLab: (payload = {}) => ipcRenderer.invoke('app:setLab', payload),
   updateSettings: (payload) => ipcRenderer.invoke('app:updateSettings', payload),
+  reportRendererError: (payload = {}) => ipcRenderer.invoke('app:reportRendererError', payload),
   setSecret: (name, value) => ipcRenderer.invoke('app:secrets:set', { name, value }),
   getSecret: (name) => ipcRenderer.invoke('app:secrets:get', { name }),
   startDevEngine: () => ipcRenderer.invoke('devEngine:start'),
@@ -181,6 +182,7 @@ const tuningApi = {
   startOllama: wrapInvoke('tuning:startOllama'),
   stopOllama: wrapInvoke('tuning:stopOllama'),
   importModels: wrapInvoke('tuning:importModels'),
+  mergeCheckpoints: wrapInvoke('tuning:mergeCheckpoints'),
 };
 
 const foundryApi = {
@@ -300,6 +302,7 @@ contextBridge.exposeInMainWorld('gosAgent', {
   setWorkspace: appApi.setWorkspace,
   setLab: appApi.setLab,
   updateSettings: appApi.updateSettings,
+  reportRendererError: appApi.reportRendererError,
 
   setSecret: appApi.setSecret,
   getSecret: appApi.getSecret,

@@ -8,7 +8,7 @@ from typing import Any
 from backend.agent.core.baseline_service import analyze_baseline_health, cluster_failures, load_recent_runs
 from backend.agent.core.editor_context import normalize_editor_context
 from backend.agent.core.repo_inspection import rank_related_files
-from backend.agent.core.storage_paths import assistant_dev_runs_dir, assistant_runs_dir, assistant_test_artifacts_dir
+from backend.agent.core.storage_paths import assistant_config_validation, assistant_dev_runs_dir, assistant_docs_cache_dir, assistant_docs_import_queue_path, assistant_docs_registry_dir, assistant_runs_dir, assistant_test_artifacts_dir
 
 
 MAX_RELATED_FILES = 8
@@ -35,6 +35,8 @@ def _empty_runtime_context() -> dict[str, Any]:
         "approval_state": {},
         "permission_state": {},
         "memory_state": {},
+        "docs_state": {},
+        "config_state": {},
         "host_boundary": {},
         "self_heal_policy": {},
     }
@@ -210,6 +212,37 @@ def _normalize_baseline_state(project_root: Path) -> dict[str, Any]:
     }
 
 
+
+
+def _normalize_docs_state(project_root: Path) -> dict[str, Any]:
+    registry_dir = assistant_docs_registry_dir(project_root)
+    cache_dir = assistant_docs_cache_dir(project_root)
+    queue_path = assistant_docs_import_queue_path(project_root)
+    queue_count = 0
+    if queue_path.exists():
+        try:
+            import json
+            payload = json.loads(queue_path.read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                queue_count = len(payload)
+            elif isinstance(payload, dict) and isinstance(payload.get('items'), list):
+                queue_count = len(payload.get('items') or [])
+        except Exception:
+            queue_count = 0
+    return {
+        'registry_path': _display_path(project_root, registry_dir),
+        'cache_path': _display_path(project_root, cache_dir),
+        'queue_path': _display_path(project_root, queue_path),
+        'registry_exists': registry_dir.exists(),
+        'cache_exists': cache_dir.exists(),
+        'queue_exists': queue_path.exists(),
+        'queue_count': queue_count,
+    }
+
+
+def _normalize_config_state(project_root: Path) -> dict[str, Any]:
+    return dict(assistant_config_validation(project_root) or {})
+
 def normalize_runtime_context(raw: dict[str, Any] | None) -> dict[str, Any]:
     payload = dict(raw or {})
     editor_context = normalize_editor_context(payload.get("editor_context") or payload.get("editorContext") or payload.get("editor") or {})
@@ -250,6 +283,8 @@ def normalize_runtime_context(raw: dict[str, Any] | None) -> dict[str, Any]:
         "approval_state": dict(payload.get("approval_state") or payload.get("approvalState") or {}),
         "permission_state": dict(payload.get("permission_state") or payload.get("permissionState") or {}),
         "memory_state": dict(payload.get("memory_state") or payload.get("memoryState") or {}),
+        "docs_state": dict(payload.get("docs_state") or payload.get("docsState") or {}),
+        "config_state": dict(payload.get("config_state") or payload.get("configState") or {}),
         "host_boundary": dict(payload.get("host_boundary") or payload.get("hostBoundary") or {}),
         "self_heal_policy": dict(payload.get("self_heal_policy") or payload.get("selfHealPolicy") or {}),
     })
@@ -297,6 +332,8 @@ def build_runtime_context(
             "approval_state": dict(approval_state or {}),
             "permission_state": dict(permission_state or {}),
             "memory_state": dict(memory_state or {}),
+            "docs_state": _normalize_docs_state(project_root),
+            "config_state": _normalize_config_state(project_root),
             "host_boundary": dict(host_boundary or {}),
             "self_heal_policy": dict(self_heal_policy or {}),
         }

@@ -668,6 +668,10 @@ textarea {
   border-radius: 22px;
   border: 1px solid var(--line);
   background: #1b1b1b;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.18);
 }
 
 .composer-toolbar,
@@ -683,9 +687,121 @@ textarea {
   gap: 6px;
 }
 
+.chat-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mode-route-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .composer textarea {
   min-height: 108px;
   border-radius: 16px;
+}
+
+.composer-selector-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+.chat-activity-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.activity-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activity-copy span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.selector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 173, 92, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.selector-chip span {
+  color: var(--muted);
+}
+
+.selector-chip select {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 12, 18, 0.94);
+  color: var(--fg);
+  font: inherit;
+  min-width: 132px;
+  outline: none;
+  border-radius: 999px;
+  padding: 6px 30px 6px 10px;
+  appearance: none;
+  color-scheme: dark;
+}
+
+.selector-chip select:hover,
+.selector-chip select:focus {
+  border-color: rgba(224, 173, 92, 0.45);
+  box-shadow: 0 0 0 1px rgba(224, 173, 92, 0.18);
+}
+
+.selector-chip select option {
+  background: #11161f;
+  color: #f6efe2;
+}
+
+.selector-chip.info {
+  white-space: nowrap;
+}
+
+.manager-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.manager-drawer-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.manager-control-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .composer-meta {
@@ -716,6 +832,29 @@ textarea {
 .signal-indicator.signal-alert {
   border-color: rgba(240, 109, 109, 0.48);
   color: #ff9c9c;
+}
+
+.selector-chip.signal-active {
+  border-color: rgba(92, 211, 255, 0.48);
+  color: #8be2ff;
+}
+
+.selector-chip.signal-message {
+  border-color: rgba(255, 191, 87, 0.48);
+  color: #ffd287;
+}
+
+.selector-chip.signal-alert {
+  border-color: rgba(240, 109, 109, 0.48);
+  color: #ff9c9c;
+}
+
+.chat-compact-strip {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.chat-compact-strip .status-pill-card {
+  min-height: 108px;
 }
 
 .queue-card,
@@ -1011,6 +1150,7 @@ textarea,
   .topbar-actions,
   .composer-toolbar,
   .composer-footer,
+  .composer-selector-row,
   .settings-grid,
   .card-grid,
   .prompt-grid,
@@ -1026,5 +1166,10 @@ textarea,
 
   .chat-home-main {
     padding: 16px;
+  }
+
+  .selector-chip {
+    width: 100%;
+    justify-content: space-between;
   }
 }

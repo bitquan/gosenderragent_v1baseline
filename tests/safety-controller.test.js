@@ -77,3 +77,23 @@ test('manual safe mode becomes a hard stop and reports paused systems', () => {
   assert.deepEqual(result.pausedSystems, ['autonomy', 'scheduler', 'training', 'benchmarks', 'promotions']);
   assert.equal(result.controller.manualSafeMode, true);
 });
+
+test('infrastructure failures do not force self-work safe mode', () => {
+  const result = buildSafetyStatus({
+    workspaceRoot: '/workspace',
+    targetWorkspaceRoot: '/workspace',
+    labRoot: '',
+    appRoot: '/app',
+    baseline: { state: 'green', blocked: false },
+    latestRuntime: {
+      state: 'fail',
+      label: 'Task: Repair the latest failed validation path and rerun the relevant checks',
+      stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+    },
+    backups: [],
+  });
+
+  assert.equal(result.active, false);
+  assert.equal(result.blockAutonomy, false);
+  assert.equal(result.blockPromotions, false);
+});

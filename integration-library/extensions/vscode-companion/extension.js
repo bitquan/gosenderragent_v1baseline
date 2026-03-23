@@ -83,6 +83,18 @@ function resolveCompanionRepoRoot({ workspaceRoots = [], extensionRoot = '' } = 
   return candidates.find((root) => hasRepoMarkers(root)) || '';
 }
 
+function loadEngineContract(repoRoot = '') {
+  const root = String(repoRoot || '').trim();
+  if (!root) {
+    return null;
+  }
+  try {
+    return require(path.join(root, 'core', 'engine-contract.js'));
+  } catch (_error) {
+    return null;
+  }
+}
+
 function resolveWorkspaceRoot(vscode) {
   const folders = asArray(vscode.workspace.workspaceFolders);
   const first = folders[0];
@@ -442,8 +454,12 @@ function buildQueuedFollowupViewModel(value = {}) {
 
 function inferChatModeFromSnapshot(snapshot = {}) {
   const explicit = String(snapshot.chatMode || '').trim().toLowerCase();
-  if (['ask', 'plan', 'edit', 'agent'].includes(explicit)) {
+  if (['auto', 'ask', 'plan', 'edit', 'agent'].includes(explicit)) {
     return explicit;
+  }
+  const effective = String(snapshot.effectiveChatMode || '').trim().toLowerCase();
+  if (['ask', 'plan', 'edit', 'agent'].includes(effective)) {
+    return 'auto';
   }
   const laneId = String(snapshot.laneId || '').trim().toLowerCase();
   const taskMode = String(snapshot.taskMode || '').trim().toLowerCase();
@@ -459,10 +475,18 @@ function inferChatModeFromSnapshot(snapshot = {}) {
   return 'ask';
 }
 
-function buildChatModeViewModel(snapshot = {}) {
+function buildChatModeViewModel(snapshot = {}, options = {}) {
   const mode = inferChatModeFromSnapshot(snapshot);
-  const label = mode.charAt(0).toUpperCase() + mode.slice(1);
+  const effectiveMode = ['ask', 'plan', 'edit', 'agent'].includes(String(snapshot.effectiveChatMode || '').trim().toLowerCase())
+    ? String(snapshot.effectiveChatMode || '').trim().toLowerCase()
+    : (mode === 'auto' ? 'ask' : mode);
+  const contract = loadEngineContract(options.repoRoot || '');
+  const config = contract && typeof contract.getChatModeConfig === 'function'
+    ? contract.getChatModeConfig(mode)
+    : null;
+  const label = String(config?.label || (mode.charAt(0).toUpperCase() + mode.slice(1))).trim();
   const metaByMode = {
+    auto: 'Auto chooses the safest grounded behavior for the current request and gates.',
     ask: 'Human-style help, explanation, and repo guidance only.',
     plan: 'Scoped planning, risks, and next steps without launching edits.',
     edit: 'Code-focused changes and repair flow, with confirmation before execution.',
@@ -470,9 +494,45 @@ function buildChatModeViewModel(snapshot = {}) {
   };
   return {
     mode,
+    effectiveMode,
     label,
-    meta: metaByMode[mode] || metaByMode.ask,
+    meta: [String(config?.meta || metaByMode[mode] || metaByMode.ask).trim(), mode === 'auto' ? `effective: ${effectiveMode}` : ''].filter(Boolean).join(' - '),
   };
+}
+
+function buildGroundedReplyViewModel(controller, snapshot = {}, chatModeView = {}) {
+  const repoRoot = String(controller?.repoRoot || '').trim();
+  const workspaceRoot = String(controller?.workspaceRoot || '').trim();
+  if (!repoRoot || !workspaceRoot) {
+    return {
+      label: 'Grounded reply unavailable',
+      meta: 'Open the desktop-agent repo workspace so the companion can reuse the shared Ask and Plan path.',
+      reply: '',
+    };
+  }
+  try {
+    const { buildGroundedReplyView } = require(path.join(repoRoot, 'core', 'grounded-chat.js'));
+    const { buildSystemCheck } = require(path.join(repoRoot, 'core', 'system-check.js'));
+    const report = buildSystemCheck({
+      workspaceRoot: repoRoot,
+      targetWorkspaceRoot: workspaceRoot,
+      labRoot: String(snapshot?.selectedLabRoot || '').trim(),
+    });
+      const prompt = chatModeView.effectiveMode === 'plan'
+        ? (String(controller?.lastObjective || snapshot?.task || '').trim() || 'Plan the safest next slice for the current workspace.')
+        : (String(controller?.lastObjective || snapshot?.task || '').trim() || 'What should I know about the current workspace right now?');
+      return buildGroundedReplyView({
+        chatMode: chatModeView.mode || 'auto',
+        userPrompt: prompt,
+        report,
+      });
+  } catch (error) {
+    return {
+      label: 'Grounded reply unavailable',
+      meta: clipText(error instanceof Error ? error.message : 'Unable to load grounded reply view.', 180),
+      reply: '',
+    };
+  }
 }
 
 function queueNextTaskLoopFollowupInWorkspace({ repoRoot = '', workspaceRoot = '', snapshot = null, context = {} } = {}) {
@@ -532,7 +592,8 @@ function buildStatePayload(controller) {
     readCompanionLearningMemoryHints(controller.repoRoot, controller.workspaceRoot),
   );
   const gitSummaryView = readCompanionGitSummary(controller.repoRoot, controller.workspaceRoot);
-  const chatModeView = buildChatModeViewModel(snapshot || {});
+  const chatModeView = buildChatModeViewModel(snapshot || {}, { repoRoot: controller.repoRoot });
+  const groundedReplyView = buildGroundedReplyViewModel(controller, snapshot || {}, chatModeView);
   const selfHostProof = readCompanionSelfHostProof(controller.repoRoot, controller.workspaceRoot);
   const selfImprovementProof = readCompanionSelfImprovementProof(controller.repoRoot);
   return {
@@ -548,6 +609,7 @@ function buildStatePayload(controller) {
     reviewBundleView: buildReviewBundleViewModel(snapshot || {}),
     memoryHintsView: buildMemoryHintsViewModel(memoryHints),
     chatModeView,
+    groundedReplyView,
     gitSummaryView,
     selfHostProofView: buildSelfHostProofViewModel(selfHostProof),
     selfImprovementProofView: buildSelfImprovementProofViewModel(selfImprovementProof),
@@ -700,6 +762,11 @@ function buildWorkbenchHtml() {
           <p id="chatModeMeta" class="meta" style="margin-top:8px;"></p>
         </div>
         <div class="card">
+          <div class="eyebrow">Grounded reply</div>
+          <h3 id="groundedLabel">No grounded reply yet</h3>
+          <p id="groundedMeta" class="meta" style="margin-top:8px;"></p>
+        </div>
+        <div class="card">
           <div class="eyebrow">Git</div>
           <h3 id="gitLabel">No git summary yet</h3>
           <p id="gitMeta" class="meta" style="margin-top:8px;"></p>
@@ -792,6 +859,8 @@ function buildWorkbenchHtml() {
       const runtimeMeta = document.getElementById('runtimeMeta');
       const chatModeLabel = document.getElementById('chatModeLabel');
       const chatModeMeta = document.getElementById('chatModeMeta');
+      const groundedLabel = document.getElementById('groundedLabel');
+      const groundedMeta = document.getElementById('groundedMeta');
       const gitLabel = document.getElementById('gitLabel');
       const gitMeta = document.getElementById('gitMeta');
       const reviewLabel = document.getElementById('reviewLabel');
@@ -871,6 +940,9 @@ function buildWorkbenchHtml() {
         const chatModeView = state.chatModeView || { label: 'Ask', meta: 'Human-style help, explanation, and repo guidance only.' };
         chatModeLabel.textContent = chatModeView.label || 'Ask';
         chatModeMeta.textContent = chatModeView.meta || '';
+        const groundedReplyView = state.groundedReplyView || { label: 'No grounded reply yet', meta: '' };
+        groundedLabel.textContent = groundedReplyView.label || 'No grounded reply yet';
+        groundedMeta.textContent = groundedReplyView.meta || '';
         const gitSummaryView = state.gitSummaryView || { label: 'No git summary yet', meta: '' };
         gitLabel.textContent = gitSummaryView.label || 'No git summary yet';
         gitMeta.textContent = gitSummaryView.meta || '';
@@ -1504,6 +1576,7 @@ module.exports = {
   buildReviewBundleViewModel,
   buildQueuedFollowupViewModel,
   buildChatModeViewModel,
+  buildGroundedReplyViewModel,
   collectWorkspaceFileCandidates,
   queueNextTaskLoopFollowupInWorkspace,
   resolveNextActionCommand,
