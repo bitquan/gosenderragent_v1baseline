@@ -21866,6 +21866,32 @@
   function loadActiveThreadId() {
     return window.localStorage.getItem(ACTIVE_THREAD_KEY) || "";
   }
+  function UiIcon(props) {
+    const classes = `ui-icon ${props.className || ""}`.trim();
+    switch (props.name) {
+      case "plus":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M8 3.25v9.5M3.25 8h9.5" }) });
+      case "agents":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 4.25h6a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3.5a2 2 0 0 1 2-2Zm1-1.5h4M6 7.5h.01M10 7.5h.01M5.75 10c.7-.55 1.45-.85 2.25-.85s1.55.3 2.25.85" }) });
+      case "spaces":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M4.75 3.25h6.5a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1.5 1.5 0 0 1-1.5-1.5v-6.5a1.5 1.5 0 0 1 1.5-1.5ZM5 5.5h6" }) });
+      case "spark":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M8 2.75 9.45 6.55 13.25 8 9.45 9.45 8 13.25 6.55 9.45 2.75 8 6.55 6.55Z" }) });
+      case "mode":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M3.25 4.5h9.5M3.25 8h9.5M3.25 11.5h6.25" }) });
+      case "repo":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 3.25h5.75a2 2 0 0 1 2 2v5.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5.5a2 2 0 0 1 2-2Zm0 0v9.5M5.25 5.5h4" }) });
+      case "issue":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M8 4.5v4M8 11.25h.01M4.75 3.25h6.5a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1.5 1.5 0 0 1-1.5-1.5v-6.5a1.5 1.5 0 0 1 1.5-1.5Z" }) });
+      case "git":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0V11a2 2 0 0 0 2 2h2M11 4a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 4Zm0 0v7.5" }) });
+      case "pull-request":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0v8.5m6-8.5a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 3.75Zm0 0V8a3 3 0 0 1-3 3H6.25" }) });
+      case "session":
+      default:
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M4 4.75h8M4 8h8M4 11.25h5.5" }) });
+    }
+  }
   function persistThreads(threads, activeThreadId) {
     window.localStorage.setItem(THREADS_KEY, JSON.stringify(threads));
     window.localStorage.setItem(ACTIVE_THREAD_KEY, activeThreadId);
@@ -23084,7 +23110,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button rail-collapse", onClick: () => store.update((current) => ({ ...current, leftRailOpen: false })), children: "Close" })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "new-chat-button", onClick: onNewThread, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-plus", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "nav-icon" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("nav", { className: "rail-nav-list", children: [
@@ -23096,7 +23122,7 @@
               "data-route-tab": "workbench",
               onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-agents", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "agents", className: "nav-icon" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Agents" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? "" : "s"}` : "Open the main workspace chat" })
               ]
@@ -23109,7 +23135,7 @@
               "data-route-tab": "settings",
               onClick: () => onOpenSettingsTab("workspace"),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-spaces", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "spaces", className: "nav-icon" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spaces" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Choose a workspace root" })
               ]
@@ -23122,7 +23148,7 @@
               "data-route-tab": "monitor",
               onClick: () => onOpenMonitorTab("overview"),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-spark", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "spark", className: "nav-icon" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spark" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeTaskRun ? "Live run status is available" : "Preview runs, learning, and promotions" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("em", { children: "Preview" })
@@ -23147,7 +23173,7 @@
                 children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "session-thread-title-row", children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "session-thread-heading", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "session-thread-glyph", "aria-hidden": "true" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "session", className: "session-thread-icon" }),
                       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: entry.title })
                     ] }),
                     unread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "session-unread-dot", "aria-hidden": "true" }) : null
@@ -23436,11 +23462,11 @@
       "Set up the coding model and verify the engine is ready."
     ];
     const launcherActions = [
-      { label: "Agent", onClick: () => void props.onUpdateSetting("chatMode", "agent") },
-      { label: "Create issue", onClick: () => props.onQuickChat("Create a scoped issue list for the current workspace and rank it by impact.") },
-      { label: "Spark", onClick: () => props.onQuickChat("Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.") },
-      { label: "Git", onClick: () => props.onShowInspector("file") },
-      { label: "Pull requests", onClick: () => props.onShowInspector("inbox") }
+      { label: "Agent", icon: "agents", onClick: () => void props.onUpdateSetting("chatMode", "agent") },
+      { label: "Create issue", icon: "issue", onClick: () => props.onQuickChat("Create a scoped issue list for the current workspace and rank it by impact.") },
+      { label: "Spark", icon: "spark", onClick: () => props.onQuickChat("Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.") },
+      { label: "Git", icon: "git", onClick: () => props.onShowInspector("file") },
+      { label: "Pull requests", icon: "pull-request", onClick: () => props.onShowInspector("inbox") }
     ];
     const recentSessionItems = recentRuns.length > 0 ? recentRuns.map((item) => ({
       id: String(item?.runId || item?.id || item?.runtimeLabel || Math.random()),
@@ -23510,21 +23536,21 @@
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-mode", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "mode", className: "toolbar-icon" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-plus", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-repo", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "repo", className: "toolbar-icon" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-plus", "aria-hidden": "true" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "+" })
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Add" })
                   ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -23558,7 +23584,7 @@
                   ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-action-row", children: launcherActions.map((action) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost launch-action-pill", onClick: action.onClick, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `action-glyph action-${action.label.toLowerCase().replace(/\s+/g, "-")}`, "aria-hidden": "true" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: action.icon, className: "action-icon" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: action.label })
                 ] }, action.label)) }),
                 isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact launch-prompts", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
@@ -23612,7 +23638,7 @@
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "recent-session-list", children: recentSessionItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("article", { className: `recent-session-item${item.id === props.activeThreadId ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "recent-session-button", onClick: item.onClick, disabled: !item.onClick, children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-title-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "recent-session-glyph", "aria-hidden": "true" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "session", className: "recent-session-icon" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.status }),

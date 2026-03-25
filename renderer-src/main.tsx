@@ -11,6 +11,7 @@ const SETTINGS_TABS = ['general', 'workspace', 'ai', 'autonomy', 'skills', 'exte
 const MONITOR_TABS = ['overview', 'runs', 'learning', 'promotions', 'debug'] as const;
 type SettingsTabId = typeof SETTINGS_TABS[number];
 type MonitorTabId = typeof MONITOR_TABS[number];
+type UiIconName = 'plus' | 'agents' | 'spaces' | 'spark' | 'mode' | 'repo' | 'issue' | 'git' | 'pull-request' | 'session';
 
 type AppState = {
   loading: boolean;
@@ -149,6 +150,33 @@ function loadThreads(): ChatThread[] {
 
 function loadActiveThreadId() {
   return window.localStorage.getItem(ACTIVE_THREAD_KEY) || '';
+}
+
+function UiIcon(props: { name: UiIconName; className?: string }) {
+  const classes = `ui-icon ${props.className || ''}`.trim();
+  switch (props.name) {
+    case 'plus':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.25v9.5M3.25 8h9.5" /></svg>;
+    case 'agents':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 4.25h6a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3.5a2 2 0 0 1 2-2Zm1-1.5h4M6 7.5h.01M10 7.5h.01M5.75 10c.7-.55 1.45-.85 2.25-.85s1.55.3 2.25.85" /></svg>;
+    case 'spaces':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M4.75 3.25h6.5a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1.5 1.5 0 0 1-1.5-1.5v-6.5a1.5 1.5 0 0 1 1.5-1.5ZM5 5.5h6" /></svg>;
+    case 'spark':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.75 9.45 6.55 13.25 8 9.45 9.45 8 13.25 6.55 9.45 2.75 8 6.55 6.55Z" /></svg>;
+    case 'mode':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.25 4.5h9.5M3.25 8h9.5M3.25 11.5h6.25" /></svg>;
+    case 'repo':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.25h5.75a2 2 0 0 1 2 2v5.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5.5a2 2 0 0 1 2-2Zm0 0v9.5M5.25 5.5h4" /></svg>;
+    case 'issue':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5v4M8 11.25h.01M4.75 3.25h6.5a1.5 1.5 0 0 1 1.5 1.5v6.5a1.5 1.5 0 0 1-1.5 1.5h-6.5a1.5 1.5 0 0 1-1.5-1.5v-6.5a1.5 1.5 0 0 1 1.5-1.5Z" /></svg>;
+    case 'git':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0V11a2 2 0 0 0 2 2h2M11 4a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 4Zm0 0v7.5" /></svg>;
+    case 'pull-request':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0v8.5m6-8.5a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 3.75Zm0 0V8a3 3 0 0 1-3 3H6.25" /></svg>;
+    case 'session':
+    default:
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4.75h8M4 8h8M4 11.25h5.5" /></svg>;
+  }
 }
 
 function persistThreads(threads: ChatThread[], activeThreadId: string) {
@@ -1538,7 +1566,7 @@ function App() {
         </div>
 
         <button className="new-chat-button" onClick={onNewThread}>
-          <span className="nav-glyph nav-glyph-plus" aria-hidden="true" />
+          <UiIcon name="plus" className="nav-icon" />
           <span>New chat</span>
         </button>
 
@@ -1549,7 +1577,7 @@ function App() {
             data-route-tab="workbench"
             onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
           >
-            <span className="nav-glyph nav-glyph-agents" aria-hidden="true" />
+              <UiIcon name="agents" className="nav-icon" />
             <strong>Agents</strong>
             <span>{unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? '' : 's'}` : 'Open the main workspace chat'}</span>
           </button>
@@ -1558,7 +1586,7 @@ function App() {
             data-route-tab="settings"
             onClick={() => onOpenSettingsTab('workspace')}
           >
-            <span className="nav-glyph nav-glyph-spaces" aria-hidden="true" />
+              <UiIcon name="spaces" className="nav-icon" />
             <strong>Spaces</strong>
             <span>{shortPath(status.target) || 'Choose a workspace root'}</span>
           </button>
@@ -1567,7 +1595,7 @@ function App() {
             data-route-tab="monitor"
             onClick={() => onOpenMonitorTab('overview')}
           >
-            <span className="nav-glyph nav-glyph-spark" aria-hidden="true" />
+              <UiIcon name="spark" className="nav-icon" />
             <strong>Spark</strong>
             <span>{activeTaskRun ? 'Live run status is available' : 'Preview runs, learning, and promotions'}</span>
             <em>Preview</em>
@@ -1592,7 +1620,7 @@ function App() {
                 >
                   <div className="session-thread-title-row">
                     <div className="session-thread-heading">
-                      <span className="session-thread-glyph" aria-hidden="true" />
+                      <UiIcon name="session" className="session-thread-icon" />
                       <strong>{entry.title}</strong>
                     </div>
                     {unread ? <span className="session-unread-dot" aria-hidden="true" /> : null}
@@ -1933,11 +1961,11 @@ function WorkbenchPanel(props: {
     'Set up the coding model and verify the engine is ready.',
   ];
   const launcherActions = [
-    { label: 'Agent', onClick: () => void props.onUpdateSetting('chatMode', 'agent') },
-    { label: 'Create issue', onClick: () => props.onQuickChat('Create a scoped issue list for the current workspace and rank it by impact.') },
-    { label: 'Spark', onClick: () => props.onQuickChat('Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.') },
-    { label: 'Git', onClick: () => props.onShowInspector('file') },
-    { label: 'Pull requests', onClick: () => props.onShowInspector('inbox') },
+    { label: 'Agent', icon: 'agents' as UiIconName, onClick: () => void props.onUpdateSetting('chatMode', 'agent') },
+    { label: 'Create issue', icon: 'issue' as UiIconName, onClick: () => props.onQuickChat('Create a scoped issue list for the current workspace and rank it by impact.') },
+    { label: 'Spark', icon: 'spark' as UiIconName, onClick: () => props.onQuickChat('Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.') },
+    { label: 'Git', icon: 'git' as UiIconName, onClick: () => props.onShowInspector('file') },
+    { label: 'Pull requests', icon: 'pull-request' as UiIconName, onClick: () => props.onShowInspector('inbox') },
   ];
   const recentSessionItems = recentRuns.length > 0
     ? recentRuns.map((item) => ({
@@ -2045,7 +2073,7 @@ function WorkbenchPanel(props: {
               <div className="composer chat-composer launch-composer">
                 <div className="chat-mode-bar launch-toolbar">
                   <label className="selector-chip">
-                    <span className="toolbar-glyph toolbar-glyph-mode" aria-hidden="true" />
+                    <UiIcon name="mode" className="toolbar-icon" />
                     <span>Mode</span>
                     <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
                       {chatModes.map((mode) => (
@@ -2054,16 +2082,16 @@ function WorkbenchPanel(props: {
                     </select>
                   </label>
                   <button className="selector-chip selector-button" onClick={props.onNewThread}>
-                    <span className="toolbar-glyph toolbar-glyph-plus" aria-hidden="true" />
+                    <UiIcon name="plus" className="toolbar-icon" />
                     <span>New chat</span>
                   </button>
                   <button className="selector-chip selector-button workspace-button" onClick={() => props.onShowInspector('file')}>
-                    <span className="toolbar-glyph toolbar-glyph-repo" aria-hidden="true" />
+                    <UiIcon name="repo" className="toolbar-icon" />
                     <span>{workspaceLabel}</span>
                   </button>
                   <button className="selector-chip selector-button" onClick={props.onPickAttachments} aria-label="Attach screenshot">
-                    <span className="toolbar-glyph toolbar-glyph-plus" aria-hidden="true" />
-                    <span>+</span>
+                    <UiIcon name="plus" className="toolbar-icon" />
+                    <span>Add</span>
                   </button>
                 </div>
 
@@ -2101,7 +2129,7 @@ function WorkbenchPanel(props: {
                 <div className="launch-action-row">
                   {launcherActions.map((action) => (
                     <button key={action.label} className="ghost launch-action-pill" onClick={action.onClick}>
-                      <span className={`action-glyph action-${action.label.toLowerCase().replace(/\s+/g, '-')}`} aria-hidden="true" />
+                      <UiIcon name={action.icon} className="action-icon" />
                       <span>{action.label}</span>
                     </button>
                   ))}
@@ -2189,7 +2217,7 @@ function WorkbenchPanel(props: {
                   <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
                     <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
                       <div className="recent-session-title-row">
-                        <span className="recent-session-glyph" aria-hidden="true" />
+                        <UiIcon name="session" className="recent-session-icon" />
                         <strong>{item.title}</strong>
                       </div>
                       <span>{item.status}</span>
