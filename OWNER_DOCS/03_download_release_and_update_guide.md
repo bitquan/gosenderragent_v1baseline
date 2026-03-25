@@ -38,6 +38,8 @@ Current staged Windows release location:
 
 - `E:\dev\projects\gosenderr_dev_offload\desktop_releases`
 
+Example staged artifacts follow the current package version and architecture. Do not rely on older hard-coded filenames when checking the latest release.
+
 Current version built in this pass:
 
 - `E:\dev\projects\gosenderr_dev_offload\desktop_releases\GoSenderr Desktop Agent PC-0.1.4-x64.exe`

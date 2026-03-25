@@ -53,6 +53,23 @@ function normalizeCandidate(value = {}) {
   };
 }
 
+function normalizeRunFindingCandidates(value, defaults = {}) {
+  const fallbackPaths = Array.isArray(defaults.targetPaths)
+    ? defaults.targetPaths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  return normalizeFollowups(value).map((candidate) => {
+    const normalized = normalizeCandidate(candidate);
+    return {
+      ...normalized,
+      targetPaths: normalized.targetPaths.length > 0 ? normalized.targetPaths : fallbackPaths,
+      metadata: {
+        ...(normalized.metadata && typeof normalized.metadata === 'object' ? normalized.metadata : {}),
+        workspaceScopeRoot: String(defaults.workspaceScopeRoot || '').trim(),
+      },
+    };
+  });
+}
+
 function dedupeById(items = []) {
   const seen = new Set();
   return items.filter((item) => {
@@ -423,6 +440,141 @@ function buildAutoFollowupPlan(execution = {}, context = {}) {
   };
 }
 
+function buildRunFollowupPlan(run = {}, context = {}) {
+  const normalizedRun = normalizeExecution(run);
+  const settings = context.settings && typeof context.settings === 'object' ? context.settings : {};
+  const safeMode = context.safeMode && typeof context.safeMode === 'object' ? context.safeMode : {};
+  const reviewSummary = normalizedRun.reviewSummary && typeof normalizedRun.reviewSummary === 'object'
+    ? normalizedRun.reviewSummary
+    : {};
+  const queueEnabled = settings.autoQueueTaskLoopFollowups !== false;
+  const autoRunEnabled = settings.autoRunQueuedTaskLoopFollowups === true;
+  const hardSafeMode = safeMode.active === true || safeMode.controller?.manualSafeMode === true;
+  const workspaceScopeRoot = String(
+    normalizedRun.targetWorkspaceRoot
+    || normalizedRun.workspaceRoot
+    || normalizedRun.runtimeContext?.targetWorkspaceRoot
+    || normalizedRun.runtimeContext?.workspaceRoot
+    || '',
+  ).trim();
+  const changedPaths = Array.isArray(normalizedRun.changedFiles)
+    ? normalizedRun.changedFiles
+      .map((item) => String(item?.path || item || '').trim())
+      .filter(Boolean)
+      .slice(0, 3)
+    : [];
+  const revisionCandidates = normalizeRunFindingCandidates(reviewSummary.revisionCandidates, {
+    targetPaths: changedPaths,
+    workspaceScopeRoot,
+  });
+  const regressionCandidates = normalizeRunFindingCandidates(
+    reviewSummary.regressionCandidates || normalizedRun.regressionCandidates,
+    {
+      targetPaths: changedPaths,
+      workspaceScopeRoot,
+    },
+  );
+  const pendingApprovals = Math.max(
+    0,
+    Number(reviewSummary.pendingApprovalCount || reviewSummary.pending_approval_count || context.pendingApprovals || 0) || 0,
+  );
+  const recipe = clampRecipeToAutonomyStage(buildFollowupRecipe({
+    followups: [
+      ...revisionCandidates.map((candidate) => ({
+        id: candidate.id,
+        kind: candidate.kind || 'revision',
+        category: candidate.category,
+        title: candidate.title,
+        summary: candidate.summary,
+        riskClass: candidate.riskClass,
+        candidate,
+      })),
+      ...regressionCandidates.map((candidate) => ({
+        id: candidate.id,
+        kind: candidate.kind || 'regression',
+        category: candidate.category,
+        title: candidate.title,
+        summary: candidate.summary,
+        riskClass: candidate.riskClass,
+        candidate,
+      })),
+    ],
+  }, {
+    reviewer: { pendingApprovalCount: pendingApprovals },
+    safeMode,
+  }), context);
+
+  if (!recipe || recipe.exists !== true) {
+    return {
+      exists: false,
+      source: 'run-findings',
+      recipe: null,
+      shouldQueue: false,
+      shouldAutoRun: false,
+      queueEnabled,
+      autoRunEnabled,
+      reason: 'The latest run does not have queueable reviewer follow-up findings yet.',
+    };
+  }
+
+  if (!queueEnabled) {
+    return {
+      exists: true,
+      source: 'run-findings',
+      recipe: { ...recipe, autoQueueEligible: false },
+      shouldQueue: false,
+      shouldAutoRun: false,
+      queueEnabled,
+      autoRunEnabled,
+      reason: 'Automatic next-task queueing is turned off.',
+    };
+  }
+
+  if (hardSafeMode) {
+    return {
+      exists: true,
+      source: 'run-findings',
+      recipe: { ...recipe, autoQueueEligible: false },
+      shouldQueue: false,
+      shouldAutoRun: false,
+      queueEnabled,
+      autoRunEnabled,
+      reason: 'Safe mode is active, so keep reviewer follow-up tasks operator-triggered.',
+    };
+  }
+
+  if (pendingApprovals > 0 || reviewSummary.requiresManualReview === true || reviewSummary.requires_manual_review === true) {
+    return {
+      exists: true,
+      source: 'run-findings',
+      recipe: { ...recipe, autoQueueEligible: false },
+      shouldQueue: false,
+      shouldAutoRun: false,
+      queueEnabled,
+      autoRunEnabled,
+      reason: 'Review or approval is still holding the loop, so do not auto-queue the follow-up tasks yet.',
+    };
+  }
+
+  const shouldQueue = recipe.autoQueueEligible === true;
+  const shouldAutoRun = shouldQueue && autoRunEnabled;
+
+  return {
+    exists: true,
+    source: 'run-findings',
+    recipe,
+    shouldQueue,
+    shouldAutoRun,
+    queueEnabled,
+    autoRunEnabled,
+    reason: shouldAutoRun
+      ? 'Safe to queue and auto-run the reviewer follow-up tasks from the latest run.'
+      : shouldQueue
+        ? 'Safe to queue the reviewer follow-up tasks from the latest run.'
+        : 'Review the latest run findings manually before queueing follow-up tasks.',
+  };
+}
+
 function buildFollowupRecipe(testBench = {}, context = {}) {
   const followups = normalizeFollowups(testBench.followups);
   const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === 'object'
@@ -675,6 +827,7 @@ module.exports = {
   buildAutoFollowupPlan,
   buildFollowupRecipe,
   buildNextActionRecipe,
+  buildRunFollowupPlan,
   clampRecipeToAutonomyStage,
   buildQueuedRecipePayload,
   queueFollowupRecipeTasks,

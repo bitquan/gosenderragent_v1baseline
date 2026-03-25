@@ -45,6 +45,7 @@ test('learning journal keeps background polling disabled until explicitly enable
 test('learning journal reads recent entries from large journal files without losing the newest records', () => {
   const { root } = makeWorkspace();
   const service = new LearningJournalService();
+  const originalParse = JSON.parse;
   try {
     service.setScope({
       workspaceRoot: root,
@@ -59,11 +60,20 @@ test('learning journal reads recent entries from large journal files without los
       });
     }
 
+    let parseCount = 0;
+    JSON.parse = (...args) => {
+      parseCount += 1;
+      return originalParse(...args);
+    };
     const recent = service.listRecentChanges(5);
+    JSON.parse = originalParse;
+
     assert.equal(recent.ok, true);
     assert.equal(recent.entries.length, 5);
     assert.equal(recent.entries.at(-1)?.payload?.path, 'src/file-2599.ts');
+    assert.ok(parseCount <= 8, `expected a bounded number of JSON parses, got ${parseCount}`);
   } finally {
+    JSON.parse = originalParse;
     service.stop();
     fs.rmSync(root, { recursive: true, force: true });
   }

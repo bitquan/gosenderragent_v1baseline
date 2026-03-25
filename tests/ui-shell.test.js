@@ -26,6 +26,7 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /"monitor"/);
   assert.match(appJs, /"settings"/);
   assert.match(appJs, /"inbox"/);
+  assert.match(appJs, /Handbook/);
   assert.match(appJs, /data-settings-tab/);
   assert.match(appJs, /"ai"/);
   assert.match(appJs, /"labs"/);
@@ -90,6 +91,7 @@ test('shell keeps model, labs, learning, and file-edit actions connected to prel
   assert.match(appJs, /window\.gosAgent\.bootstrap\(/);
   assert.match(appJs, /window\.gosAgent\.bootstrapLite\(/);
   assert.match(appJs, /window\.gosAgent\.openLocation/);
+  assert.match(appJs, /path: handbookPath/);
   assert.match(appJs, /window\.gosAgent\.updateSettings/);
   assert.match(appJs, /props\.onUpdateSetting\("chatMode"/);
   assert.match(appJs, /props\.onUpdateSetting\("aiRemoteModel"/);

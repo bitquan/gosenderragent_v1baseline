@@ -75,6 +75,7 @@ STOPWORDS = {
 
 MAX_TERM_COUNT = 18
 MAX_CONTENT_SCAN_BYTES = 4000
+IMPORTABLE_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 
 
 def _split_identifier_terms(value: str) -> list[str]:
@@ -143,6 +144,75 @@ def _read_candidate_excerpt(target: Path) -> str:
             return handle.read(MAX_CONTENT_SCAN_BYTES)
     except Exception:
         return ""
+
+
+def _is_test_path(path: str) -> bool:
+    lowered = str(path or "").strip().lower().replace("\\", "/")
+    name = Path(lowered).name
+    return (
+        "/tests/" in f"/{lowered}"
+        or lowered.startswith("tests/")
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or ".test." in name
+        or ".spec." in name
+    )
+
+
+def _resolve_relative_import(project_root: Path, source_path: Path, specifier: str) -> str:
+    raw = str(specifier or "").strip()
+    if not raw.startswith("."):
+        return ""
+    base = (source_path.parent / raw).resolve()
+    candidates: list[Path] = []
+    if base.suffix:
+        candidates.append(base)
+    else:
+        candidates.append(base)
+        for suffix in IMPORTABLE_SUFFIXES:
+            candidates.append(base.with_suffix(suffix))
+        for suffix in IMPORTABLE_SUFFIXES:
+            candidates.append(base / f"index{suffix}")
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        try:
+            return str(candidate.relative_to(project_root)).replace("\\", "/")
+        except Exception:
+            continue
+    return ""
+
+
+def _infer_related_import_paths(project_root: Path, candidate_path: str) -> list[str]:
+    if not _is_test_path(candidate_path):
+        return []
+    target = project_root / candidate_path
+    if not target.exists() or not target.is_file():
+        return []
+    try:
+        content = target.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    discovered: list[str] = []
+    seen: set[str] = set()
+    patterns = (
+        re.compile(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)"),
+        re.compile(r"from\s+['\"]([^'\"]+)['\"]"),
+        re.compile(r"import\s+['\"]([^'\"]+)['\"]"),
+    )
+    for pattern in patterns:
+        for specifier in pattern.findall(content):
+            resolved = _resolve_relative_import(project_root, target, specifier)
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                discovered.append(resolved)
+    return discovered
 
 
 def _score_candidate_path(path: str, *, active_file_path: str = "", open_files: list[str] | None = None, terms: list[str] | None = None, content_excerpt: str = "") -> tuple[int, list[str]]:
@@ -236,12 +306,27 @@ def rank_related_files(
     limit: int = 8,
 ) -> list[dict[str, Any]]:
     items = list(candidates or iter_repo_files(project_root, ignore_dirs=ignore_dirs))
+    expanded: list[str] = []
+    seen_candidates: set[str] = set()
+    for path in items:
+        normalized = str(path or "").replace("\\", "/")
+        if not normalized or normalized in seen_candidates:
+            continue
+        seen_candidates.add(normalized)
+        expanded.append(normalized)
+        if candidates:
+            for related_path in _infer_related_import_paths(project_root, normalized):
+                if related_path in seen_candidates:
+                    continue
+                seen_candidates.add(related_path)
+                expanded.append(related_path)
+    items = expanded
     payload = dict(editor_context or {})
     active_file_path = str(payload.get("active_file_path") or "").strip()
     open_files = [str(item) for item in (payload.get("open_files") or []) if str(item).strip()]
     terms = _editor_context_terms(payload, query=query)
 
-    ranked: list[dict[str, Any]] = []
+    ranked_by_path: dict[str, dict[str, Any]] = {}
     for path in items:
         if not path or is_ignored(Path(path), ignore_dirs=ignore_dirs):
             continue
@@ -256,8 +341,37 @@ def rank_related_files(
         )
         if score <= 0 and terms:
             continue
-        ranked.append({"path": path, "score": score, "reasons": reasons})
+        ranked_by_path[path] = {"path": path, "score": score, "reasons": reasons}
 
+    boost_sources = [
+        item for item in ranked_by_path.values()
+        if _is_test_path(str(item.get("path") or "")) and int(item.get("score") or 0) > 0
+    ]
+    for item in boost_sources:
+        source_score = int(item.get("score") or 0)
+        for related_path in _infer_related_import_paths(project_root, str(item.get("path") or "")):
+            if is_ignored(Path(related_path), ignore_dirs=ignore_dirs):
+                continue
+            target = project_root / related_path
+            excerpt = _read_candidate_excerpt(target)
+            related_score, related_reasons = _score_candidate_path(
+                related_path,
+                active_file_path=active_file_path,
+                open_files=open_files,
+                terms=terms,
+                content_excerpt=excerpt,
+            )
+            boosted_score = max(related_score, source_score + 24)
+            boosted_reasons = list(related_reasons)
+            boosted_reasons.append(f"imported-by-test:{item.get('path')}")
+            existing = ranked_by_path.get(related_path)
+            if existing and int(existing.get("score") or 0) >= boosted_score:
+                if f"imported-by-test:{item.get('path')}" not in list(existing.get("reasons") or []):
+                    existing["reasons"] = list(existing.get("reasons") or []) + [f"imported-by-test:{item.get('path')}"]
+                continue
+            ranked_by_path[related_path] = {"path": related_path, "score": boosted_score, "reasons": boosted_reasons}
+
+    ranked = list(ranked_by_path.values())
     ranked.sort(key=lambda item: (-int(item.get("score", 0)), str(item.get("path", ""))))
     return ranked[: max(1, int(limit or 8))]
 

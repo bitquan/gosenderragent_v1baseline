@@ -1,6 +1,8 @@
 # GoSenderr Desktop Agent Docs
 
-This folder documents the current GoSenderr Desktop Agent implementation in `tools/gosenderr-desktop-agent`.
+Use `docs/BAT_FEATURE_BOARD.md` as the daily source of truth for workflow, commands, validation, and active BAT status.
+
+This folder is compatibility-oriented reference material for the desktop subsystem. It should explain the current implementation, but it should not compete with the board for operator workflow.
 
 ## Scope
 
@@ -16,20 +18,26 @@ These docs describe the desktop app as it exists today:
 
 Primary source files:
 
-- `tools/gosenderr-desktop-agent/main.js`
-- `tools/gosenderr-desktop-agent/preload.js`
-- `tools/gosenderr-desktop-agent/renderer/index.html`
-- `tools/gosenderr-desktop-agent/renderer/app.js`
-- `tools/gosenderr-desktop-agent/core/*.js`
-- `tools/gosenderr-desktop-agent/shared-runtime/*.js`
+- `main.js`
+- `preload.js`
+- `renderer-src/main.tsx`
+- `renderer/index.html`
+- `renderer/app.js` (generated output)
+- `core/*.js`
+- `shared-runtime/*.js`
 
 Supporting runtime/backend sources:
 
-- `backend/agent/runtime/runtime_api.py`
-- `backend/scripts/solo_dev_assistant.py`
-- `backend/scripts/autopilot.py`
-- `backend/agent/core/storage_paths.py`
+- `runtime/backend/agent/runtime/runtime_api.py`
+- `runtime/backend/agent/core/*.py`
+- `runtime/backend/scripts/*.py`
 - `dev_assistant.yaml`
+
+Generated output boundaries:
+
+- edit `renderer-src/*` instead of `renderer/app.js`
+- edit source/runtime files instead of packaged copies under `WINDOWS_APP/`
+- refresh generated copies through the normal build or packaging flows after source changes land
 
 ## Documentation status markers
 
@@ -41,6 +49,7 @@ The docs use these labels when needed:
 
 ## Document map
 
+- [BAT feature board](../BAT_FEATURE_BOARD.md)
 - [Implementation plan](./IMPLEMENTATION_PLAN.md)
 - [Architecture](./ARCHITECTURE.md)
 - [IPC and internal API](./IPC_API.md)

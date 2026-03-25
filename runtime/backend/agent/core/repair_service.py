@@ -62,6 +62,36 @@ def _module_hint_to_path(module_name: str) -> str:
     return f"{str(module_name or '').replace('.', '/')}.py".lstrip("/")
 
 
+def _resolve_relative_import(root: Path, source_path: str, specifier: str) -> str:
+    raw = str(specifier or "").strip()
+    if not raw.startswith("."):
+        return ""
+    base = (root / source_path).parent / raw
+    candidates: list[Path] = []
+    if base.suffix:
+        candidates.append(base)
+    else:
+        candidates.append(base)
+        for suffix in (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"):
+            candidates.append(base.with_suffix(suffix))
+        for suffix in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"):
+            candidates.append(base / f"index{suffix}")
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not resolved.exists() or not resolved.is_file():
+            continue
+        try:
+            return str(resolved.relative_to(root.resolve())).replace("\\", "/")
+        except Exception:
+            continue
+    return ""
+
+
 def _extract_trace_paths(text: str) -> list[str]:
     return re.findall(r"([\w./-]+\.(?:py|ts|tsx|js|jsx))", str(text or ""))
 
@@ -96,6 +126,18 @@ def _infer_imported_source_paths(root: Path, test_path: str) -> list[str]:
     for module_name in re.findall(r"^\s*import\s+([A-Za-z_][\w.]*)", content, flags=re.MULTILINE):
         rel_path = _module_hint_to_path(module_name)
         if rel_path not in discovered:
+            discovered.append(rel_path)
+    for specifier in re.findall(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)", content):
+        rel_path = _resolve_relative_import(root, test_path, specifier)
+        if rel_path and rel_path not in discovered:
+            discovered.append(rel_path)
+    for specifier in re.findall(r"from\s+['\"]([^'\"]+)['\"]", content):
+        rel_path = _resolve_relative_import(root, test_path, specifier)
+        if rel_path and rel_path not in discovered:
+            discovered.append(rel_path)
+    for specifier in re.findall(r"import\s+['\"]([^'\"]+)['\"]", content):
+        rel_path = _resolve_relative_import(root, test_path, specifier)
+        if rel_path and rel_path not in discovered:
             discovered.append(rel_path)
     return discovered
 

@@ -31,10 +31,11 @@ from backend.agent.runtime import runtime_api
 
 captured = {}
 
-def fake_run_tool_loop(*, project_root, objective, ticket=None, context=None, approval_gate=None, max_steps=10):
+def fake_run_tool_loop(*, project_root, objective, ticket=None, context=None, approval_gate=None, provider=None, max_steps=10, **_kwargs):
     captured["project_root"] = str(project_root)
     captured["context_project_root"] = str((context or {}).get("project_root") or "")
     captured["host_boundary"] = dict((context or {}).get("host_boundary") or {})
+    captured["provider"] = bool(provider)
     return {
         "ok": True,
         "review_summary": {},

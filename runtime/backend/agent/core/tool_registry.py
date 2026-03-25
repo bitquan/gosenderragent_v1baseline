@@ -369,7 +369,20 @@ def _git_diff_tool(
 
 
 def _git_status_tool(project_root: Path) -> dict[str, Any]:
-    return _run_command_tool(project_root, ["git", "status", "--short"])
+    resolved_root = project_root.resolve()
+    git_root = next((candidate for candidate in (resolved_root, *resolved_root.parents) if (candidate / ".git").exists()), None)
+    if git_root is None:
+        return {
+            "command": ["git", "status", "--short"],
+            "cwd": str(resolved_root),
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+            "ok": True,
+            "skipped": True,
+            "reason": "no git root for current project",
+        }
+    return _run_command_tool(git_root, ["git", "status", "--short"])
 
 
 def _notify_tool(project_root: Path, url: str, payload: dict[str, Any]) -> dict[str, Any]:

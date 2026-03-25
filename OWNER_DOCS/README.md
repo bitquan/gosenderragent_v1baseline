@@ -1,5 +1,7 @@
 # Owner Docs
 
+Use `docs/BAT_FEATURE_BOARD.md` first for the live command book, workflow rules, and active BAT status. Read the files here when you need a longer owner guide after the board points you to the right area.
+
 Start here if you want to run, use, update, and supervise the GoSenderr Desktop Agent without digging through repo internals.
 
 Files in this folder:

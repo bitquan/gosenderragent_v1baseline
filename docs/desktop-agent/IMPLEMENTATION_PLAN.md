@@ -1,8 +1,10 @@
 # GoSenderr Desktop Agent Documentation Implementation Plan
 
+Daily workflow moved to `docs/BAT_FEATURE_BOARD.md`. This file is implementation reference material, not the operator command book.
+
 ## Goal
 
-Create a durable documentation set for `tools/gosenderr-desktop-agent` as a real repo subsystem, without redesigning the app and without inventing behavior that is not present in code.
+Create a durable documentation set for the current desktop-agent repo subsystem, without redesigning the app and without inventing behavior that is not present in code.
 
 ## Stage 1 inspection summary
 
@@ -10,10 +12,11 @@ Confirmed from current source inspection:
 
 ### 1. Desktop app structure
 
-- Electron entrypoint: `tools/gosenderr-desktop-agent/main.js`
-- Preload bridge: `tools/gosenderr-desktop-agent/preload.js`
-- Renderer shell: `tools/gosenderr-desktop-agent/renderer/index.html`
-- Renderer logic: `tools/gosenderr-desktop-agent/renderer/app.js`
+- Electron entrypoint: `main.js`
+- Preload bridge: `preload.js`
+- Renderer shell: `renderer/index.html`
+- Renderer source: `renderer-src/main.tsx`
+- Renderer output: `renderer/app.js`
 - Desktop core helpers:
   - `core/assistant-paths.js`
   - `core/autonomy.js`
@@ -36,7 +39,8 @@ Confirmed from current source inspection:
   - `scripts/sync-core.js`
   - `scripts/smoke.js`
   - `scripts/run-electron-builder.js`
-  - `scripts/build-open-mac-installer.js`
+  - `scripts/build-current-win-release.js`
+  - `scripts/build-open-mac-installer.js` (compatibility path, not the Windows-first daily release flow)
   - `scripts/notarize.js`
 - Tests:
   - `tests/runtime.test.js`

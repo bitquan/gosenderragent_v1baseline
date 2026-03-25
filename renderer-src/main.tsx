@@ -191,6 +191,28 @@ function readSafeMode(snapshot: JsonMap | null) {
     : {};
 }
 
+function deriveInboxDedupeKey(item: InboxItem) {
+  return [
+    String(item.id || '').trim(),
+    String(item.path || '').trim(),
+    String(item.source || '').trim(),
+    String(item.targetTab || '').trim(),
+    String(item.title || '').trim(),
+  ].filter(Boolean).join('::');
+}
+
+function dedupeInboxItems(items: InboxItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = deriveInboxDedupeKey(item);
+    if (!key || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildInboxItems(input: {
   snapshot: JsonMap | null;
   learningStatus: JsonMap;
@@ -373,7 +395,7 @@ function buildInboxItems(input: {
     });
   }
 
-  return items.slice(0, 12);
+  return dedupeInboxItems(items).slice(0, 12);
 }
 
 function pushUniqueSuggestion(target: string[], value: string) {
@@ -690,6 +712,9 @@ function readAiModelOptions(aiStatus: JsonMap | null, tuning: JsonMap | null, se
 
 function App() {
   const state = useStoreValue(store);
+  const reportRendererError = window.gosAgent.reportRendererError;
+  void reportRendererError;
+  const handbookPath = 'docs/BAT_FEATURE_BOARD.md';
   const thread = activeThread(state);
   const status = shellStatus(state.snapshot);
   const safeMode = readSafeMode(state.snapshot);
@@ -1073,6 +1098,14 @@ function App() {
       activeInspectorTab: 'inbox',
     }));
     void refreshApp('full');
+  };
+
+  const onOpenHandbook = async () => {
+    const result = await window.gosAgent.openLocation({ path: handbookPath });
+    store.update((current) => ({
+      ...current,
+      error: result?.ok ? '' : String(result?.message || 'Unable to open the handbook.'),
+    }));
   };
 
   const onRollbackLatestBackup = async (backupId = '') => {
@@ -1605,6 +1638,9 @@ function App() {
             >
               Monitor
             </button>
+            <button className="toolbar-chip" onClick={() => void onOpenHandbook()}>
+              Handbook
+            </button>
             <button className="toolbar-chip" onClick={() => void refreshApp('full')}>Sync</button>
             <button
               className={`toolbar-chip${state.rightRailOpen && state.activeInspectorTab === 'inbox' ? ' active' : ''}`}
@@ -1841,9 +1877,29 @@ function WorkbenchPanel(props: {
   onOpenInbox: () => void;
   onRollbackLatestBackup: (backupId?: string) => void;
 }) {
+  const [managerPanelOpen, setManagerPanelOpen] = React.useState(true);
   const settings = props.snapshot?.settings || {};
+  const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
   const messages = props.thread?.messages || [];
   const isFreshThread = !messages.some((message) => message.role !== 'system');
+  const chatMode = chatModes.includes(String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
+    ? (String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
+    : 'auto';
+  const chatTransparencyLevel = String(settings.chatTransparencyLevel || 'balanced');
+  const effectiveChatMode = chatMode;
+  const modeSummaryLabel = `effective ${effectiveChatMode}`;
+  const modeRouteSummary: Record<typeof chatModes[number], string> = {
+    auto: 'supervised engine loop',
+    ask: 'answer directly without mutating the workspace',
+    plan: 'shape the next safe slice before making edits',
+    edit: 'focus on bounded repo edits and validation',
+    agent: 'use auto manager to route the full operator loop',
+  };
+  const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || 'workspace').trim() || 'workspace';
+  const safetyLabel = props.safeMode.active
+    ? 'Safe mode active'
+    : (props.safeMode.watchOnly ? 'Safety watch active' : 'Safety ready');
+  const openModule = props.inboxItems.length > 0 ? 'monitor' : 'workbench';
   const latestGoal = props.goalList[0] || null;
   const latestTask = props.taskList[0] || null;
   const latestRun = props.taskRuns[0] || null;
@@ -1987,6 +2043,72 @@ function WorkbenchPanel(props: {
               <p>{props.unreadCount > 0 ? `${props.unreadCount} unread thread${props.unreadCount === 1 ? '' : 's'} • ` : ''}{props.safeMode.active ? 'Safe mode needs review.' : 'Approvals, learning, and warnings stay in one place.'}</p>
             </article>
           </div>
+
+          <div className="chat-mode-bar">
+            <label className="selector-chip">
+              <span>Mode</span>
+              <select defaultValue={effectiveChatMode} aria-label="Chat mode">
+                {chatModes.map((mode) => (
+                  <option key={mode} value={mode}>{mode}</option>
+                ))}
+              </select>
+            </label>
+            <div className="chat-compact-strip">
+              <strong>{modeSummaryLabel}</strong>
+              <span>{modeRouteSummary[chatMode]}</span>
+            </div>
+          </div>
+
+          <div className="chat-activity-strip">
+            <span>{branchLabel}</span>
+            <span>{safetyLabel}</span>
+            <button
+              className={openModule === "monitor" ? 'ghost active' : 'ghost'}
+              onClick={() => setManagerPanelOpen((current) => !current)}
+            >
+              Manager panel
+            </button>
+            <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
+          </div>
+
+          {managerPanelOpen ? (
+          <section className="manager-drawer">
+            <div>
+              <div className="eyebrow">Manager</div>
+              <strong>Use auto manager</strong>
+              <p>Talk to the engine like a teammate.</p>
+              <p>Keep the current desktop design, but expose Papadex-style manager and worker controls directly in chat.</p>
+            </div>
+            <div className="composer-selector-row">
+              <label className="selector-chip">
+                <span>Manager</span>
+                <select defaultValue="auto" aria-label="Manager mode">
+                  <option value="auto">auto</option>
+                  <option value="guided">guided</option>
+                </select>
+              </label>
+              <label className="selector-chip">
+                <span>Worker</span>
+                <select defaultValue="workspace" aria-label="Worker routing">
+                  <option value="workspace">workspace</option>
+                  <option value="engine">engine</option>
+                </select>
+              </label>
+              <label className="selector-chip">
+                <span>Mode</span>
+                <select defaultValue={effectiveChatMode} aria-label="Effective mode">
+                  {chatModes.map((mode) => (
+                    <option key={`drawer-${mode}`} value={mode}>{mode}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="chat-compact-strip">
+              <span>Auto-run queued tasks</span>
+              <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
+            </div>
+          </section>
+          ) : null}
 
           <div className="composer chat-composer">
             <div className="composer-toolbar">
@@ -2380,21 +2502,35 @@ function SettingsPanel(props: {
       ];
   const selectedSafetyLevel = String(groupedAutonomy.safetyLevel || 'supervised-auto');
   const activeSafetyLevel = safetyLevels.find((item: JsonMap) => String(item?.id || '') === selectedSafetyLevel) || safetyLevels[0] || null;
+  const providerSecretName = String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || 'OPENAI_API_KEY').trim() || 'OPENAI_API_KEY';
+  const [providerKeyValue, setProviderKeyValue] = React.useState('');
 
-  const configureSelectedRemoteKey = async (clear = false) => {
+  const saveSelectedRemoteKey = async () => {
     if (!selectedRemoteProvider) {
       return;
     }
-    const secretName = String(selectedRemoteProvider.secretName || props.aiStatus?.current?.remoteApiKeyName || 'OPENAI_API_KEY').trim() || 'OPENAI_API_KEY';
-    const nextValue = clear
-      ? ''
-      : window.prompt(`Paste the API key for ${selectedRemoteProvider.label || selectedRemoteProvider.id} (${secretName}).`, '');
-    if (nextValue === null) {
+    const nextValue = String(providerKeyValue || '').trim();
+    if (!nextValue) {
       return;
     }
     setProviderKeyBusy(true);
     try {
-      await window.gosAgent.setSecret(secretName, String(nextValue || '').trim());
+      await window.gosAgent.setSecret(providerSecretName, nextValue);
+      setProviderKeyValue('');
+      props.onRefresh();
+    } finally {
+      setProviderKeyBusy(false);
+    }
+  };
+
+  const clearSelectedRemoteKey = async () => {
+    if (!selectedRemoteProvider) {
+      return;
+    }
+    setProviderKeyBusy(true);
+    try {
+      await window.gosAgent.setSecret(providerSecretName, '');
+      setProviderKeyValue('');
       props.onRefresh();
     } finally {
       setProviderKeyBusy(false);
@@ -2432,6 +2568,14 @@ function SettingsPanel(props: {
         <section className="settings-section">
           <div className="settings-grid">
             <label>
+              <span>Chat mode</span>
+              <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)}>
+                {['auto', 'ask', 'plan', 'edit', 'agent'].map((mode) => (
+                  <option key={mode} value={mode}>{mode}</option>
+                ))}
+              </select>
+            </label>
+            <label>
               <span>Theme</span>
               <select value={['codex', 'obsidian'].includes(settings.theme || '') ? settings.theme : 'codex'} onChange={(event) => void props.onUpdateSetting('theme', event.target.value)}>
                 {['codex', 'obsidian'].map((theme) => (
@@ -2467,6 +2611,17 @@ function SettingsPanel(props: {
                 value={String(settings.chatInspectorWidth || 380)}
                 onChange={(event) => void props.onUpdateSetting('chatInspectorWidth', Number(event.target.value || 380))}
               />
+            </label>
+            <label>
+              <span>Composer height</span>
+              <select
+                value={String(settings.chatComposerHeight || 'comfortable')}
+                onChange={(event) => void props.onUpdateSetting('chatComposerHeight', event.target.value)}
+              >
+                {['compact', 'comfortable', 'tall'].map((height) => (
+                  <option key={height} value={height}>{height}</option>
+                ))}
+              </select>
             </label>
           </div>
           {String(settings.chatInstructionMode || 'auto').toLowerCase() === 'custom' ? (
@@ -2606,6 +2761,24 @@ function SettingsPanel(props: {
             ) : (
               <p className="empty-copy">No VS Code extension path was detected for this workspace.</p>
             )}
+          </section>
+          <section className="queue-card">
+            <div className="eyebrow">Companion install</div>
+            <div className="run-item">
+              <strong>{extensionHealth?.exists ? 'Companion detected' : 'Install companion'}</strong>
+              <span>{String(extensionHealth?.nextStep || extensionHealth?.summary || 'Install the VS Code companion so the desktop app and editor stay aligned.')}</span>
+            </div>
+            <div className="row-actions">
+              <button
+                className="ghost"
+                onClick={() => void window.gosAgent.bootstrapWorkspaceVsCode({
+                  workspaceRoot: props.snapshot?.workspaceRoot,
+                  targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot,
+                }).then(props.onRefresh)}
+              >
+                Install companion
+              </button>
+            </div>
           </section>
           <section className="queue-card">
             <div className="eyebrow">Work graph</div>
@@ -2778,6 +2951,15 @@ function SettingsPanel(props: {
                   <input value={String(settings.aiRemoteApiKeyName || '')} onChange={(event) => void props.onUpdateSetting('aiRemoteApiKeyName', event.target.value)} placeholder="OPENAI_COMPAT_API_KEY" />
                 </label>
                 <label>
+                  <span>Provider API key</span>
+                  <input
+                    type="password"
+                    value={providerKeyValue}
+                    onChange={(event) => setProviderKeyValue(event.target.value)}
+                    placeholder={`Save to ${providerSecretName}`}
+                  />
+                </label>
+                <label>
                   <span>Local AI command</span>
                   <input
                     data-setting="localAiCmd"
@@ -2805,6 +2987,15 @@ function SettingsPanel(props: {
                   <span>Remote API key slot</span>
                   <input value={String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || 'OPENAI_API_KEY')} readOnly />
                 </label>
+                <label>
+                  <span>Provider API key</span>
+                  <input
+                    type="password"
+                    value={providerKeyValue}
+                    onChange={(event) => setProviderKeyValue(event.target.value)}
+                    placeholder={`Save to ${providerSecretName}`}
+                  />
+                </label>
               </>
             )}
           </div>
@@ -2814,10 +3005,10 @@ function SettingsPanel(props: {
             <button className="ghost" onClick={() => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh)}>Import selected model</button>
             <button className="ghost" onClick={() => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh)}>Import all stored models</button>
             <button className="primary" data-run-benchmark="true" onClick={props.onRunBenchmark}>Run benchmark</button>
-            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy} onClick={() => void configureSelectedRemoteKey(false)}>
-              {providerKeyBusy ? 'Saving key…' : `Set ${selectedRemoteProvider?.label || 'remote'} key`}
+            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy || !String(providerKeyValue || '').trim()} onClick={() => void saveSelectedRemoteKey()}>
+              {providerKeyBusy ? 'Saving key…' : `Save ${selectedRemoteProvider?.label || 'remote'} key`}
             </button>
-            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy} onClick={() => void configureSelectedRemoteKey(true)}>
+            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy} onClick={() => void clearSelectedRemoteKey()}>
               Clear key
             </button>
             {nextFoundryCandidate ? (
@@ -3081,11 +3272,11 @@ function SettingsPanel(props: {
           </div>
           <div className="toggle-grid">
             {[
-              ['autoSynthesizeBats', 'Auto synthesize follow-up tasks', groupedAutonomy.autoSynthesizeBats],
+              ['autoSynthesizeBats', 'Auto-queue bounded next task after the run settles', groupedAutonomy.autoSynthesizeBats],
               ['autoRetryUntilPass', 'Auto retry failing coding runs', groupedAutonomy.autoRetryUntilPass],
               ['autoBrainstormOnFailure', 'Brainstorm repair options on failure', groupedAutonomy.autoBrainstormOnFailure],
               ['autoApproveLowRisk', 'Auto approve low-risk patches', groupedAutonomy.autoApproveLowRisk],
-              ['supervisedAutoRunRecipes', 'Auto-run first step of safe supervised recipes', groupedAutonomy.supervisedAutoRunRecipes],
+              ['supervisedAutoRunRecipes', 'Auto-run queued next task when safe', groupedAutonomy.supervisedAutoRunRecipes],
               ['humanApprovalProtectedOnly', 'Gate protected paths only', groupedAutonomy.humanApprovalProtectedOnly],
               ['sandboxRequired', 'Require sandboxed execution', groupedAutonomy.sandboxRequired],
             ].map(([field, label, checked]) => (

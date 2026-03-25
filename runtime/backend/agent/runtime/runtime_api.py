@@ -54,6 +54,8 @@ from backend.agent.core.storage_paths import (
     assistant_training_output_path,
 )
 from backend.agent.core.editor_context import augment_ticket_description, build_coding_chat_messages, normalize_editor_context
+from backend.agent.core.providers.base import NullProvider, ProviderConfig
+from backend.agent.core.providers.factory import create_provider
 from backend.agent.core.approval import ApprovalGate
 from backend.agent.core.tool_loop import run_tool_loop
 from backend.agent.runtime.lab_docker_runner import run_lab_container_contract
@@ -1439,6 +1441,38 @@ def _runtime_args(**overrides: Any) -> SimpleNamespace:
     }
     base.update(overrides)
     return SimpleNamespace(**base)
+
+
+def _build_orchestration_provider(payload: dict[str, Any] | None, project_root: Path) -> Any:
+    source = dict(payload or {})
+    metadata = dict(source.get('metadata') or {})
+    provider_source = str(
+        metadata.get('providerSource')
+        or metadata.get('provider_source')
+        or source.get('providerSource')
+        or source.get('provider_source')
+        or ''
+    ).strip()
+    base_model = str(
+        metadata.get('baseModel')
+        or metadata.get('base_model')
+        or source.get('baseModel')
+        or source.get('base_model')
+        or os.environ.get('OLLAMA_MODEL')
+        or ''
+    ).strip()
+    config = ProviderConfig(
+        provider_name=provider_source,
+        openai_api_key=str(os.environ.get('OPENAI_API_KEY') or ''),
+        openai_base_url=str(os.environ.get('OPENAI_BASE_URL') or ''),
+        local_ai_cmd=str(os.environ.get('LOCAL_AI_CMD') or ''),
+        ollama_base_url=str(os.environ.get('OLLAMA_BASE_URL') or 'http://localhost:11434'),
+        ollama_model=base_model or str(os.environ.get('OLLAMA_MODEL') or 'qwen2.5-coder:7b'),
+        openai_model=base_model or str(os.environ.get('OPENAI_MODEL') or 'gpt-4o-mini'),
+        project_root=project_root,
+    )
+    provider = create_provider(config, explicit=provider_source or None)
+    return None if isinstance(provider, NullProvider) else provider
 
 
 def run_ticket(ticket_id: str, mode: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -3073,6 +3107,7 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
         gate.decide(str(item.get("id") or ""), str(item.get("decision") or ""), note=str(item.get("note") or ""))
+    provider = _build_orchestration_provider(payload, selected_root)
     result = run_tool_loop(
         project_root=selected_root,
         objective=objective,
@@ -3083,6 +3118,7 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
             "project_root": str(selected_root),
         },
         approval_gate=gate,
+        provider=provider,
         max_steps=int(payload.get("maxSteps", 10) or 10),
     )
     if _orchestration_expects_mutation(payload, result):

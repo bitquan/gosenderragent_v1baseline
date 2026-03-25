@@ -14,6 +14,7 @@ declare global {
       setWorkspace: (workspaceRoot: string) => Promise<LooseRecord>;
       setLab: (payload?: LooseRecord) => Promise<LooseRecord>;
       updateSettings: (payload: LooseRecord) => Promise<LooseRecord>;
+      reportRendererError: (payload?: LooseRecord) => Promise<LooseRecord>;
       pickWorkspace: () => Promise<LooseRecord>;
       cancel: (payload?: LooseRecord) => Promise<LooseRecord>;
       chatMessage: (text: string, workspace?: string, options?: LooseRecord) => Promise<LooseRecord>;

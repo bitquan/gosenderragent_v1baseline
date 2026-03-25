@@ -313,6 +313,23 @@ const {
   isIgnoredWorkspacePath,
   normalizeReviewPath,
 } = require('./core/review');
+const {
+  getGitSummary,
+  getGitStatus,
+  getGitDiff,
+  stagePaths,
+  unstagePaths,
+  stageAll,
+  unstageAll,
+  discardPaths,
+  commitStaged,
+  pullTrackedBranch,
+  pushTrackedBranch,
+  listBranches,
+  createBranch,
+  switchBranch,
+  publishBranch,
+} = require('./core/git-service');
 const { buildApprovalQueue } = require('./core/approval-queue');
 const { buildLiveEngineMonitorSummary } = require('./core/engine-monitor-summary');
 const { mergeRecentRuns, selectFreshestRun } = require('./core/run-selection');
@@ -8032,6 +8049,93 @@ ipcMain.handle('review:copyText', async (_event, payload = {}) => {
 ipcMain.handle('review:openInVsCode', async (_event, payload = {}) => {
   const { targetWorkspaceRoot } = resolveRequestRoots(payload);
   return openInVsCode(targetWorkspaceRoot, payload.path, payload.line || 1);
+});
+
+function normalizeGitPathsPayload(payload = {}) {
+  if (Array.isArray(payload.paths)) {
+    return payload.paths;
+  }
+  if (payload.path) {
+    return [payload.path];
+  }
+  return [];
+}
+
+ipcMain.handle('git:getSummary', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return getGitSummary(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:getStatus', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return getGitStatus(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:getDiff', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return getGitDiff(targetWorkspaceRoot || getWorkspaceRoot(), payload.path || payload.relativePath || '', {
+    cached: payload.cached === true,
+  });
+});
+
+ipcMain.handle('git:stage', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return stagePaths(targetWorkspaceRoot || getWorkspaceRoot(), normalizeGitPathsPayload(payload));
+});
+
+ipcMain.handle('git:unstage', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return unstagePaths(targetWorkspaceRoot || getWorkspaceRoot(), normalizeGitPathsPayload(payload));
+});
+
+ipcMain.handle('git:stageAll', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return stageAll(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:unstageAll', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return unstageAll(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:discardPaths', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return discardPaths(targetWorkspaceRoot || getWorkspaceRoot(), normalizeGitPathsPayload(payload));
+});
+
+ipcMain.handle('git:commit', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return commitStaged(targetWorkspaceRoot || getWorkspaceRoot(), payload.message || '');
+});
+
+ipcMain.handle('git:pull', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return pullTrackedBranch(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:push', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return pushTrackedBranch(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:listBranches', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return listBranches(targetWorkspaceRoot || getWorkspaceRoot());
+});
+
+ipcMain.handle('git:createBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return createBranch(targetWorkspaceRoot || getWorkspaceRoot(), payload.name || payload.branch || '');
+});
+
+ipcMain.handle('git:switchBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return switchBranch(targetWorkspaceRoot || getWorkspaceRoot(), payload.name || payload.branch || '');
+});
+
+ipcMain.handle('git:publishBranch', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return publishBranch(targetWorkspaceRoot || getWorkspaceRoot());
 });
 
 ipcMain.handle('skills:list', async () => {

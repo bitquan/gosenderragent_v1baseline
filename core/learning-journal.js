@@ -150,6 +150,37 @@ function exportFilePath(workspaceRoot, changeSessionId) {
   return path.join(exportRoot, `${changeSessionId || 'session'}-${stamp}.json`);
 }
 
+function parseRecentJsonLineWindow(raw, limit = 40) {
+  const targetCount = Math.max(1, Number(limit || 40));
+  const lines = [];
+  let end = raw.length;
+
+  for (let index = raw.length - 1; index >= 0 && lines.length < targetCount; index -= 1) {
+    if (raw.charCodeAt(index) !== 10) {
+      continue;
+    }
+    if (index + 1 < end) {
+      const line = raw.slice(index + 1, end).trim();
+      if (line) {
+        lines.push(line);
+      }
+    }
+    end = index;
+  }
+
+  if (lines.length < targetCount && end > 0) {
+    const line = raw.slice(0, end).trim();
+    if (line) {
+      lines.push(line);
+    }
+  }
+
+  return lines
+    .reverse()
+    .map((line) => safeJsonParse(line))
+    .filter(Boolean);
+}
+
 function readRecentJsonLines(filePath, limit = 40) {
   if (!filePath || !fs.existsSync(filePath)) {
     return [];
@@ -179,12 +210,7 @@ function readRecentJsonLines(filePath, limit = 40) {
   } catch (_error) {
     raw = '';
   }
-  return raw
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => safeJsonParse(line))
-    .filter(Boolean)
-    .slice(-Math.max(1, Number(limit || 40)));
+  return parseRecentJsonLineWindow(raw, limit);
 }
 
 function appendJsonLine(filePath, payload) {

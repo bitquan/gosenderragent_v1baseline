@@ -117,6 +117,11 @@ function namespaceConfiguredDir(configuredDir, workspaceRoot, entry = null) {
   return path.join(normalizedConfiguredDir, 'workspaces', buildWorkspaceScopedSuffix(normalizedWorkspaceRoot));
 }
 
+function shouldPreferWorkspaceLocalAssistantRuns(workspaceRoot) {
+  const normalizedWorkspaceRoot = normalizeConfigRoot(workspaceRoot);
+  return !!normalizedWorkspaceRoot && normalizedWorkspaceRoot !== APP_ROOT;
+}
+
 function getAssistantArtifactsRoot(workspaceRoot) {
   const entries = readConfigEntries(workspaceRoot);
   return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_artifacts_root, ''), workspaceRoot, entries.assistant_artifacts_root);
@@ -127,6 +132,7 @@ function getAssistantRunsDir(workspaceRoot) {
   const entries = readConfigEntries(workspaceRoot);
   const normalizedWorkspaceRoot = normalizeConfigRoot(workspaceRoot);
   const localRunsDir = normalizedWorkspaceRoot ? path.join(normalizedWorkspaceRoot, 'docs', 'assistant_runs') : '';
+  const preferWorkspaceLocalRuns = shouldPreferWorkspaceLocalAssistantRuns(normalizedWorkspaceRoot);
   if (config.assistant_runs_dir) {
     const configuredRunsDir = namespaceConfiguredDir(
       resolveConfiguredPath(
@@ -139,7 +145,7 @@ function getAssistantRunsDir(workspaceRoot) {
     if (entries.assistant_runs_dir && normalizeConfigRoot(entries.assistant_runs_dir.root) === normalizedWorkspaceRoot) {
       return configuredRunsDir;
     }
-    if (localRunsDir && fs.existsSync(localRunsDir)) {
+    if (preferWorkspaceLocalRuns && localRunsDir && fs.existsSync(localRunsDir)) {
       return localRunsDir;
     }
     return configuredRunsDir;
@@ -147,7 +153,7 @@ function getAssistantRunsDir(workspaceRoot) {
   const root = getAssistantArtifactsRoot(workspaceRoot);
   if (root) {
     const configuredRunsDir = path.join(root, 'assistant_runs');
-    if (localRunsDir && fs.existsSync(localRunsDir)) {
+    if (preferWorkspaceLocalRuns && localRunsDir && fs.existsSync(localRunsDir)) {
       return localRunsDir;
     }
     return configuredRunsDir;
@@ -168,6 +174,7 @@ function getAssistantRuntimeStatePath(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
   const runsDir = getAssistantRunsDir(workspaceRoot);
+  const preferWorkspaceLocalRuns = shouldPreferWorkspaceLocalAssistantRuns(workspaceRoot);
   const localRuntimeStatePath = normalizeConfigRoot(workspaceRoot)
     ? path.join(normalizeConfigRoot(workspaceRoot), 'docs', 'assistant_runs', 'runtime_state.json')
     : '';
@@ -176,12 +183,12 @@ function getAssistantRuntimeStatePath(workspaceRoot) {
     if (entries.assistant_runtime_state_path && normalizeConfigRoot(entries.assistant_runtime_state_path.root) === normalizeConfigRoot(workspaceRoot)) {
       return configuredPath;
     }
-    if (localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
+    if (preferWorkspaceLocalRuns && localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
       return localRuntimeStatePath;
     }
     return configuredPath;
   }
-  if (localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
+  if (preferWorkspaceLocalRuns && localRuntimeStatePath && fs.existsSync(localRuntimeStatePath)) {
     return localRuntimeStatePath;
   }
   return path.join(runsDir, 'runtime_state.json');
@@ -251,7 +258,7 @@ function getConfiguredAssistantPromotionsRoot(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
   if (config.assistant_promotions_root) {
-    return resolveConfiguredPath(entries.assistant_promotions_root, '');
+    return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_promotions_root, ''), workspaceRoot, entries.assistant_promotions_root);
   }
   const root = getAssistantArtifactsRoot(workspaceRoot);
   return root ? path.join(root, 'assistant_promotions') : '';

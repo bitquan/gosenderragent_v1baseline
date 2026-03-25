@@ -547,6 +547,97 @@ textarea {
   line-height: 1.5;
 }
 
+.chat-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-compact-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-activity-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.composer-selector-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-mode-bar {
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-compact-strip {
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-activity-strip {
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-compact-strip,
+.chat-activity-strip {
+  justify-content: space-between;
+}
+
+.composer-selector-row {
+  justify-content: space-between;
+}
+
+.selector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #202020;
+  color: var(--text);
+}
+
+.selector-chip select {
+  min-width: 120px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.selector-chip select option {
+  color: #111;
+}
+
+.manager-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: #1a1a1a;
+}
+
 .chat-stage {
   display: flex;
   flex: 1 1 auto;
@@ -798,6 +889,11 @@ textarea {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  padding: 0 0 6px;
+  background: linear-gradient(180deg, rgba(24, 24, 24, 0.98) 0%, rgba(24, 24, 24, 0.9) 72%, rgba(24, 24, 24, 0) 100%);
 }
 
 .settings-tabs button {

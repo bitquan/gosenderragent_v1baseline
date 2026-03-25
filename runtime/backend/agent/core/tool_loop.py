@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from backend.agent.core.approval import ApprovalGate
+from backend.agent.core.editor_context import build_coding_task_prompt, normalize_editor_context
 from backend.agent.core.orchestrator import OrchestrationTask, SequentialAgentOrchestrator
+from backend.agent.core.patch_review import generate_patch_candidates
 from backend.agent.core.runtime_context import build_runtime_context
 from backend.agent.core.tool_registry import build_default_tool_registry
 from backend.agent.runtime.contracts import (
@@ -25,6 +28,10 @@ from backend.agent.runtime.orchestration_driver import RuntimeOrchestrationDrive
 from backend.agent.core.patch_review import build_review_summary
 
 _OBJECTIVE_PATH_RE = re.compile(r'([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+)')
+_MUTATION_KEYWORDS = ('repair', 'fix', 'edit', 'modify', 'implement', 'patch', 'update', 'change')
+_SOURCE_SUFFIXES = {'.py', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.css', '.scss', '.html', '.json'}
+_MIN_PATCH_SCORE = 0.3
+_FENCED_BLOCK_RE = re.compile(r"```(?P<lang>[A-Za-z0-9_-]*)\s*\n(?P<body>[\s\S]*?)\n```")
 
 
 def _extract_explicit_objective_paths(objective: str) -> list[str]:
@@ -55,6 +62,170 @@ def _parse_bullet_list(raw: str) -> list[str]:
         for item in re.split(r',|;|•|\n', str(raw or ''))
     ]
     return [item for item in items if item][:6]
+
+
+def _objective_requires_write(objective: str, context: dict[str, Any] | None = None) -> bool:
+    payload = dict(context or {})
+    runtime_task = dict(payload.get('runtime_task') or payload.get('runtimeTask') or {})
+    lane_id = str(runtime_task.get('lane_id') or runtime_task.get('laneId') or '').strip().lower()
+    task_mode = str(runtime_task.get('task_mode') or runtime_task.get('taskMode') or '').strip().lower()
+    if lane_id in {'repair-fast', 'code-main'} or task_mode in {'repair', 'coder'}:
+        return True
+    lowered = str(objective or '').strip().lower()
+    return any(token in lowered for token in _MUTATION_KEYWORDS)
+
+
+def _is_source_candidate(path: str) -> bool:
+    target = Path(str(path or '').strip())
+    if not target.name:
+        return False
+    lower_name = target.name.lower()
+    if target.suffix.lower() not in _SOURCE_SUFFIXES:
+        return False
+    if lower_name.endswith('.test.js') or lower_name.endswith('.test.ts') or lower_name.endswith('.spec.js') or lower_name.endswith('.spec.ts'):
+        return False
+    return True
+
+
+def _synthesized_execution_steps(targets: list[str], objective: str, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    normalized_targets = [str(item).strip() for item in list(targets or []) if str(item).strip()]
+    if not normalized_targets:
+        return []
+    if not _objective_requires_write(objective, context):
+        return [{"action": "inspect_file", "path": item} for item in normalized_targets[:3]]
+    inspect_targets = normalized_targets[:2]
+    preferred_target = next((item for item in normalized_targets if _is_source_candidate(item)), normalized_targets[0])
+    steps = [{"action": "inspect_file", "path": item} for item in inspect_targets]
+    steps.append({"action": "synthesize_edit", "path": preferred_target, "reason": "write-capable fallback for mutation objective"})
+    return steps
+
+
+def _synthesized_patch_variants(objective: str, path: str, content: str, editor_context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    normalized_editor_context = normalize_editor_context(editor_context)
+    extra_context = {
+        'Objective': objective,
+        'Current file path': path,
+        'Current file contents': content,
+    }
+    return [
+        {
+            'label': 'balanced-tool-loop-edit',
+            'prompt': build_coding_task_prompt(
+                f"Update {path} to satisfy the current coding objective.",
+                editor_context=normalized_editor_context,
+                approved_targets=[path],
+                extra_context=extra_context,
+                response_contract=(
+                    'Return the complete updated contents for the approved target file only.',
+                    'Make the smallest safe change that resolves the issue.',
+                ),
+                heading='Tool-loop synthesized edit request',
+            ),
+        },
+        {
+            'label': 'strict-tool-loop-edit',
+            'prompt': build_coding_task_prompt(
+                f"Edit only {path}. Return the full updated file contents with no markdown fences.",
+                editor_context=normalized_editor_context,
+                approved_targets=[path],
+                extra_context=extra_context,
+                response_contract=(
+                    'Stay inside the approved target file.',
+                    'Return only the full updated file contents.',
+                ),
+                heading='Strict tool-loop edit request',
+            ),
+        },
+    ]
+
+
+def _unwrap_single_fenced_block(text: str) -> str:
+    sanitized = str(text or '').strip()
+    fenced = re.match(r"^```[A-Za-z0-9_-]*\s*\n(?P<body>[\s\S]*?)\n```\s*$", sanitized)
+    if fenced:
+        return str(fenced.group('body') or '').strip()
+    return sanitized
+
+
+def _extract_synthesized_content(path: str, patch: str) -> str:
+    sanitized = _unwrap_single_fenced_block(patch)
+    if '```' not in sanitized:
+        return sanitized
+
+    target_name = Path(str(path or '').strip()).name.lower()
+    blocks: list[tuple[str, str, int]] = []
+    for match in _FENCED_BLOCK_RE.finditer(sanitized):
+        language = str(match.group('lang') or '').strip().lower()
+        body = str(match.group('body') or '').strip()
+        if not body:
+            continue
+        blocks.append((language, body, match.start()))
+
+    if not blocks:
+        return sanitized
+
+    prefix_by_index = {index: sanitized[:start].lower() for index, (_language, _body, start) in enumerate(blocks)}
+    for index, (language, body, _start) in enumerate(blocks):
+        prefix = prefix_by_index[index]
+        if language == 'json':
+            continue
+        if 'updated file contents' in prefix[-200:] or 'updated contents' in prefix[-200:]:
+            return body
+
+    for language, body, _start in blocks:
+        if language != 'json':
+            return body
+
+    json_candidates: list[str] = []
+    for language, body, _start in blocks:
+        if language != 'json':
+            continue
+        json_candidates.append(body)
+    for candidate in json_candidates:
+        try:
+            import json
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payload_path = str(payload.get('file_path') or payload.get('path') or '').strip().replace('\\', '/').lower()
+        updated_contents = str(payload.get('updated_contents') or payload.get('content') or '').strip()
+        if not updated_contents:
+            continue
+        if payload_path and Path(payload_path).name.lower() != target_name:
+            continue
+        return updated_contents
+
+    return sanitized
+
+
+def _select_synthesized_patch(provider: Any, objective: str, path: str, content: str, editor_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    if provider is None:
+        return {'ok': False, 'error': 'no provider available for synthesized edit'}
+    selection = generate_patch_candidates(
+        provider,
+        _synthesized_patch_variants(objective, path, content, editor_context=editor_context),
+        approved_targets=[path],
+        target_path=path,
+        active_file_path=str((normalize_editor_context(editor_context) or {}).get('active_file_path') or path),
+    )
+    best = dict(selection.get('best_candidate') or {})
+    score = float(best.get('score') or 0)
+    reasons = [str(item) for item in list(best.get('reasons') or []) if str(item)]
+    patch = str(selection.get('best_patch') or '')
+    if not patch.strip():
+        return {'ok': False, 'error': 'provider returned an empty patch', 'selection': selection}
+    if score < _MIN_PATCH_SCORE:
+        return {'ok': False, 'error': f'patch candidate below confidence threshold ({score:.2f})', 'selection': selection}
+    if 'references unapproved file paths' in reasons:
+        return {'ok': False, 'error': 'patch candidate references unapproved file paths', 'selection': selection}
+    if 'placeholder patch' in reasons:
+        return {'ok': False, 'error': 'patch candidate is only a placeholder', 'selection': selection}
+    sanitized = _extract_synthesized_content(path, patch)
+    if '```' in sanitized:
+        return {'ok': False, 'error': 'patch candidate still contains markdown fences after sanitization', 'selection': selection}
+    return {'ok': True, 'content': sanitized, 'selection': selection}
 
 
 def _synthesize_append_section_step(objective: str, explicit_paths: list[str]) -> dict[str, Any] | None:
@@ -425,7 +596,7 @@ def _planner_handler(orchestrator, _agent, task, payload):
                         for item in target_files
                     ]
                 else:
-                    plan_steps = [{"action": "inspect_file", "path": item} for item in target_files[:3]]
+                    plan_steps = _synthesized_execution_steps(target_files, task.objective, context)
             else:
                 ranked_matches = [
                     str(item.get("path") or "").strip()
@@ -433,7 +604,7 @@ def _planner_handler(orchestrator, _agent, task, payload):
                     if isinstance(item, dict) and str(item.get("path") or "").strip()
                 ]
                 matches = ranked_matches or list((search_payload or {}).get("matches", []))
-                plan_steps = [{"action": "inspect_file", "path": item} for item in matches[:3]]
+                plan_steps = _synthesized_execution_steps(matches[:3], task.objective, context)
 
     return {
         "status": "completed",
@@ -454,6 +625,11 @@ def _planner_handler(orchestrator, _agent, task, payload):
 def _implementer_handler(orchestrator, _agent, _task, payload):
     data = dict(payload or {})
     plan = dict(data.get("plan") or {})
+    task_payload = dict(data.get('task') or {})
+    objective = str(task_payload.get('objective') or '')
+    context = dict(orchestrator._active_context() or {})
+    provider = context.get('provider')
+    normalized_editor_context = normalize_editor_context(context.get('editor_context') or context.get('editorContext') or {})
     executed: list[dict[str, Any]] = []
     blocked = False
 
@@ -461,6 +637,36 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
         action = str(step.get("action") or "").strip().lower()
         if action == "inspect_file":
             result = orchestrator.execute_tool("implementer", "read_file", path=step.get("path"), start_line=1, end_line=120)
+        elif action in {"synthesize_edit", "modify_file"}:
+            target_path = str(step.get('path') or '').strip()
+            file_snapshot = orchestrator.execute_tool("implementer", "read_file", path=target_path, start_line=1, end_line=240)
+            if isinstance(file_snapshot, dict) and file_snapshot.get('ok') is False:
+                result = file_snapshot
+            else:
+                selected = _select_synthesized_patch(
+                    provider,
+                    objective,
+                    target_path,
+                    str((file_snapshot or {}).get('content') or ''),
+                    editor_context=normalized_editor_context,
+                )
+                if not selected.get('ok'):
+                    result = {
+                        'ok': False,
+                        'error': str(selected.get('error') or 'synthesized edit failed'),
+                        'path': target_path,
+                        'selection': dict(selected.get('selection') or {}),
+                    }
+                else:
+                    result = orchestrator.execute_tool(
+                        'implementer',
+                        'edit_file',
+                        path=target_path,
+                        content=str(selected.get('content') or ''),
+                        mode='replace',
+                    )
+                    if isinstance(result, dict):
+                        result['selection'] = dict(selected.get('selection') or {})
         elif action == "edit_file":
             result = orchestrator.execute_tool(
                 "implementer",
@@ -569,10 +775,12 @@ def run_tool_loop(
     ticket: str | None = None,
     context: dict[str, Any] | None = None,
     approval_gate: ApprovalGate | None = None,
+    provider: Any = None,
     max_steps: int = 10,
 ) -> dict[str, Any]:
     orchestrator = build_tool_loop_orchestrator(project_root, approval_gate=approval_gate)
     task_context = dict(context or {})
+    task_context["provider"] = provider
     runtime_task = build_runtime_task(
         ticket_id=str(ticket or ""),
         desc=str(objective or ""),
