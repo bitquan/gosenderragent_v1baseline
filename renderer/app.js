@@ -21824,7 +21824,7 @@
     learningEvents: [],
     labEvents: [],
     benchmarkEvents: [],
-    leftRailOpen: false,
+    leftRailOpen: true,
     rightRailOpen: false
   };
   var store = createStore(initialState);
@@ -23078,98 +23078,101 @@
       }
     };
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: `workbench-shell${state.leftRailOpen ? " left-open" : ""}${state.rightRailOpen ? " right-open" : ""}`, "data-workbench-shell": "true", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: "left-rail", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-header", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", onClick: () => store.update((current) => ({ ...current, leftRailOpen: false })), children: "Close" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace" })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: "left-rail app-nav-rail", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-brand-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "rail-brand-badge", children: "GS" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button rail-collapse", onClick: () => store.update((current) => ({ ...current, leftRailOpen: false })), children: "Close" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-card workspace-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: shortPath(status.target) || "Pick a workspace" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: status.lab ? `Lab active: ${shortPath(status.lab)}` : `Root: ${shortPath(status.workspace) || "none"}` }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: onNewThread, children: "New thread" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: onSwitchWorkspace, children: "Switch" })
-          ] }),
-          status.lab ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: onClearLab, children: "Leave lab" }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "rail-section-head", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Shortcuts" }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "module-list", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "button",
-              {
-                className: `module-chip${state.activeModuleId === "workbench" ? " active" : ""}`,
-                "data-module-nav": "workbench",
-                onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Chat" }),
-                  state.activeModuleId === "workbench" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Start in the thread, then open rails only when you need more context." }) : null
-                ]
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "button",
-              {
-                className: `module-chip${state.activeModuleId === "monitor" ? " active" : ""}`,
-                "data-module-nav": "monitor",
-                onClick: () => onOpenMonitorTab("overview"),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Monitor" }),
-                  state.activeModuleId === "monitor" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Runs, learning, promotions, and debug state stay here instead of cluttering chat." }) : null
-                ]
-              }
-            ),
-            [
-              ["ai", "AI"],
-              ["skills", "Skills"],
-              ["extensions", "Extensions"],
-              ["tools", "Tools"],
-              ["automations", "Automations"],
-              ["labs", "Labs"],
-              ["learning", "Learning"],
-              ["storage", "Storage"]
-            ].map(([tab, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "button",
-              {
-                className: `module-chip${state.activeModuleId === "settings" && state.activeSettingsTab === tab ? " active" : ""}`,
-                "data-settings-shortcut": tab,
-                onClick: () => onOpenSettingsTab(tab),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: label }),
-                  state.activeModuleId === "settings" && state.activeSettingsTab === tab ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                    label,
-                    " lives in the unified settings center."
-                  ] }) : null
-                ]
-              },
-              tab
-            ))
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-card thread-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-section-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Threads" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", onClick: onNewThread, children: "+" })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "thread-list", children: state.threads.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "new-chat-button", onClick: onNewThread, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("nav", { className: "rail-nav-list", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "button",
             {
-              className: `thread-btn${entry.id === thread?.id ? " active" : ""}`,
-              onClick: () => onSelectThread(entry.id),
+              className: `rail-nav-item${state.activeModuleId === "workbench" ? " active" : ""}`,
+              "data-module-nav": "workbench",
+              "data-route-tab": "workbench",
+              onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: entry.title }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                  entry.messages.length,
-                  " msgs"
-                ] })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Agents" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? "" : "s"}` : "Open the main workspace chat" })
               ]
-            },
-            entry.id
-          )) })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              className: `rail-nav-item${state.activeModuleId === "settings" && state.activeSettingsTab === "workspace" ? " active" : ""}`,
+              "data-route-tab": "settings",
+              onClick: () => onOpenSettingsTab("workspace"),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spaces" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Choose a workspace root" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              className: `rail-nav-item${state.activeModuleId === "monitor" ? " active" : ""}`,
+              "data-route-tab": "monitor",
+              onClick: () => onOpenMonitorTab("overview"),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spark" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeTaskRun ? "Live run status is available" : "Preview runs, learning, and promotions" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("em", { children: "Preview" })
+              ]
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-session-section", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-section-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Agent sessions" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", onClick: onNewThread, children: "+" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "thread-list session-thread-list", children: state.threads.slice(0, 6).map((entry) => {
+            const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
+            const unread = Boolean(latestSeenId && state.threadReadMarkers[entry.id] !== latestSeenId);
+            const preview = [...entry.messages].reverse().find((message) => message.role !== "system")?.text || "Initial implementation";
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "button",
+              {
+                className: `thread-btn session-thread-btn${entry.id === thread?.id ? " active" : ""}`,
+                onClick: () => onSelectThread(entry.id),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "session-thread-title-row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: entry.title }),
+                    unread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "session-unread-dot", "aria-hidden": "true" }) : null
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: summarizeText(preview, 56) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("small", { children: [
+                    formatStamp(entry.updatedAt),
+                    " \u2022 ",
+                    entry.messages.length,
+                    " msgs"
+                  ] })
+                ]
+              },
+              entry.id
+            );
+          }) })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-session-section secondary", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-section-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chats" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", onClick: () => void onOpenHandbook(), children: "?" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-mini-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: status.lab ? "Lab active" : "Workspace ready" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: status.lab ? shortPath(status.lab) : shortPath(status.target) || shortPath(status.workspace) || "No workspace selected" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: onSwitchWorkspace, children: "Switch" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void onOpenHandbook(), children: "Handbook" })
+            ] })
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "main-column", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "topbar", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "topbar topbar-minimal", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-left", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "left", onClick: () => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen })), children: "Menu" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-copy", children: [
@@ -23178,6 +23181,15 @@
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                className: `toolbar-chip${state.activeModuleId === "monitor" ? " active" : ""}`,
+                "data-route-tab": "monitor",
+                onClick: () => onOpenMonitorTab(state.activeMonitorTab || "overview"),
+                children: "CLI"
+              }
+            ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
               {
@@ -23190,45 +23202,14 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
               {
-                className: `toolbar-chip${state.activeModuleId === "monitor" ? " active" : ""}`,
-                "data-route-tab": "monitor",
-                onClick: () => onOpenMonitorTab(state.activeMonitorTab || "overview"),
-                children: "Monitor"
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void onOpenHandbook(), children: "Handbook" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void refreshApp("full"), children: "Sync" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "button",
-              {
-                className: `toolbar-chip${state.rightRailOpen && state.activeInspectorTab === "inbox" ? " active" : ""}`,
-                onClick: () => {
-                  const nextOpen = !(state.rightRailOpen && state.activeInspectorTab === "inbox");
-                  store.update((current) => ({
-                    ...current,
-                    rightRailOpen: nextOpen,
-                    activeInspectorTab: "inbox"
-                  }));
-                  if (nextOpen) {
-                    void refreshApp("full");
-                  }
-                },
-                children: [
-                  "Inbox ",
-                  inboxItems.length ? `(${inboxItems.length})` : ""
-                ]
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void onStopRun(), disabled: !activeTaskRun, children: "Stop" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
-              {
                 className: `toolbar-chip${state.activeModuleId === "settings" ? " active" : ""}`,
                 "data-route-tab": "settings",
                 onClick: () => onOpenSettingsTab(state.activeSettingsTab || "ai"),
-                children: "Settings"
+                children: "Download"
               }
-            )
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void refreshApp("full"), children: "Sync" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void onOpenHandbook(), children: "Handbook" })
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("main", { className: "center-panel main-surface", children: [
@@ -23251,11 +23232,17 @@
               goalList,
               taskList,
               taskRuns,
+              threads: state.threads,
+              activeThreadId: state.activeThreadId,
+              threadReadMarkers: state.threadReadMarkers,
               onComposerChange: (value) => store.update((current) => ({ ...current, composerText: value })),
               onChatFocusChange: (focused) => store.update((current) => ({ ...current, chatFocused: focused })),
               onSendChat,
               onQuickChat,
               onPickAttachments: onPickChatAttachments,
+              onNewThread,
+              onSelectThread,
+              onUpdateSetting,
               onSelectPath: onLoadInspectorPath,
               onShowInspector: (tab) => {
                 store.update((current) => ({
@@ -23397,7 +23384,7 @@
     ] });
   }
   function WorkbenchPanel(props) {
-    const [managerPanelOpen, setManagerPanelOpen] = import_react2.default.useState(true);
+    const [managerPanelOpen, setManagerPanelOpen] = import_react2.default.useState(false);
     const settings = props.snapshot?.settings || {};
     const chatModes = ["auto", "ask", "plan", "edit", "agent"];
     const messages = props.thread?.messages || [];
@@ -23419,6 +23406,10 @@
     const latestGoal = props.goalList[0] || null;
     const latestTask = props.taskList[0] || null;
     const latestRun = props.taskRuns[0] || null;
+    const recentRuns = props.taskRuns.slice(0, 4);
+    const recentThreads = props.threads.slice(0, 4);
+    const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "workspace";
+    const modelLabel = String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b");
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
     const docsContext = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
     const composerSuggestions = buildComposerSuggestions({
@@ -23435,6 +23426,33 @@
       "Review the current repo and tell me what needs fixing first.",
       "Set up the coding model and verify the engine is ready."
     ];
+    const launcherActions = [
+      { label: "Agent", onClick: () => void props.onUpdateSetting("chatMode", "agent") },
+      { label: "Create issue", onClick: () => props.onQuickChat("Create a scoped issue list for the current workspace and rank it by impact.") },
+      { label: "Spark", onClick: () => props.onQuickChat("Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.") },
+      { label: "Git", onClick: () => props.onShowInspector("file") },
+      { label: "Pull requests", onClick: () => props.onShowInspector("inbox") }
+    ];
+    const recentSessionItems = recentRuns.length > 0 ? recentRuns.map((item) => ({
+      id: String(item?.runId || item?.id || item?.runtimeLabel || Math.random()),
+      title: String(item?.runtimeLabel || item?.label || item?.title || "Session"),
+      status: String(item?.runtimeState || item?.status || item?.riskClass || "ready"),
+      detail: summarizeText(String(item?.blockedReason || item?.summary || item?.objective || "No extra detail recorded yet."), 120),
+      meta: String(item?.completedAt || item?.updatedAt || item?.createdAt || ""),
+      onClick: latestTask ? () => props.onQuickChat(`Summarize the current run state for ${String(item?.runtimeLabel || item?.label || "this session")}.`) : void 0
+    })) : recentThreads.map((entry) => {
+      const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
+      const unread = Boolean(latestSeenId && props.threadReadMarkers[entry.id] !== latestSeenId);
+      const preview = [...entry.messages].reverse().find((message) => message.role !== "system")?.text || "No reply recorded yet.";
+      return {
+        id: entry.id,
+        title: entry.title,
+        status: unread ? "unread" : "read",
+        detail: summarizeText(preview, 120),
+        meta: formatStamp(entry.updatedAt),
+        onClick: () => props.onSelectThread(entry.id)
+      };
+    });
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel workbench-panel", "data-panel": "workbench", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-home", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -23452,164 +23470,130 @@
               props.safeMode.rollbackAvailable ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onRollbackLatestBackup(String(props.safeMode.latestBackupId || "")), children: "Restore latest backup" }) : null
             ] })
           ] }) : null,
-          isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "empty-mark", children: "</>" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Let's build" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-              shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "Pick a workspace",
-              " \u2022 ",
-              String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b")
-            ] })
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? "Attached screenshot context." : "") }),
-            Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.attachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `attachment ${index + 1}` }, `${message.id}-attachment-${index}`)) }) : null,
-            message.refs?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.refs.map((ref, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
-              {
-                className: "ghost",
-                onClick: () => ref.path ? props.onSelectPath(String(ref.path), "chat-ref") : void 0,
-                children: ref.label || shortPath(ref.path)
-              },
-              `${message.id}-${index}`
-            )) }) : null,
-            message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
-          ] }, message.id)) }) }),
-          isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Lane" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.aiStatus?.profileId || settings.aiProfile || "hybrid-default" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.aiStatus?.current?.ollamaModel || settings.trainingOllamaModel || settings.model || "qwen2.5-coder:7b" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest goal" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestGoal?.title || "No goal yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestGoal ? `${latestGoal.status || "active"} \u2022 ${shortPath(latestGoal.labRoot || latestGoal.targetWorkspaceRoot || latestGoal.workspaceRoot || "") || "workspace target"}` : "Plain-English chat prompts can create goals automatically." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest task" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestTask?.title || "No task yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestTask ? `${latestTask.status || "ready"} \u2022 ${latestTask.riskClass || "medium"} risk` : "Chat can create scoped tasks automatically." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Latest run" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestRun?.runtimeLabel || latestRun?.label || "No run yet" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: latestRun ? `${latestRun.runtimeState || latestRun.status || "idle"}${latestRun.blockedReason ? ` \u2022 ${summarizeText(latestRun.blockedReason, 80)}` : ""}` : "The first actionable prompt can launch a run automatically." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "status-pill-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "eyebrow", children: "Inbox" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.inboxItems.length ? `${props.inboxItems.length} item${props.inboxItems.length === 1 ? "" : "s"}` : "Clear" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-                props.unreadCount > 0 ? `${props.unreadCount} unread thread${props.unreadCount === 1 ? "" : "s"} \u2022 ` : "",
-                props.safeMode.active ? "Safe mode needs review." : "Approvals, learning, and warnings stay in one place."
-              ] })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { defaultValue: effectiveChatMode, "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: modeSummaryLabel }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
-              {
-                className: openModule === "monitor" ? "ghost active" : "ghost",
-                onClick: () => setManagerPanelOpen((current) => !current),
-                children: "Manager panel"
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" })
-          ] }),
-          managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Manager" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate." }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keep the current desktop design, but expose Papadex-style manager and worker controls directly in chat." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "auto", "aria-label": "Manager mode", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "auto" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "guided", children: "guided" })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-start-shell", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-hero-panel", children: [
+              isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state compact start-hero-copy", "data-legacy-empty-title": "Let's build", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "start-hero-mark", children: "GS" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Ask anything" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  workspaceLabel,
+                  " \u2022 ",
+                  modelLabel
                 ] })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "workspace", "aria-label": "Worker routing", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "workspace", children: "workspace" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "engine", children: "engine" })
-                ] })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { defaultValue: effectiveChatMode, "aria-label": "Effective mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, `drawer-${mode}`)) })
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                modeRouteSummary[chatMode],
-                " \u2022 ",
-                chatTransparencyLevel
-              ] })
-            ] })
-          ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-toolbar", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row quick-command-row", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPickAttachments, children: "Attach screenshot" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
-                  "Inbox ",
-                  props.inboxItems.length ? `(${props.inboxItems.length})` : ""
+              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage start-conversation-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("file"), children: [
-                  "Files ",
-                  props.changedItems.length ? `(${props.changedItems.length})` : ""
-                ] })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? "Attached screenshot context." : "") }),
+                Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.attachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `attachment ${index + 1}` }, `${message.id}-attachment-${index}`)) }) : null,
+                message.refs?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.refs.map((ref, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "button",
+                  {
+                    className: "ghost",
+                    onClick: () => ref.path ? props.onSelectPath(String(ref.path), "chat-ref") : void 0,
+                    children: ref.label || shortPath(ref.path)
+                  },
+                  `${message.id}-${index}`
+                )) }) : null,
+                message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
+              ] }, message.id)) }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" }) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel }) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "+" }) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "textarea",
+                  {
+                    id: "chatInput",
+                    "data-chat-input": "true",
+                    value: props.composerText,
+                    onChange: (event) => props.onComposerChange(event.target.value),
+                    onFocus: () => props.onChatFocusChange(true),
+                    onBlur: () => props.onChatFocusChange(false),
+                    onKeyDown: (event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        props.onSendChat();
+                      }
+                    },
+                    placeholder: "Ask anything"
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeSummaryLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "launch-send-row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "composer-model-tag", children: modelLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
+                  ] })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-action-row", children: launcherActions.map((action) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost launch-action-pill", onClick: action.onClick, children: action.label }, action.label)) }),
+                isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact launch-prompts", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }) }),
+                managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer compact", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Manager" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "auto", "aria-label": "Manager mode", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "auto" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "guided", children: "guided" })
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "workspace", "aria-label": "Worker routing", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "workspace", children: "workspace" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "engine", children: "engine" })
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: effectiveChatMode, onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Effective mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, `drawer-${mode}`)) })
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                      modeRouteSummary[chatMode],
+                      " \u2022 ",
+                      chatTransparencyLevel
+                    ] })
+                  ] })
+                ] }) : null,
+                props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null
               ] })
             ] }),
-            props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "textarea",
-              {
-                id: "chatInput",
-                "data-chat-input": "true",
-                value: props.composerText,
-                onChange: (event) => props.onComposerChange(event.target.value),
-                onFocus: () => props.onChatFocusChange(true),
-                onBlur: () => props.onChatFocusChange(false),
-                onKeyDown: (event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    props.onSendChat();
-                  }
-                },
-                placeholder: "Ask the coding model what to build, fix, review, or explain."
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-meta", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b") }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(settings.runtime || "ollama") }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "no workspace" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `signal-indicator signal-${props.chatSignalState}`, children: props.chatSignalState === "alert" ? "safe mode" : props.chatSignalState === "active" ? "working" : props.chatSignalState === "message" ? "new reply" : "ready" })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "recent-session-card recent-session-panel", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header compact", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recent agent sessions" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: latestRun?.runtimeLabel || latestTask?.title || "Latest workspace activity" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "recent-session-list", children: recentSessionItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("article", { className: `recent-session-item${item.id === props.activeThreadId ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "recent-session-button", onClick: item.onClick, disabled: !item.onClick, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.status }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.detail }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: item.meta || "Ready" })
+              ] }) }, item.id)) })
             ] })
           ] })
         ]

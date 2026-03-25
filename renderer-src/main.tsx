@@ -91,7 +91,7 @@ const initialState: AppState = {
   learningEvents: [],
   labEvents: [],
   benchmarkEvents: [],
-  leftRailOpen: false,
+  leftRailOpen: true,
   rightRailOpen: false,
 };
 
@@ -1531,88 +1531,91 @@ function App() {
 
   return (
     <div className={`workbench-shell${state.leftRailOpen ? ' left-open' : ''}${state.rightRailOpen ? ' right-open' : ''}`} data-workbench-shell="true">
-      <aside className="left-rail">
-        <div className="rail-header">
-          <button className="icon-button" onClick={() => store.update((current) => ({ ...current, leftRailOpen: false }))}>Close</button>
-          <div className="eyebrow">Workspace</div>
+      <aside className="left-rail app-nav-rail">
+        <div className="rail-brand-row">
+          <div className="rail-brand-badge">GS</div>
+          <button className="icon-button rail-collapse" onClick={() => store.update((current) => ({ ...current, leftRailOpen: false }))}>Close</button>
         </div>
 
-        <section className="rail-card workspace-card">
-          <h2>{shortPath(status.target) || 'Pick a workspace'}</h2>
-          <p>{status.lab ? `Lab active: ${shortPath(status.lab)}` : `Root: ${shortPath(status.workspace) || 'none'}`}</p>
-          <div className="row-actions">
-            <button className="primary" onClick={onNewThread}>New thread</button>
-            <button className="ghost" onClick={onSwitchWorkspace}>Switch</button>
-          </div>
-          {status.lab ? <button className="ghost" onClick={onClearLab}>Leave lab</button> : null}
-        </section>
+        <button className="new-chat-button" onClick={onNewThread}>
+          <span>New chat</span>
+        </button>
 
-        <section className="rail-card">
-          <div className="rail-section-head">
-            <span>Shortcuts</span>
-          </div>
-          <div className="module-list">
-            <button
-              className={`module-chip${state.activeModuleId === 'workbench' ? ' active' : ''}`}
-              data-module-nav="workbench"
-              onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
-            >
-              <strong>Chat</strong>
-              {state.activeModuleId === 'workbench' ? <span>Start in the thread, then open rails only when you need more context.</span> : null}
-            </button>
-            <button
-              className={`module-chip${state.activeModuleId === 'monitor' ? ' active' : ''}`}
-              data-module-nav="monitor"
-              onClick={() => onOpenMonitorTab('overview')}
-            >
-              <strong>Monitor</strong>
-              {state.activeModuleId === 'monitor' ? <span>Runs, learning, promotions, and debug state stay here instead of cluttering chat.</span> : null}
-            </button>
-            {([
-              ['ai', 'AI'],
-              ['skills', 'Skills'],
-              ['extensions', 'Extensions'],
-              ['tools', 'Tools'],
-              ['automations', 'Automations'],
-              ['labs', 'Labs'],
-              ['learning', 'Learning'],
-              ['storage', 'Storage'],
-            ] as Array<[SettingsTabId, string]>).map(([tab, label]) => (
-              <button
-                key={tab}
-                className={`module-chip${state.activeModuleId === 'settings' && state.activeSettingsTab === tab ? ' active' : ''}`}
-                data-settings-shortcut={tab}
-                onClick={() => onOpenSettingsTab(tab)}
-              >
-                <strong>{label}</strong>
-                {state.activeModuleId === 'settings' && state.activeSettingsTab === tab ? <span>{label} lives in the unified settings center.</span> : null}
-              </button>
-            ))}
-          </div>
-        </section>
+        <nav className="rail-nav-list">
+          <button
+            className={`rail-nav-item${state.activeModuleId === 'workbench' ? ' active' : ''}`}
+            data-module-nav="workbench"
+            data-route-tab="workbench"
+            onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
+          >
+            <strong>Agents</strong>
+            <span>{unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? '' : 's'}` : 'Open the main workspace chat'}</span>
+          </button>
+          <button
+            className={`rail-nav-item${state.activeModuleId === 'settings' && state.activeSettingsTab === 'workspace' ? ' active' : ''}`}
+            data-route-tab="settings"
+            onClick={() => onOpenSettingsTab('workspace')}
+          >
+            <strong>Spaces</strong>
+            <span>{shortPath(status.target) || 'Choose a workspace root'}</span>
+          </button>
+          <button
+            className={`rail-nav-item${state.activeModuleId === 'monitor' ? ' active' : ''}`}
+            data-route-tab="monitor"
+            onClick={() => onOpenMonitorTab('overview')}
+          >
+            <strong>Spark</strong>
+            <span>{activeTaskRun ? 'Live run status is available' : 'Preview runs, learning, and promotions'}</span>
+            <em>Preview</em>
+          </button>
+        </nav>
 
-        <section className="rail-card thread-card">
+        <section className="rail-session-section">
           <div className="rail-section-head">
-            <span>Threads</span>
+            <span>Agent sessions</span>
             <button className="icon-button" onClick={onNewThread}>+</button>
           </div>
-          <div className="thread-list">
-            {state.threads.map((entry) => (
-              <button
-                key={entry.id}
-                className={`thread-btn${entry.id === thread?.id ? ' active' : ''}`}
-                onClick={() => onSelectThread(entry.id)}
-              >
-                <strong>{entry.title}</strong>
-                <span>{entry.messages.length} msgs</span>
-              </button>
-            ))}
+          <div className="thread-list session-thread-list">
+            {state.threads.slice(0, 6).map((entry) => {
+              const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
+              const unread = Boolean(latestSeenId && state.threadReadMarkers[entry.id] !== latestSeenId);
+              const preview = [...entry.messages].reverse().find((message) => message.role !== 'system')?.text || 'Initial implementation';
+              return (
+                <button
+                  key={entry.id}
+                  className={`thread-btn session-thread-btn${entry.id === thread?.id ? ' active' : ''}`}
+                  onClick={() => onSelectThread(entry.id)}
+                >
+                  <div className="session-thread-title-row">
+                    <strong>{entry.title}</strong>
+                    {unread ? <span className="session-unread-dot" aria-hidden="true" /> : null}
+                  </div>
+                  <span>{summarizeText(preview, 56)}</span>
+                  <small>{formatStamp(entry.updatedAt)} • {entry.messages.length} msgs</small>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rail-session-section secondary">
+          <div className="rail-section-head">
+            <span>Chats</span>
+            <button className="icon-button" onClick={() => void onOpenHandbook()}>?</button>
+          </div>
+          <div className="rail-mini-card">
+            <strong>{status.lab ? 'Lab active' : 'Workspace ready'}</strong>
+            <span>{status.lab ? shortPath(status.lab) : shortPath(status.target) || shortPath(status.workspace) || 'No workspace selected'}</span>
+            <div className="row-actions">
+              <button className="ghost" onClick={onSwitchWorkspace}>Switch</button>
+              <button className="ghost" onClick={() => void onOpenHandbook()}>Handbook</button>
+            </div>
           </div>
         </section>
       </aside>
 
       <div className="main-column">
-        <header className="topbar">
+        <header className="topbar topbar-minimal">
           <div className="topbar-left">
             <button className="icon-button" data-sidebar-toggle="left" onClick={() => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen }))}>
               Menu
@@ -1625,6 +1628,13 @@ function App() {
 
           <div className="topbar-actions">
             <button
+              className={`toolbar-chip${state.activeModuleId === 'monitor' ? ' active' : ''}`}
+              data-route-tab="monitor"
+              onClick={() => onOpenMonitorTab(state.activeMonitorTab || 'overview')}
+            >
+              CLI
+            </button>
+            <button
               className={`toolbar-chip${state.activeModuleId === 'workbench' ? ' active' : ''}`}
               data-route-tab="workbench"
               onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
@@ -1632,42 +1642,14 @@ function App() {
               Chat
             </button>
             <button
-              className={`toolbar-chip${state.activeModuleId === 'monitor' ? ' active' : ''}`}
-              data-route-tab="monitor"
-              onClick={() => onOpenMonitorTab(state.activeMonitorTab || 'overview')}
-            >
-              Monitor
-            </button>
-            <button className="toolbar-chip" onClick={() => void onOpenHandbook()}>
-              Handbook
-            </button>
-            <button className="toolbar-chip" onClick={() => void refreshApp('full')}>Sync</button>
-            <button
-              className={`toolbar-chip${state.rightRailOpen && state.activeInspectorTab === 'inbox' ? ' active' : ''}`}
-              onClick={() => {
-                const nextOpen = !(state.rightRailOpen && state.activeInspectorTab === 'inbox');
-                store.update((current) => ({
-                  ...current,
-                  rightRailOpen: nextOpen,
-                  activeInspectorTab: 'inbox',
-                }));
-                if (nextOpen) {
-                  void refreshApp('full');
-                }
-              }}
-            >
-              Inbox {inboxItems.length ? `(${inboxItems.length})` : ''}
-            </button>
-            <button className="toolbar-chip" onClick={() => void onStopRun()} disabled={!activeTaskRun}>
-              Stop
-            </button>
-            <button
               className={`toolbar-chip${state.activeModuleId === 'settings' ? ' active' : ''}`}
               data-route-tab="settings"
               onClick={() => onOpenSettingsTab(state.activeSettingsTab || 'ai')}
             >
-              Settings
+              Download
             </button>
+            <button className="toolbar-chip" onClick={() => void refreshApp('full')}>Sync</button>
+            <button className="toolbar-chip" onClick={() => void onOpenHandbook()}>Handbook</button>
           </div>
         </header>
 
@@ -1690,11 +1672,17 @@ function App() {
               goalList={goalList}
               taskList={taskList}
               taskRuns={taskRuns}
+              threads={state.threads}
+              activeThreadId={state.activeThreadId}
+              threadReadMarkers={state.threadReadMarkers}
               onComposerChange={(value) => store.update((current) => ({ ...current, composerText: value }))}
               onChatFocusChange={(focused) => store.update((current) => ({ ...current, chatFocused: focused }))}
               onSendChat={onSendChat}
               onQuickChat={onQuickChat}
               onPickAttachments={onPickChatAttachments}
+              onNewThread={onNewThread}
+              onSelectThread={onSelectThread}
+              onUpdateSetting={onUpdateSetting}
               onSelectPath={onLoadInspectorPath}
               onShowInspector={(tab) => {
                 store.update((current) => ({
@@ -1855,6 +1843,9 @@ function WorkbenchPanel(props: {
   aiStatus: JsonMap | null;
   learningStatus: JsonMap;
   thread: ChatThread | undefined;
+  threads: ChatThread[];
+  activeThreadId: string;
+  threadReadMarkers: Record<string, string>;
   composerText: string;
   pendingAttachments: JsonMap[];
   busyChat: boolean;
@@ -1872,12 +1863,15 @@ function WorkbenchPanel(props: {
   onSendChat: () => void;
   onQuickChat: (command: string) => void;
   onPickAttachments: () => void;
+  onNewThread: () => void;
+  onSelectThread: (threadId: string) => void;
+  onUpdateSetting: (key: string, value: any) => void | Promise<void>;
   onSelectPath: (path: string, source?: string) => void;
   onShowInspector: (tab: 'inbox' | 'file' | 'diff' | 'learning') => void;
   onOpenInbox: () => void;
   onRollbackLatestBackup: (backupId?: string) => void;
 }) {
-  const [managerPanelOpen, setManagerPanelOpen] = React.useState(true);
+  const [managerPanelOpen, setManagerPanelOpen] = React.useState(false);
   const settings = props.snapshot?.settings || {};
   const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
   const messages = props.thread?.messages || [];
@@ -1903,6 +1897,10 @@ function WorkbenchPanel(props: {
   const latestGoal = props.goalList[0] || null;
   const latestTask = props.taskList[0] || null;
   const latestRun = props.taskRuns[0] || null;
+  const recentRuns = props.taskRuns.slice(0, 4);
+  const recentThreads = props.threads.slice(0, 4);
+  const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'workspace';
+  const modelLabel = String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b');
   const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === 'object'
     ? props.snapshot.testBench
     : {};
@@ -1927,6 +1925,35 @@ function WorkbenchPanel(props: {
     'Review the current repo and tell me what needs fixing first.',
     'Set up the coding model and verify the engine is ready.',
   ];
+  const launcherActions = [
+    { label: 'Agent', onClick: () => void props.onUpdateSetting('chatMode', 'agent') },
+    { label: 'Create issue', onClick: () => props.onQuickChat('Create a scoped issue list for the current workspace and rank it by impact.') },
+    { label: 'Spark', onClick: () => props.onQuickChat('Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.') },
+    { label: 'Git', onClick: () => props.onShowInspector('file') },
+    { label: 'Pull requests', onClick: () => props.onShowInspector('inbox') },
+  ];
+  const recentSessionItems = recentRuns.length > 0
+    ? recentRuns.map((item) => ({
+      id: String(item?.runId || item?.id || item?.runtimeLabel || Math.random()),
+      title: String(item?.runtimeLabel || item?.label || item?.title || 'Session'),
+      status: String(item?.runtimeState || item?.status || item?.riskClass || 'ready'),
+      detail: summarizeText(String(item?.blockedReason || item?.summary || item?.objective || 'No extra detail recorded yet.'), 120),
+      meta: String(item?.completedAt || item?.updatedAt || item?.createdAt || ''),
+      onClick: latestTask ? () => props.onQuickChat(`Summarize the current run state for ${String(item?.runtimeLabel || item?.label || 'this session')}.`) : undefined,
+    }))
+    : recentThreads.map((entry) => {
+      const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
+      const unread = Boolean(latestSeenId && props.threadReadMarkers[entry.id] !== latestSeenId);
+      const preview = [...entry.messages].reverse().find((message) => message.role !== 'system')?.text || 'No reply recorded yet.';
+      return {
+        id: entry.id,
+        title: entry.title,
+        status: unread ? 'unread' : 'read',
+        detail: summarizeText(preview, 120),
+        meta: formatStamp(entry.updatedAt),
+        onClick: () => props.onSelectThread(entry.id),
+      };
+    });
 
   return (
     <section className="module-panel workbench-panel" data-panel="workbench">
@@ -1953,219 +1980,209 @@ function WorkbenchPanel(props: {
             </section>
           ) : null}
 
-          {isFreshThread ? (
-            <div className="chat-empty-state">
-              <div className="empty-mark">&lt;/&gt;</div>
-              <h2>Let's build</h2>
-              <p>{shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'Pick a workspace'} • {String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b')}</p>
-            </div>
-          ) : (
-            <div className="chat-stage">
-              <div className="chat-log" data-chat-log="true">
-                {messages.map((message) => (
-                  <article key={message.id} className={`chat-bubble ${message.role}`}>
-                    <header>
-                      <strong>{message.role}</strong>
-                      <span>{formatStamp(message.createdAt)}</span>
-                    </header>
-                    <p>{message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? 'Attached screenshot context.' : '')}</p>
-                    {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
-                      <div className="chip-row">
-                        {message.attachments.map((attachment, index) => (
-                          <span key={`${message.id}-attachment-${index}`} className="attachment-chip">
-                            {attachment.originalName || attachment.name || `attachment ${index + 1}`}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {message.refs?.length ? (
-                      <div className="chip-row">
-                        {message.refs.map((ref, index) => (
-                          <button
-                            key={`${message.id}-${index}`}
-                            className="ghost"
-                            onClick={() => ref.path ? props.onSelectPath(String(ref.path), 'chat-ref') : undefined}
-                          >
-                            {ref.label || shortPath(ref.path)}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {message.suggestions?.length ? (
-                      <div className="chip-row">
-                        {message.suggestions.map((suggestion) => (
-                          <button key={suggestion} className="ghost" onClick={() => props.onQuickChat(suggestion)}>
-                            {suggestion}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
+          <div className="workbench-start-shell">
+            <section className="workbench-hero-panel">
+              {isFreshThread ? (
+                <div className="chat-empty-state compact start-hero-copy" data-legacy-empty-title="Let's build">
+                  <div className="start-hero-mark">GS</div>
+                  <h2>Ask anything</h2>
+                  <p>{workspaceLabel} • {modelLabel}</p>
+                </div>
+              ) : (
+                <div className="chat-stage start-conversation-stage">
+                  <div className="chat-log" data-chat-log="true">
+                    {messages.map((message) => (
+                      <article key={message.id} className={`chat-bubble ${message.role}`}>
+                        <header>
+                          <strong>{message.role}</strong>
+                          <span>{formatStamp(message.createdAt)}</span>
+                        </header>
+                        <p>{message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? 'Attached screenshot context.' : '')}</p>
+                        {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
+                          <div className="chip-row">
+                            {message.attachments.map((attachment, index) => (
+                              <span key={`${message.id}-attachment-${index}`} className="attachment-chip">
+                                {attachment.originalName || attachment.name || `attachment ${index + 1}`}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {message.refs?.length ? (
+                          <div className="chip-row">
+                            {message.refs.map((ref, index) => (
+                              <button
+                                key={`${message.id}-${index}`}
+                                className="ghost"
+                                onClick={() => ref.path ? props.onSelectPath(String(ref.path), 'chat-ref') : undefined}
+                              >
+                                {ref.label || shortPath(ref.path)}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {message.suggestions?.length ? (
+                          <div className="chip-row">
+                            {message.suggestions.map((suggestion) => (
+                              <button key={suggestion} className="ghost" onClick={() => props.onQuickChat(suggestion)}>
+                                {suggestion}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="composer chat-composer launch-composer">
+                <div className="chat-mode-bar launch-toolbar">
+                  <label className="selector-chip">
+                    <span>Mode</span>
+                    <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
+                      {chatModes.map((mode) => (
+                        <option key={mode} value={mode}>{mode}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button className="selector-chip selector-button" onClick={props.onNewThread}>
+                    <span>New chat</span>
+                  </button>
+                  <button className="selector-chip selector-button workspace-button" onClick={() => props.onShowInspector('file')}>
+                    <span>{workspaceLabel}</span>
+                  </button>
+                  <button className="selector-chip selector-button" onClick={props.onPickAttachments} aria-label="Attach screenshot">
+                    <span>+</span>
+                  </button>
+                </div>
+
+                <textarea
+                  id="chatInput"
+                  data-chat-input="true"
+                  value={props.composerText}
+                  onChange={(event) => props.onComposerChange(event.target.value)}
+                  onFocus={() => props.onChatFocusChange(true)}
+                  onBlur={() => props.onChatFocusChange(false)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      props.onSendChat();
+                    }
+                  }}
+                  placeholder="Ask anything"
+                />
+
+                <div className="composer-footer launch-footer">
+                  <div className="chat-activity-strip">
+                    <span>{modeSummaryLabel}</span>
+                    <span>{modeRouteSummary[chatMode]}</span>
+                    <span>{branchLabel}</span>
+                    <span>{safetyLabel}</span>
+                  </div>
+                  <div className="launch-send-row">
+                    <span className="composer-model-tag">{modelLabel}</span>
+                    <button className="primary send-icon-button" id="chatSend" data-chat-send="true" onClick={props.onSendChat} disabled={props.busyChat}>
+                      {props.busyChat ? 'Working…' : 'Send'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="launch-action-row">
+                  {launcherActions.map((action) => (
+                    <button key={action.label} className="ghost launch-action-pill" onClick={action.onClick}>{action.label}</button>
+                  ))}
+                </div>
+
+                {isFreshThread ? (
+                  <div className="prompt-grid compact launch-prompts">
+                    {promptCards.map((card) => (
+                      <button key={card} className="prompt-card compact" onClick={() => props.onQuickChat(card)}>
+                        {card}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="composer-toolbar compact">
+                  <div className="chip-row quick-command-row">
+                    {composerSuggestions.map((command) => (
+                      <button key={command} className="ghost" onClick={() => props.onQuickChat(command)}>{command}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {managerPanelOpen ? (
+                  <section className="manager-drawer compact">
+                    <div>
+                      <div className="eyebrow">Manager</div>
+                      <strong>Use auto manager</strong>
+                      <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
+                    </div>
+                    <div className="composer-selector-row">
+                      <label className="selector-chip">
+                        <span>Manager</span>
+                        <select defaultValue="auto" aria-label="Manager mode">
+                          <option value="auto">auto</option>
+                          <option value="guided">guided</option>
+                        </select>
+                      </label>
+                      <label className="selector-chip">
+                        <span>Worker</span>
+                        <select defaultValue="workspace" aria-label="Worker routing">
+                          <option value="workspace">workspace</option>
+                          <option value="engine">engine</option>
+                        </select>
+                      </label>
+                      <label className="selector-chip">
+                        <span>Mode</span>
+                        <select value={effectiveChatMode} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Effective mode">
+                          {chatModes.map((mode) => (
+                            <option key={`drawer-${mode}`} value={mode}>{mode}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
+                    </div>
+                    <div className="chat-compact-strip">
+                      <span>Auto-run queued tasks</span>
+                      <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
+                    </div>
+                  </section>
+                ) : null}
+
+                {props.pendingAttachments.length > 0 ? (
+                  <div className="chip-row attachment-row">
+                    {props.pendingAttachments.map((attachment, index) => (
+                      <span key={`${attachment.id || attachment.path || index}`} className="attachment-chip">
+                        {attachment.originalName || attachment.name || `image ${index + 1}`}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="recent-session-card recent-session-panel">
+              <div className="panel-header compact">
+                <div>
+                  <div className="eyebrow">Recent agent sessions</div>
+                  <h2>{latestRun?.runtimeLabel || latestTask?.title || 'Latest workspace activity'}</h2>
+                </div>
+                <button className="ghost" onClick={() => setManagerPanelOpen((current) => !current)}>Manager panel</button>
+              </div>
+              <div className="recent-session-list">
+                {recentSessionItems.map((item) => (
+                  <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
+                    <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
+                      <strong>{item.title}</strong>
+                      <span>{item.status}</span>
+                      <span>{item.detail}</span>
+                      <small>{item.meta || 'Ready'}</small>
+                    </button>
                   </article>
                 ))}
               </div>
-            </div>
-          )}
-
-          {isFreshThread ? (
-            <div className="prompt-grid">
-              {promptCards.map((card) => (
-                <button key={card} className="prompt-card" onClick={() => props.onQuickChat(card)}>
-                  {card}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="workbench-status-strip">
-            <article className="status-pill-card">
-              <span className="eyebrow">Lane</span>
-              <strong>{props.aiStatus?.profileId || settings.aiProfile || 'hybrid-default'}</strong>
-              <p>{props.aiStatus?.current?.ollamaModel || settings.trainingOllamaModel || settings.model || 'qwen2.5-coder:7b'}</p>
-            </article>
-            <article className="status-pill-card">
-              <span className="eyebrow">Latest goal</span>
-              <strong>{latestGoal?.title || 'No goal yet'}</strong>
-              <p>{latestGoal ? `${latestGoal.status || 'active'} • ${shortPath(latestGoal.labRoot || latestGoal.targetWorkspaceRoot || latestGoal.workspaceRoot || '') || 'workspace target'}` : 'Plain-English chat prompts can create goals automatically.'}</p>
-            </article>
-            <article className="status-pill-card">
-              <span className="eyebrow">Latest task</span>
-              <strong>{latestTask?.title || 'No task yet'}</strong>
-              <p>{latestTask ? `${latestTask.status || 'ready'} • ${latestTask.riskClass || 'medium'} risk` : 'Chat can create scoped tasks automatically.'}</p>
-            </article>
-            <article className="status-pill-card">
-              <span className="eyebrow">Latest run</span>
-              <strong>{latestRun?.runtimeLabel || latestRun?.label || 'No run yet'}</strong>
-              <p>{latestRun ? `${latestRun.runtimeState || latestRun.status || 'idle'}${latestRun.blockedReason ? ` • ${summarizeText(latestRun.blockedReason, 80)}` : ''}` : 'The first actionable prompt can launch a run automatically.'}</p>
-            </article>
-            <article className="status-pill-card">
-              <span className="eyebrow">Inbox</span>
-              <strong>{props.inboxItems.length ? `${props.inboxItems.length} item${props.inboxItems.length === 1 ? '' : 's'}` : 'Clear'}</strong>
-              <p>{props.unreadCount > 0 ? `${props.unreadCount} unread thread${props.unreadCount === 1 ? '' : 's'} • ` : ''}{props.safeMode.active ? 'Safe mode needs review.' : 'Approvals, learning, and warnings stay in one place.'}</p>
-            </article>
-          </div>
-
-          <div className="chat-mode-bar">
-            <label className="selector-chip">
-              <span>Mode</span>
-              <select defaultValue={effectiveChatMode} aria-label="Chat mode">
-                {chatModes.map((mode) => (
-                  <option key={mode} value={mode}>{mode}</option>
-                ))}
-              </select>
-            </label>
-            <div className="chat-compact-strip">
-              <strong>{modeSummaryLabel}</strong>
-              <span>{modeRouteSummary[chatMode]}</span>
-            </div>
-          </div>
-
-          <div className="chat-activity-strip">
-            <span>{branchLabel}</span>
-            <span>{safetyLabel}</span>
-            <button
-              className={openModule === "monitor" ? 'ghost active' : 'ghost'}
-              onClick={() => setManagerPanelOpen((current) => !current)}
-            >
-              Manager panel
-            </button>
-            <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
-          </div>
-
-          {managerPanelOpen ? (
-          <section className="manager-drawer">
-            <div>
-              <div className="eyebrow">Manager</div>
-              <strong>Use auto manager</strong>
-              <p>Talk to the engine like a teammate.</p>
-              <p>Keep the current desktop design, but expose Papadex-style manager and worker controls directly in chat.</p>
-            </div>
-            <div className="composer-selector-row">
-              <label className="selector-chip">
-                <span>Manager</span>
-                <select defaultValue="auto" aria-label="Manager mode">
-                  <option value="auto">auto</option>
-                  <option value="guided">guided</option>
-                </select>
-              </label>
-              <label className="selector-chip">
-                <span>Worker</span>
-                <select defaultValue="workspace" aria-label="Worker routing">
-                  <option value="workspace">workspace</option>
-                  <option value="engine">engine</option>
-                </select>
-              </label>
-              <label className="selector-chip">
-                <span>Mode</span>
-                <select defaultValue={effectiveChatMode} aria-label="Effective mode">
-                  {chatModes.map((mode) => (
-                    <option key={`drawer-${mode}`} value={mode}>{mode}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="chat-compact-strip">
-              <span>Auto-run queued tasks</span>
-              <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
-            </div>
-          </section>
-          ) : null}
-
-          <div className="composer chat-composer">
-            <div className="composer-toolbar">
-              <div className="chip-row quick-command-row">
-                {composerSuggestions.map((command) => (
-                  <button key={command} className="ghost" onClick={() => props.onQuickChat(command)}>{command}</button>
-                ))}
-              </div>
-              <div className="chip-row quick-command-row">
-                <button className="ghost" onClick={props.onPickAttachments}>Attach screenshot</button>
-                <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Inbox {props.inboxItems.length ? `(${props.inboxItems.length})` : ''}</button>
-                <button className="ghost" onClick={() => props.onShowInspector('file')}>Files {props.changedItems.length ? `(${props.changedItems.length})` : ''}</button>
-              </div>
-            </div>
-            {props.pendingAttachments.length > 0 ? (
-              <div className="chip-row attachment-row">
-                {props.pendingAttachments.map((attachment, index) => (
-                  <span key={`${attachment.id || attachment.path || index}`} className="attachment-chip">
-                    {attachment.originalName || attachment.name || `image ${index + 1}`}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <textarea
-              id="chatInput"
-              data-chat-input="true"
-              value={props.composerText}
-              onChange={(event) => props.onComposerChange(event.target.value)}
-              onFocus={() => props.onChatFocusChange(true)}
-              onBlur={() => props.onChatFocusChange(false)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  props.onSendChat();
-                }
-              }}
-              placeholder="Ask the coding model what to build, fix, review, or explain."
-            />
-            <div className="composer-footer">
-              <div className="composer-meta">
-                <span>{String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b')}</span>
-                <span>{String(settings.runtime || 'ollama')}</span>
-                <span>{shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'no workspace'}</span>
-                <span className={`signal-indicator signal-${props.chatSignalState}`}>
-                  {props.chatSignalState === 'alert'
-                    ? 'safe mode'
-                    : props.chatSignalState === 'active'
-                      ? 'working'
-                      : props.chatSignalState === 'message'
-                        ? 'new reply'
-                        : 'ready'}
-                </span>
-              </div>
-              <button className="primary" id="chatSend" data-chat-send="true" onClick={props.onSendChat} disabled={props.busyChat}>
-                {props.busyChat ? 'Working…' : 'Send'}
-              </button>
-            </div>
+            </section>
           </div>
         </div>
       </div>
