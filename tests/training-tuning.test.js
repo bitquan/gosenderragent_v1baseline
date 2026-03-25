@@ -456,7 +456,7 @@ test('buildTrainingModelSelectorOptions merges configured Ollama manifests with 
   try {
     fs.mkdirSync(modelsRoot, { recursive: true });
     fs.mkdirSync(path.join(manifestsRoot, 'qwen2.5-coder'), { recursive: true });
-    fs.writeFileSync(path.join(modelsRoot, 'DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf'), 'gguf', 'utf8');
+    fs.writeFileSync(path.join(modelsRoot, 'DeepSeek-Coder-V2-Lite-Instruct.Q4_K_M.gguf'), 'gguf', 'utf8');
     fs.writeFileSync(path.join(manifestsRoot, 'qwen2.5-coder', '14b'), '{}\n', 'utf8');
 
     const selector = buildTrainingModelSelectorOptions({

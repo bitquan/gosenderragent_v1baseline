@@ -75,6 +75,10 @@ Primary workspace tasks:
 - `Desktop Agent PC: Package Win`
 - `Desktop Agent PC: Install recommended models`
 
+Install note:
+
+- The Windows recommended-model task pulls the registry-backed Qwen models directly and stages DeepSeek/Qwen3 GGUF files into `assistant_training_model_storage_root`; import those staged files from Settings -> AI -> Import all stored models.
+
 Primary npm commands:
 
 ```powershell

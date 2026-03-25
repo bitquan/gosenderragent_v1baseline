@@ -280,8 +280,13 @@ function buildWindowsPcFiles(options = {}) {
   }));
   const installCommands = installPresets
     .filter((preset) => preset.hardwareRecommended && preset.downloadCommand)
-    .slice(0, 2)
-    .map((preset) => `Write-Host "[gosenderr-pc] ${String(preset.label || '')}"\n${String(preset.downloadCommand || '')}`);
+    .slice(0, 4)
+    .map((preset) => {
+      const followup = preset.ollamaPullCommand
+        ? ''
+        : '\nWrite-Host "[gosenderr-pc] staged for import via Settings -> AI -> Import all stored models"';
+      return `Write-Host "[gosenderr-pc] ${String(preset.label || '')}"\n${String(preset.downloadCommand || '')}${followup}`;
+    });
 
   return {
     '.vscode/extensions.json': buildWindowsExtensionsJson(),

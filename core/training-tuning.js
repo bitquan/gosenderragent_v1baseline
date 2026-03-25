@@ -21,6 +21,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     workerFamily: 'qwen',
     variantType: 'base',
     ollamaModel: 'qwen2.5-coder:7b',
+    ollamaPullModel: 'qwen2.5-coder:7b',
     fileName: 'Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf',
     sizeLabel: '4.7 GB',
     makeTarget: 'model-download-qwen-coder-7b',
@@ -36,6 +37,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     workerFamily: 'qwen',
     variantType: 'base',
     ollamaModel: 'qwen2.5-coder:14b',
+    ollamaPullModel: 'qwen2.5-coder:14b',
     fileName: 'Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf',
     sizeLabel: '9.0 GB',
     makeTarget: 'model-download-qwen-coder-14b',
@@ -51,7 +53,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     workerFamily: 'deepseek-coder',
     variantType: 'backup',
     ollamaModel: 'deepseek-coder-v2-lite-instruct:q4-k-m',
-    fileName: 'DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf',
+    fileName: 'DeepSeek-Coder-V2-Lite-Instruct.Q4_K_M.gguf',
     sizeLabel: '10.4 GB',
     makeTarget: 'model-download-deepseek-coder-v2-lite',
     sourcePortal: 'huggingface',
@@ -1183,11 +1185,16 @@ function buildHuggingFaceDownloadCommand(model = {}, settings = {}) {
   if (!repoId || !fileName) {
     return '';
   }
+  const pythonSnippet = [
+    'from huggingface_hub import hf_hub_download',
+    'import sys',
+    'hf_hub_download(repo_id=sys.argv[1], filename=sys.argv[2], local_dir=sys.argv[3])',
+  ].join('; ');
   return [
-    'python -m huggingface_hub download',
+    'python -c',
+    shellQuote(pythonSnippet),
     shellQuote(repoId),
     shellQuote(fileName),
-    '--local-dir',
     shellQuote(normalized.trainingModelStorageRoot),
   ].join(' ');
 }
@@ -1197,8 +1204,9 @@ function buildModelInstallPresets(workspaceRoot, settings = {}) {
   const selectedHardwareTarget = normalizeHardwareTarget(normalized.trainingHardwareTarget);
   return RECOMMENDED_LOCAL_MODELS.map((model) => {
     const recommendedTargets = Array.isArray(model.recommendedTargets) ? model.recommendedTargets : [];
-    const ollamaPullCommand = String(model.ollamaModel || '').trim()
-      ? `ollama pull ${shellQuote(model.ollamaModel)}`
+    const ollamaPullModel = String(model.ollamaPullModel || '').trim();
+    const ollamaPullCommand = ollamaPullModel
+      ? `ollama pull ${shellQuote(ollamaPullModel)}`
       : '';
     const huggingFaceDownloadCommand = buildHuggingFaceDownloadCommand(model, normalized);
     return {
@@ -1221,7 +1229,7 @@ function buildModelInstallPresets(workspaceRoot, settings = {}) {
       installSummary: ollamaPullCommand
         ? 'Use Ollama pull for the fastest setup on this machine.'
         : (huggingFaceDownloadCommand
-          ? 'Use Hugging Face download when the model is not available as an Ollama tag.'
+          ? 'Stage the GGUF with Hugging Face, then import stored models from the app when the download is complete.'
           : 'Use the curated workspace download target.'),
     };
   });
