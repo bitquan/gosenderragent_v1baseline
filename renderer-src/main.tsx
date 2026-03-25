@@ -794,6 +794,176 @@ function mergeBinaryUpdateSnapshot(snapshot: JsonMap | null, payload: JsonMap) {
   return mergeUpdateSnapshot(snapshot, { binary: payload });
 }
 
+function isLocalProvider(value: any) {
+  const provider = String(value || '').trim().toLowerCase();
+  return provider === 'ollama' || provider === 'local';
+}
+
+function modelProgramStatusLabel(value: string) {
+  if (value === 'verified') {
+    return 'Verified';
+  }
+  if (value === 'next') {
+    return 'Next';
+  }
+  return 'Locked';
+}
+
+function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
+  const settings = snapshot?.settings || {};
+  const localModels = readAiModelOptions(aiStatus, tuning, settings)
+    .filter((option) => option.ready && isLocalProvider(option.provider));
+  const currentProvider = String(aiStatus?.current?.provider || settings.runtime || 'ollama').trim().toLowerCase();
+  const currentRuntime = String(settings.runtime || currentProvider || 'ollama').trim().toLowerCase();
+  const routePolicy = String(settings.aiRoutingPolicy || settings.aiProfile || '').trim().toLowerCase();
+  const laneOverrides = normalizeLaneOverrides(settings.aiLaneOverrides || aiStatus?.current?.laneOverrides || {});
+  const benchmarkSummary = Array.isArray(aiStatus?.benchmarkSummary) ? aiStatus.benchmarkSummary : [];
+  const benchmarkLeader = benchmarkSummary[0] || {};
+  const benchmarkLeaderIsLocal = isLocalProvider(benchmarkLeader.providerSource || benchmarkLeader.provider || currentProvider);
+  const acceptance = snapshot?.acceptance?.report && typeof snapshot.acceptance.report === 'object'
+    ? snapshot.acceptance.report
+    : {};
+  const acceptanceStatus = String(acceptance.overallStatus || '').trim().toLowerCase();
+  const promotions = snapshot?.promotions && typeof snapshot.promotions === 'object' ? snapshot.promotions : {};
+  const candidates = Array.isArray(promotions.candidates) ? promotions.candidates : [];
+  const promotedCandidates = candidates.filter((candidate: JsonMap) => ['promoted', 'live'].includes(String(candidate.status || '').trim().toLowerCase()));
+  const modelFoundry = snapshot?.modelFoundry && typeof snapshot.modelFoundry === 'object' ? snapshot.modelFoundry : {};
+  const safeMode = readSafeMode(snapshot);
+  const remoteFallbackReady = Boolean(String(settings.aiRemoteModel || aiStatus?.current?.remoteModel || '').trim());
+  const activeLaneOverrideCount = Object.keys(laneOverrides).length;
+  const localRuntimeReady = ['ollama', 'local', 'hybrid'].includes(currentRuntime) || ['ollama', 'local', 'hybrid'].includes(currentProvider);
+
+  const foundationStatus = localModels.length >= 2
+    ? 'verified'
+    : localModels.length === 1 && localRuntimeReady
+      ? 'next'
+      : 'locked';
+  const routingStatus = localRuntimeReady && localModels.length > 0
+    ? ((activeLaneOverrideCount > 0 || routePolicy.includes('local') || routePolicy.includes('hybrid')) ? 'verified' : 'next')
+    : 'locked';
+  const codingStatus = acceptanceStatus === 'pass'
+    ? 'verified'
+    : acceptanceStatus === 'warn' || benchmarkSummary.length > 0
+      ? 'next'
+      : 'locked';
+  const promotionStatus = promotedCandidates.length > 0
+    ? 'verified'
+    : (Number(modelFoundry.candidateCount || 0) > 0 || candidates.length > 0 ? 'next' : 'locked');
+  const selfImproveStatus = promotedCandidates.length > 0 && acceptanceStatus === 'pass'
+    ? 'verified'
+    : (acceptanceStatus === 'pass' || promotedCandidates.length > 0 ? 'next' : 'locked');
+
+  const layers = [
+    {
+      id: 'foundation',
+      label: 'Layer 0: Foundation',
+      status: foundationStatus,
+      summary: foundationStatus === 'verified'
+        ? `${localModels.length} ready local coding models are installed and the local runtime is usable.`
+        : foundationStatus === 'next'
+          ? 'The local runtime is usable, but the second ready coding-grade local model still needs to be locked in.'
+          : 'Install and register local coding models before treating the engine as local-first.',
+      unlockRule: 'Need 2 ready local coding models plus a working local runtime.',
+    },
+    {
+      id: 'routing',
+      label: 'Layer 1: Local coding parity',
+      status: routingStatus,
+      summary: routingStatus === 'verified'
+        ? `Local-first routing is configured${activeLaneOverrideCount > 0 ? ` with ${activeLaneOverrideCount} explicit lane override${activeLaneOverrideCount === 1 ? '' : 's'}` : ''}.`
+        : routingStatus === 'next'
+          ? 'Local runtime is available, but planner/coder/validator still need a locked local-first route policy.'
+          : 'Routing is not yet stable enough to treat local models as the default coding path.',
+      unlockRule: 'Planner, coder, and validator must route local-first before widening capability.',
+    },
+    {
+      id: 'coding',
+      label: 'Layer 2: Verified coding block',
+      status: codingStatus,
+      summary: codingStatus === 'verified'
+        ? `Acceptance is green and ${benchmarkLeaderIsLocal ? 'the current benchmark leader is local-first' : 'benchmark evidence exists'} for the coding block.`
+        : codingStatus === 'next'
+          ? 'Benchmark or partial acceptance evidence exists, but the local-first coding block is not fully proven yet.'
+          : 'The local-first coding block still needs benchmark and acceptance proof before autonomy expands.',
+      unlockRule: 'Need benchmark plus acceptance proof for local-first planner/coder/validator lanes.',
+    },
+    {
+      id: 'promotion',
+      label: 'Layer 3: Foundry and promotion',
+      status: promotionStatus,
+      summary: promotionStatus === 'verified'
+        ? `${promotedCandidates.length} promoted local candidate${promotedCandidates.length === 1 ? '' : 's'} already proved the promotion path.`
+        : promotionStatus === 'next'
+          ? 'Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path.'
+          : 'No verified candidate promotion path exists yet for local model bundles.',
+      unlockRule: 'Only benchmark-backed local candidates should become promoted defaults.',
+    },
+    {
+      id: 'self-improve',
+      label: 'Layer 4: Self-improvement',
+      status: selfImproveStatus,
+      summary: selfImproveStatus === 'verified'
+        ? 'Trusted self-improvement can stay gated behind approved runs while the local baseline remains green.'
+        : selfImproveStatus === 'next'
+          ? 'The repo is close to trusted self-improvement, but promotion or acceptance proof is still incomplete.'
+          : 'Keep self-improvement bounded until the lower local-first blocks are verified.',
+      unlockRule: 'Approved-run exports only, and only after local-first acceptance stays green.',
+    },
+  ];
+
+  const unlocks = [
+    {
+      id: 'chat',
+      label: 'Unlock local-first daily coding',
+      status: foundationStatus === 'verified' && routingStatus === 'verified' ? 'verified' : foundationStatus === 'next' || routingStatus === 'next' ? 'next' : 'locked',
+      summary: 'Daily planning and coding can default local-first once foundation and routing are verified.',
+    },
+    {
+      id: 'repair',
+      label: 'Unlock local repair and edit loop',
+      status: codingStatus === 'verified' ? 'verified' : codingStatus === 'next' ? 'next' : 'locked',
+      summary: 'Repair, edit, and rerun loops should widen only after benchmark plus acceptance proof is visible.',
+    },
+    {
+      id: 'promotion',
+      label: 'Unlock model promotion',
+      status: promotionStatus,
+      summary: 'Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe.',
+    },
+    {
+      id: 'self-improve',
+      label: 'Unlock trusted self-improvement',
+      status: selfImproveStatus,
+      summary: 'Training exports and self-improvement stay gated behind approved runs and a stable local baseline.',
+    },
+    {
+      id: 'remote-min',
+      label: 'Unlock remote-minimized operation',
+      status: selfImproveStatus === 'verified' && benchmarkLeaderIsLocal && !safeMode.active
+        ? 'verified'
+        : ((routingStatus === 'verified' || codingStatus === 'verified') && remoteFallbackReady ? 'next' : 'locked'),
+      summary: remoteFallbackReady
+        ? 'Remote models can stay as explicit compare or overflow helpers instead of the daily default.'
+        : 'Configure remote fallback only as backup, not as the primary coding path.',
+    },
+  ];
+
+  const nextLayer = layers.find((layer) => layer.status !== 'verified') || layers[layers.length - 1];
+  const verifiedCount = layers.filter((layer) => layer.status === 'verified').length;
+
+  return {
+    verifiedCount,
+    localModelCount: localModels.length,
+    benchmarkLeaderIsLocal,
+    nextLayer,
+    summary: nextLayer.status === 'verified'
+      ? 'All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison.'
+      : `Next focus: ${nextLayer.label}. ${nextLayer.summary}`,
+    layers,
+    unlocks,
+  };
+}
+
 function App() {
   const state = useStoreValue(store);
   const reportRendererError = window.gosAgent.reportRendererError;
@@ -4013,6 +4183,7 @@ function MonitorPanel(props: {
   const operatorSupervision = props.learningStatus?.operatorSupervision && typeof props.learningStatus.operatorSupervision === 'object'
     ? props.learningStatus.operatorSupervision
     : {};
+  const localModelProgram = buildLocalModelProgram(props.snapshot, props.aiStatus, props.tuning);
   const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
   const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
   const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === 'object'
@@ -4235,6 +4406,38 @@ function MonitorPanel(props: {
               )) : null}
             </section>
           ) : null}
+          <section className="queue-card">
+            <div className="eyebrow">Local model MVP ladder</div>
+            <div className="run-item">
+              <strong>{`${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified`}</strong>
+              <span>{localModelProgram.summary}</span>
+            </div>
+            {localModelProgram.layers.map((layer: { id: string; label: string; status: string; summary: string; unlockRule: string }) => (
+              <div key={layer.id} className="run-item">
+                <strong>{layer.label}</strong>
+                <span>{`${modelProgramStatusLabel(layer.status)} • ${layer.summary}`}</span>
+                <div className="chip-row">
+                  <span className="chip">{modelProgramStatusLabel(layer.status)}</span>
+                  <span className="chip">{layer.unlockRule}</span>
+                </div>
+              </div>
+            ))}
+            <p className="empty-copy">This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof.</p>
+          </section>
+          <section className="queue-card">
+            <div className="eyebrow">Capability unlock ladder</div>
+            <div className="run-item">
+              <strong>{localModelProgram.nextLayer.label}</strong>
+              <span>{localModelProgram.nextLayer.unlockRule}</span>
+            </div>
+            {localModelProgram.unlocks.map((unlock: { id: string; label: string; status: string; summary: string }) => (
+              <div key={unlock.id} className="run-item">
+                <strong>{unlock.label}</strong>
+                <span>{`${modelProgramStatusLabel(unlock.status)} • ${unlock.summary}`}</span>
+              </div>
+            ))}
+            <p className="empty-copy">Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block.</p>
+          </section>
           <section className="queue-card">
             <div className="eyebrow">Hard safe-mode controller</div>
             <div className="run-item">

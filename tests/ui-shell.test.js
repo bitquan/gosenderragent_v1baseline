@@ -55,6 +55,8 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /Plan the next safe coding task/);
   assert.match(appJs, /Review the current repo and tell me what needs fixing first/);
   assert.match(appJs, /Set up the coding model and verify the engine is ready/);
+  assert.match(appJs, /Local model MVP ladder/);
+  assert.match(appJs, /Capability unlock ladder/);
   assert.match(appJs, /supervised engine loop/);
   assert.match(appJs, /dedupeInboxItems/);
   assert.match(appJs, /deriveInboxDedupeKey/);

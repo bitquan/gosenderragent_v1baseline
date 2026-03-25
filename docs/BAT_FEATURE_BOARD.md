@@ -52,6 +52,7 @@ What is still broken:
 
 - The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
 - Older docs still contain stale Mac-first examples and duplicate information.
+- The repo does not yet have a locked local-model MVP ladder with explicit capability-unlock gates for widening engine autonomy and self-improvement.
 
 ## 4. Agent Working Contract
 
@@ -150,16 +151,66 @@ When debugging the engine, capture these artifacts if needed:
 - BAT<PERF-001> DONE: Reduce large-journal tail-read cost in `core/learning-journal.js` and lock the bounded parse behavior with the large-journal regression fixture.
 - BAT<DOCS-001> DONE: Retire overlapping daily workflow ownership by routing desktop and owner docs back to this board while keeping them as deeper reference material.
 - BAT<OPS-004> DONE: Expose in-app desktop update controls so downloaded desktop releases can be checked, downloaded, and installed from the running app without leaving the shell.
+- BAT<MODEL-PLAN-001> DONE: Define the local-model-first MVP ladder, unlock rules, and operator workflow in this board so the next phase is explicit and stable.
+- BAT<MODEL-UI-001> DONE: Add a local-model ladder and capability-unlock monitor to the desktop Monitor overview so operators can see what is verified, what is next, and what stays locked.
+- BAT<MODEL-001> TODO: Lock planner, coder, and validator lanes to a local-first profile with remote models reserved for compare, overflow, or approval-only fallback.
+- BAT<MODEL-002> TODO: Add benchmark packs and acceptance gates for local planner, coder, and validator lanes before widening autonomy beyond the current verified block.
+- BAT<MODEL-003> TODO: Promote only benchmark-backed foundry candidates into the engine lane map and prove rollback from the latest known-good model bundle.
+- BAT<MODEL-004> TODO: Keep self-improvement exports limited to approved or trusted runs until local-first acceptance stays green across the baseline labs.
 
-## 10. Audit Plan
+## 10. Local-Model MVP Ladder
+
+Goal:
+
+- Make the everyday coding loop local-first so the desktop app and engine can code, repair, review, and improve themselves without depending on a remote model for normal work.
+- Treat remote models as fallback, comparison, or approval helpers until the verified local baseline is strong enough to carry more lanes.
+- Expand capability only after the previous block has hard evidence, not just a successful chat demo.
+
+Layer-by-layer baseline:
+
+1. Layer 0: Foundation.
+  Exit gate: at least two ready local coding models are installed, the selected local runtime works, and the benchmark path is runnable.
+  Scope: Ollama or local runtime health, model import, storage, selector catalog, and one stable default coding model.
+2. Layer 1: Local coding parity.
+  Exit gate: planner, coder, and validator can all route through a local-first profile, with remote fallback still available but not primary.
+  Scope: lane routing, AI profile defaults, workspace-vs-engine model split, and stable local-first settings in the UI.
+3. Layer 2: Verified coding block.
+  Exit gate: local-first routing passes benchmark plus engine acceptance on the baseline labs, and repair/edit flows produce real diffs and valid reruns.
+  Scope: benchmark leader, acceptance proof, repair loop quality, reviewer signals, and regression-builder follow-ups.
+4. Layer 3: Foundry and promotion block.
+  Exit gate: a benchmark-backed local candidate can move through foundry and promotion with rollback proven.
+  Scope: candidate creation, promotion gate, backups, ring history, and local route-bundle promotion.
+5. Layer 4: Self-improvement block.
+  Exit gate: trusted accepted runs can export training/improvement artifacts without widening unsafe autonomy.
+  Scope: approved learning changes, trusted prompts, distillation/training exports, and supervised self-improvement only.
+6. Layer 5: Remote minimization block.
+  Exit gate: the normal solo-dev loop stays local-first, and remote usage is limited to explicit compare, overflow, or approval lanes.
+  Scope: usage policy, fallbacks, cost control, and operator-visible routing proof.
+
+Unlock rules:
+
+- Do not unlock a higher block because the model "felt good" in chat. Unlock only when the lower block has artifacts the operator can inspect.
+- Benchmark proof must exist before acceptance proof is trusted for model widening.
+- Acceptance proof must stay green before autonomy expands beyond bounded supervised work.
+- Promotion proof must exist before a candidate becomes the new default route.
+- Trusted learning exports must stay gated behind approval or trusted-change filters.
+- If a higher block regresses, fall back to the last verified block instead of keeping the wider capability open.
+
+Stable MVP target:
+
+- MVP means the app can plan, edit, repair, validate, and review a normal repo with local-first routing, while the operator can see exactly which capability block is verified, next, or locked.
+- The first MVP is not "equal to every remote model". The first MVP is "good enough to carry the daily solo-dev loop locally, with clear fallback and promotion rules".
+
+## 11. Audit Plan
 
 Current board status:
 
 1. All active BAT items on this board are complete.
 2. Inbox and stored approval state are currently clear, with no pending approvals queued in the recorded runtime artifacts.
-3. The next phase after this board is model tuning and broader engine-capability expansion, using the validated acceptance and packaging baseline from this pass.
+3. The next phase is the local-model MVP ladder above: local-first routing, verified benchmark plus acceptance blocks, then promotion and self-improvement widening.
+4. The Monitor overview is now the operator surface for that ladder, so board policy and UI status stay aligned.
 
-## 11. Completion Standard
+## 12. Completion Standard
 
 A task on this board is not done until:
 
