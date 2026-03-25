@@ -47,9 +47,9 @@ function createService() {
       engineBaseProvider: 'openai',
       engineProviderSource: 'openai',
       taskModeRoutes: {
-        planner: { provider: 'openai', model: 'gpt-5.4' },
+        planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
         coder: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
-        validator: { provider: 'openai', model: 'gpt-5.4' },
+        validator: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
         summarizer: { provider: 'openai', model: 'gpt-4.1-mini' },
       },
       selfImprovementOnly: false,
@@ -120,6 +120,8 @@ test('buildTaskLoopRequest preserves lane metadata and keeps summarizer off the 
   assert.equal(planned.request.modelProfileId, 'gse-1-engine');
   assert.equal(planned.request.modelRole, 'engine');
   assert.equal(planned.request.modelDisplayName, 'GSE-1 Engine');
+  assert.equal(planned.request.baseProvider, 'ollama');
+  assert.equal(planned.request.baseModel, 'qwen2.5-coder:7b');
 
   const coding = service.buildTaskLoopRequest({
     laneId: 'code-main',
@@ -127,6 +129,7 @@ test('buildTaskLoopRequest preserves lane metadata and keeps summarizer off the 
   });
   assert.equal(coding.request.modelProfileId, 'gs-dev-1-default');
   assert.equal(coding.request.modelRole, 'workspace');
+  assert.equal(coding.request.baseProvider, 'ollama');
 
   const blocked = service.startTaskLoop({
     laneId: 'ops-summary',
@@ -137,6 +140,7 @@ test('buildTaskLoopRequest preserves lane metadata and keeps summarizer off the 
   assert.equal(blocked.blockedBy, 'task-mode');
   assert.equal(blocked.taskMode, 'summarizer');
   assert.equal(blocked.laneId, 'ops-summary');
+  assert.equal(blocked.request.baseProvider, 'openai');
 });
 
 test('execution model role follows the existing lane split', () => {

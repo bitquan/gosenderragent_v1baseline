@@ -135,6 +135,22 @@ const CAPABILITY_LANE_MODEL_ROLE_MAP = Object.freeze({
   'review-verify': 'reviewer',
 });
 
+const LOCAL_FIRST_BLOCK_PACKS = Object.freeze([
+  { taskMode: 'planner', laneId: 'plan-reasoning', label: 'Planner' },
+  { taskMode: 'coder', laneId: 'code-main', label: 'Coder' },
+  { taskMode: 'validator', laneId: 'review-verify', label: 'Validator' },
+]);
+
+function isLocalProvider(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'ollama' || normalized === 'local';
+}
+
+function usesLocalPrimaryTaskMode(taskMode) {
+  const normalized = normalizeTaskModeId(taskMode) || String(taskMode || '').trim().toLowerCase();
+  return ['planner', 'coder', 'validator'].includes(normalized);
+}
+
 function normalizeWrappedProfileId(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
   return normalized || 'gs-dev-1-default';
@@ -188,11 +204,33 @@ function normalizeTaskModeId(value) {
 
 function buildDefaultTaskModeRoute(taskMode, options = {}) {
   const currentProvider = String(options.currentProvider || 'ollama').trim().toLowerCase() || 'ollama';
+  const localProvider = String(options.localProvider || (isLocalProvider(currentProvider) ? currentProvider : 'ollama')).trim().toLowerCase() || 'ollama';
   const localModel = String(options.localModel || 'qwen2.5-coder:7b').trim() || 'qwen2.5-coder:7b';
   const benchmarkModel = String(options.benchmarkModel || localModel).trim() || localModel;
+  const benchmarkProvider = inferProviderForModel(benchmarkModel, localProvider);
   const remoteProvider = String(options.remoteProvider || 'openai').trim().toLowerCase() || 'openai';
   const remoteModel = String(options.remoteModel || options.modelLabel || 'gpt-5-mini').trim() || 'gpt-5-mini';
   const preferRemote = ['planner', 'validator', 'summarizer'].includes(taskMode) && currentProvider !== 'ollama';
+  const localBenchmarkModel = isLocalProvider(benchmarkProvider) ? benchmarkModel : localModel;
+  const remoteFallbackModel = remoteModel || benchmarkModel || localModel;
+  const remoteFallbackProvider = remoteModel
+    ? remoteProvider
+    : inferProviderForModel(benchmarkModel || localModel, currentProvider);
+
+  if (usesLocalPrimaryTaskMode(taskMode)) {
+    return {
+      taskMode,
+      runtimeRole: taskMode === 'planner'
+        ? 'planner'
+        : taskMode === 'validator'
+          ? 'validator'
+          : 'implementer',
+      provider: localProvider,
+      model: taskMode === 'coder' ? localModel : localBenchmarkModel,
+      fallbackModel: remoteFallbackModel,
+      fallbackProvider: remoteFallbackProvider,
+    };
+  }
 
   if (taskMode === 'planner') {
     return {
@@ -201,6 +239,7 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
       provider: preferRemote ? remoteProvider : currentProvider,
       model: preferRemote ? remoteModel : benchmarkModel,
       fallbackModel: benchmarkModel,
+      fallbackProvider: inferProviderForModel(benchmarkModel, currentProvider),
     };
   }
   if (taskMode === 'coder') {
@@ -210,6 +249,7 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
       provider: currentProvider,
       model: localModel,
       fallbackModel: benchmarkModel,
+      fallbackProvider: inferProviderForModel(benchmarkModel, currentProvider),
     };
   }
   if (taskMode === 'validator') {
@@ -219,6 +259,7 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
       provider: preferRemote ? remoteProvider : currentProvider,
       model: preferRemote ? remoteModel : benchmarkModel,
       fallbackModel: localModel,
+      fallbackProvider: localProvider,
     };
   }
   return {
@@ -227,6 +268,7 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
     provider: preferRemote ? remoteProvider : currentProvider,
     model: preferRemote ? remoteModel : benchmarkModel,
     fallbackModel: localModel,
+    fallbackProvider: localProvider,
   };
 }
 
@@ -241,6 +283,7 @@ function normalizeTaskModeRoute(taskMode, value = {}, options = {}) {
     provider: String(value.provider || fallback.provider).trim().toLowerCase() || fallback.provider,
     model: String(value.model || fallback.model).trim() || fallback.model,
     fallbackModel: String(value.fallbackModel || value.fallback_model || fallback.fallbackModel).trim() || fallback.fallbackModel,
+    fallbackProvider: String(value.fallbackProvider || value.fallback_provider || fallback.fallbackProvider).trim().toLowerCase() || fallback.fallbackProvider,
   };
 }
 
@@ -330,6 +373,7 @@ function normalizeWrappedProfile(value = {}, options = {}) {
 
 function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = []) {
   const currentProvider = resolveCurrentProvider(String(settings.runtime || 'ollama').trim().toLowerCase() || 'ollama', providers, settings);
+  const routingPolicy = normalizeRoutingPolicy(settings.aiRoutingPolicy, settings.aiProfile || 'hybrid-default');
   const remoteProvider = normalizeRemoteProviderId(settings.aiRemoteProvider || 'openai');
   const remotePreset = resolveRemoteProviderPreset(settings);
   const selectedRemoteProvider = providers.find((provider) => String(provider?.id || '') === remoteProvider) || null;
@@ -337,6 +381,11 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
   const baseModel = ['ollama', 'local'].includes(currentProvider)
     ? String(settings.trainingOllamaModel || settings.model || 'qwen2.5-coder:7b').trim() || 'qwen2.5-coder:7b'
     : String(settings.aiRemoteModel || settings.model || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim() || 'gpt-5-mini';
+  const localProvider = isLocalProvider(currentProvider)
+    ? currentProvider
+    : (String(settings.trainingOllamaModel || '').trim() ? 'ollama' : currentProvider);
+  const localModel = String(settings.trainingOllamaModel || (isLocalProvider(currentProvider) ? baseModel : '')).trim();
+  const preferLocalPrimary = routingPolicy !== 'best-available' && !!localModel;
   const benchmarkModel = String(benchmarkSummary[0]?.model || baseModel).trim() || baseModel;
   const defaultWorkspaceProfile = normalizeWrappedProfile({
     id: 'gs-dev-1-default',
@@ -345,18 +394,24 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
     role: 'workspace',
   }, {
     family: 'gs-dev-1',
-    baseProvider: currentProvider,
-    baseModel,
-    providerSource: currentProvider,
+    baseProvider: preferLocalPrimary ? localProvider : currentProvider,
+    baseModel: preferLocalPrimary ? localModel : baseModel,
+    providerSource: preferLocalPrimary ? localProvider : currentProvider,
+    localProvider,
+    localModel: localModel || baseModel,
     benchmarkModel,
     remoteProvider,
     remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim(),
     modelLabel: String(settings.model || baseModel).trim(),
   });
-  const defaultEngineProvider = remoteAvailable ? remoteProvider : inferProviderForModel(benchmarkModel, currentProvider);
-  const defaultEngineModel = remoteAvailable
+  const defaultEngineProvider = preferLocalPrimary
+    ? localProvider
+    : (remoteAvailable ? remoteProvider : inferProviderForModel(benchmarkModel, currentProvider));
+  const defaultEngineModel = preferLocalPrimary
+    ? localModel
+    : (remoteAvailable
     ? String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || benchmarkModel).trim() || benchmarkModel
-    : benchmarkModel;
+    : benchmarkModel);
   const defaultEngineProfile = normalizeWrappedProfile({
     id: 'gse-1-engine',
     displayName: 'GSE-1 Engine',
@@ -368,6 +423,8 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
     baseProvider: defaultEngineProvider,
     baseModel: defaultEngineModel,
     providerSource: defaultEngineProvider,
+    localProvider,
+    localModel: localModel || defaultEngineModel,
     benchmarkModel,
     remoteProvider,
     remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || defaultEngineModel).trim(),
@@ -384,6 +441,8 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
       baseProvider: currentProvider,
       baseModel,
       providerSource: currentProvider,
+      localProvider,
+      localModel: localModel || baseModel,
       benchmarkModel,
       remoteProvider,
       remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim(),
@@ -752,6 +811,141 @@ function summarizeBenchmarks(runs = []) {
     });
 }
 
+function benchmarkRunPassed(run = {}) {
+  return run?.ok !== false && String(run?.status || '').trim().toLowerCase() !== 'fail';
+}
+
+function buildLocalBenchmarkPack(pack = {}, capabilityLanes = [], benchmarkRuns = []) {
+  const taskMode = String(pack.taskMode || '').trim().toLowerCase();
+  const laneId = String(pack.laneId || '').trim().toLowerCase();
+  const lane = capabilityLanes.find((item) => String(item?.id || '').trim().toLowerCase() === laneId) || null;
+  const expectedProvider = String(lane?.providerSource || lane?.provider || '').trim().toLowerCase();
+  const expectedModel = String(lane?.preferredModel || '').trim();
+  const expectedProfileId = String(lane?.profileId || '').trim();
+  const relevantRuns = (Array.isArray(benchmarkRuns) ? benchmarkRuns : []).filter((run) => {
+    const runTaskMode = normalizeTaskModeId(run?.taskMode || run?.mode || '');
+    if (runTaskMode !== taskMode) {
+      return false;
+    }
+    const runProvider = String(
+      run?.providerSource || inferProviderForModel(run?.baseModel || run?.model || '', expectedProvider || 'ollama')
+    ).trim().toLowerCase();
+    if (!isLocalProvider(runProvider)) {
+      return false;
+    }
+    const runProfileId = String(run?.modelProfileId || run?.wrappedProfileId || run?.profileId || '').trim();
+    const runBaseModel = String(run?.baseModel || run?.model || '').trim();
+    return (!expectedProfileId || runProfileId === expectedProfileId)
+      || (!!expectedModel && runBaseModel === expectedModel)
+      || (!!expectedModel && String(run?.model || '').trim() === expectedModel);
+  });
+  const passRuns = relevantRuns.filter((run) => benchmarkRunPassed(run));
+  const latestPassingRun = [...passRuns].sort((left, right) => String(right?.completedAt || '').localeCompare(String(left?.completedAt || '')))[0] || null;
+  const status = passRuns.length > 0
+    ? 'verified'
+    : relevantRuns.length > 0
+      ? 'next'
+      : 'locked';
+  const summary = status === 'verified'
+    ? `${String(pack.label || taskMode).trim()} local benchmark pack is passing on ${expectedModel || 'the configured route'}.`
+    : status === 'next'
+      ? `${String(pack.label || taskMode).trim()} has local benchmark history, but the latest local pack is not yet passing.`
+      : `${String(pack.label || taskMode).trim()} still needs a passing local benchmark pack.`;
+  return {
+    taskMode,
+    laneId,
+    label: String(pack.label || taskMode).trim(),
+    status,
+    provider: expectedProvider,
+    model: expectedModel,
+    profileId: expectedProfileId,
+    runCount: relevantRuns.length,
+    passCount: passRuns.length,
+    latestCompletedAt: String(latestPassingRun?.completedAt || '').trim(),
+    summary,
+  };
+}
+
+function buildLocalCodingBlockProof(options = {}) {
+  const capabilityLanes = Array.isArray(options.capabilityLanes) ? options.capabilityLanes : [];
+  const benchmarkRuns = Array.isArray(options.benchmarkRuns) ? options.benchmarkRuns : [];
+  const acceptance = options.acceptance && typeof options.acceptance === 'object' ? options.acceptance : {};
+  const acceptanceControl = acceptance?.controlSummary && typeof acceptance.controlSummary === 'object'
+    ? acceptance.controlSummary
+    : {};
+  const acceptanceStatus = String(
+    acceptanceControl.acceptanceStatus
+    || acceptance?.report?.overallStatus
+    || acceptance?.overallStatus
+    || ''
+  ).trim().toLowerCase();
+  const routePacks = LOCAL_FIRST_BLOCK_PACKS.map((pack) => {
+    const lane = capabilityLanes.find((item) => String(item?.id || '').trim().toLowerCase() === pack.laneId) || null;
+    const provider = String(lane?.providerSource || lane?.provider || '').trim().toLowerCase();
+    return {
+      ...pack,
+      provider,
+      local: isLocalProvider(provider),
+    };
+  });
+  const routeLocal = routePacks.every((pack) => pack.local === true);
+  const benchmarkPacks = LOCAL_FIRST_BLOCK_PACKS.map((pack) => buildLocalBenchmarkPack(pack, capabilityLanes, benchmarkRuns));
+  const verifiedTaskModes = benchmarkPacks.filter((pack) => pack.status === 'verified').map((pack) => pack.taskMode);
+  const missingTaskModes = benchmarkPacks.filter((pack) => pack.status !== 'verified').map((pack) => pack.taskMode);
+  const benchmarkStatus = missingTaskModes.length === 0
+    ? 'verified'
+    : verifiedTaskModes.length > 0 || benchmarkPacks.some((pack) => pack.runCount > 0)
+      ? 'next'
+      : 'locked';
+  const acceptanceGateStatus = acceptanceControl.safeForNextDay === true
+    ? 'verified'
+    : (acceptance?.exists === true || !!acceptanceStatus)
+      ? 'next'
+      : 'locked';
+  const status = routeLocal && benchmarkStatus === 'verified' && acceptanceGateStatus === 'verified'
+    ? 'verified'
+    : routeLocal && (benchmarkStatus !== 'locked' || acceptanceGateStatus !== 'locked')
+      ? 'next'
+      : 'locked';
+  const summary = status === 'verified'
+    ? 'Planner, coder, and validator all have passing local benchmark packs and a safe acceptance baseline.'
+    : status === 'next'
+      ? `Local routing is in place, but proof is still incomplete${missingTaskModes.length ? ` for ${missingTaskModes.join(', ')}` : ''}.`
+      : 'The local coding block still needs route, benchmark, and acceptance proof before widening.';
+  const nextAction = benchmarkStatus !== 'verified'
+    ? `Record passing local benchmark packs for ${missingTaskModes.join(', ')} before widening the coding block.`
+    : acceptanceGateStatus !== 'verified'
+      ? String(acceptanceControl.nextSafeAction || acceptanceControl.nextDaySummary || 'Run acceptance with smoke coverage before widening the local coding block.')
+      : 'Keep the current local coding block bounded and reuse the verified route bundle.';
+  return {
+    status,
+    summary,
+    nextAction,
+    canWidenAutonomy: status === 'verified',
+    routeLocal,
+    benchmark: {
+      status: benchmarkStatus,
+      verifiedTaskModes,
+      missingTaskModes,
+      packs: benchmarkPacks,
+      summary: benchmarkStatus === 'verified'
+        ? 'Planner, coder, and validator all have passing local benchmark packs.'
+        : benchmarkStatus === 'next'
+          ? `Local benchmark coverage exists, but ${missingTaskModes.join(', ')} still need a passing pack.`
+          : 'No passing local benchmark packs are recorded yet for the planner/coder/validator block.',
+    },
+    acceptance: {
+      status: acceptanceGateStatus,
+      acceptanceStatus,
+      safeForNextDay: acceptanceControl.safeForNextDay === true,
+      summary: acceptanceGateStatus === 'verified'
+        ? 'Acceptance and smoke are safe enough to use as the local coding gate.'
+        : String(acceptanceControl.nextDaySummary || acceptanceControl.acceptanceSummary || 'Acceptance proof is not ready yet.'),
+      nextAction: String(acceptanceControl.nextSafeAction || acceptanceControl.nextDaySummary || '').trim(),
+    },
+  };
+}
+
 function inferProviderForModel(model = '', fallbackProvider = 'ollama') {
   const normalized = String(model || '').trim().toLowerCase();
   if (!normalized) {
@@ -924,6 +1118,7 @@ function buildModelCatalog(settings = {}, tuningStatus = {}, availableModels = [
 function defaultLaneRoute(lane, options = {}) {
   const routingPolicy = options.routingPolicy || 'hybrid-default';
   const laneTaskMode = capabilityLaneTaskMode(lane.id);
+  const localPrimaryTaskMode = usesLocalPrimaryTaskMode(laneTaskMode);
   const profileRole = capabilityLaneProfileRole(lane.id);
   const modelRoleId = capabilityLaneModelRole(lane.id);
   const inheritedProfile = profileRole === 'engine'
@@ -969,6 +1164,7 @@ function defaultLaneRoute(lane, options = {}) {
     benchmarkAllowed
     && ['balanced-local', 'hybrid-default'].includes(routingPolicy)
     && heavyReasoningLane
+    && !localPrimaryTaskMode
   ) {
     return {
       ...inheritedFields,
@@ -1413,6 +1609,7 @@ function buildAiStatus(options = {}) {
   const settings = options.settings && typeof options.settings === 'object' ? options.settings : {};
   const tuningStatus = options.tuningStatus && typeof options.tuningStatus === 'object' ? options.tuningStatus : {};
   const benchmarkRuns = Array.isArray(options.benchmarkRuns) ? options.benchmarkRuns : [];
+  const acceptance = options.acceptance && typeof options.acceptance === 'object' ? options.acceptance : {};
   const profileId = normalizeProfileId(settings.aiProfile);
   const benchmarkSummary = summarizeBenchmarks(benchmarkRuns);
   const providers = buildProviders(settings, tuningStatus, options);
@@ -1455,6 +1652,11 @@ function buildAiStatus(options = {}) {
   });
   const capabilityLanes = buildLaneAssignments(settings, benchmarkSummary, providers, tuningStatus, wrappedProfiles);
   const modelRoles = buildExplicitModelRoles(capabilityLanes, wrappedProfiles, provisioning);
+  const localCodingProof = buildLocalCodingBlockProof({
+    capabilityLanes,
+    benchmarkRuns,
+    acceptance,
+  });
   const localModelInventory = buildLocalModelInventory({
     workspaceRoot,
     settings,
@@ -1482,6 +1684,7 @@ function buildAiStatus(options = {}) {
     })),
     capabilityLanes,
     modelRoles,
+    localCodingProof,
     localModelInventory,
     providers,
     benchmarkSummary,
@@ -1533,8 +1736,9 @@ function buildAiStatus(options = {}) {
       wrappedProfiles,
       activeWrappedProfile,
       localInventoryEntry: activeLocalInventoryEntry,
-      benchmarkReady: benchmarkSummary.length > 0,
+      benchmarkReady: localCodingProof.benchmark.status === 'verified',
       benchmarkLeader: benchmarkSummary[0] || null,
+      localCodingProof,
       datasetExportEligible: activeWrappedProfile?.datasetExport?.eligible === true,
       promotionReady: activeWrappedProfile?.promotion?.rollbackReady === true,
     },

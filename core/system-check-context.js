@@ -1,6 +1,7 @@
 'use strict';
 
 const { buildAiStatus } = require('./ai-center');
+const { readLatestAcceptanceReport } = require('./acceptance-report');
 const { listBenchmarkRuns } = require('./benchmarks');
 const { buildModelFoundryStatus } = require('./model-foundry');
 const { readTrainingTuningSettings, collectTrainingTelemetry } = require('./training-tuning');
@@ -28,16 +29,21 @@ async function buildSystemCheckContext(workspaceRoot, overrides = {}) {
     : buildModelFoundryStatus(workspaceRoot, {
       benchmarks,
     });
+  const acceptance = overrides.acceptance && typeof overrides.acceptance === 'object'
+    ? overrides.acceptance
+    : readLatestAcceptanceReport(workspaceRoot);
   const aiStatus = overrides.aiStatus && typeof overrides.aiStatus === 'object'
     ? overrides.aiStatus
     : buildAiStatus({
       settings: assistantConfig,
       tuningStatus,
       benchmarkRuns: benchmarks.runs,
+      acceptance,
       modelFoundry,
     });
 
   return {
+    acceptance,
     assistantConfig,
     benchmarks,
     modelFoundry,

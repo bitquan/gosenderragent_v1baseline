@@ -108,6 +108,10 @@ test('ai center summarizes profiles, providers, and benchmark leaders', () => {
   assert.equal(reviewLane.profileRole, 'engine');
   assert.equal(researchLane.profileRole, 'engine');
   assert.equal(opsLane.profileRole, 'engine');
+  assert.equal(planLane.provider, 'ollama');
+  assert.equal(planLane.preferredModel, 'qwen2.5-coder:7b');
+  assert.equal(reviewLane.provider, 'ollama');
+  assert.equal(reviewLane.preferredModel, 'qwen2.5-coder:7b');
   assert.equal(chatLane.modelRoleId, 'orchestrator');
   assert.equal(codeLane.modelRoleId, 'worker');
   assert.equal(planLane.modelRoleId, 'orchestrator');
@@ -131,6 +135,175 @@ test('ai center summarizes profiles, providers, and benchmark leaders', () => {
   assert.equal(status.gsDev1.localInventoryEntry.foundryCandidate.id, 'candidate-local-gs-dev-1');
   assert.equal(status.current.workerFamily, 'qwen');
   assert.equal(status.current.promotionPolicy, 'manual-promote');
+});
+
+test('ai center keeps synthesized default wrapped profiles local-first when remote fallback is available', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'hybrid',
+      trainingOllamaModel: 'qwen2.5-coder:7b',
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+      aiRemoteProvider: 'openai',
+      aiRemoteModel: 'gpt-5.4',
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 1 },
+        memory: { usedPercent: 34 },
+        cpuUsagePercent: 14,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+    benchmarkRuns: [
+      { model: 'gpt-5.4', ok: true, status: 'pass', latencyMs: 1600, repairDepth: 0, approvalCount: 0, completedAt: '2026-03-15T14:00:00Z' },
+    ],
+    secretAvailability: {
+      OPENAI_API_KEY: true,
+    },
+  });
+
+  assert.equal(status.dualModel.engineProfile.baseProvider, 'ollama');
+  assert.equal(status.dualModel.engineProfile.baseModel, 'qwen2.5-coder:7b');
+  assert.equal(status.capabilityLanes.find((lane) => lane.id === 'plan-reasoning')?.provider, 'ollama');
+  assert.equal(status.capabilityLanes.find((lane) => lane.id === 'review-verify')?.provider, 'ollama');
+  assert.equal(status.capabilityLanes.find((lane) => lane.id === 'plan-reasoning')?.fallbackProvider, 'openai');
+});
+
+test('ai center marks the local coding block verified only after local planner coder and validator benchmark packs plus acceptance proof', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'ollama',
+      trainingOllamaModel: 'qwen2.5-coder:14b',
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+      aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+      aiEngineWrappedProfileId: 'gse-1-engine',
+      aiWrappedProfiles: [
+        {
+          id: 'gs-dev-1-default',
+          displayName: 'GS-Dev-1 Default',
+          role: 'workspace',
+          baseModel: 'qwen2.5-coder:14b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+        {
+          id: 'gse-1-engine',
+          displayName: 'GSE-1 Engine',
+          role: 'engine',
+          baseModel: 'qwen2.5-coder:7b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+      ],
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 2 },
+        memory: { usedPercent: 42 },
+        cpuUsagePercent: 22,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+    benchmarkRuns: [
+      { id: 'bench-plan', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'planner', status: 'pass', ok: true, completedAt: '2026-03-25T10:00:00Z' },
+      { id: 'bench-code', model: 'qwen2.5-coder:14b', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama', taskMode: 'coder', status: 'pass', ok: true, completedAt: '2026-03-25T10:05:00Z' },
+      { id: 'bench-validate', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'validator', status: 'pass', ok: true, completedAt: '2026-03-25T10:10:00Z' },
+    ],
+    acceptance: {
+      exists: true,
+      report: {
+        overallStatus: 'pass',
+        summary: 'Acceptance passed.',
+        checks: [
+          { id: 'smoke', label: 'Smoke', status: 'pass', summary: 'Smoke passed.' },
+          { id: 'smoke-ui', label: 'UI smoke', status: 'pass', summary: 'UI smoke passed.' },
+        ],
+      },
+      controlSummary: {
+        acceptanceStatus: 'pass',
+        safeForNextDay: true,
+        nextDaySummary: 'Acceptance and smoke are healthy enough for the next day\'s bounded work.',
+        nextSafeAction: 'Keep the next slice bounded.',
+      },
+    },
+  });
+
+  assert.equal(status.localCodingProof.status, 'verified');
+  assert.equal(status.localCodingProof.benchmark.status, 'verified');
+  assert.deepEqual(status.localCodingProof.benchmark.verifiedTaskModes.sort(), ['coder', 'planner', 'validator']);
+  assert.equal(status.localCodingProof.acceptance.status, 'verified');
+  assert.equal(status.localCodingProof.canWidenAutonomy, true);
+  assert.equal(status.gsDev1.benchmarkReady, true);
+});
+
+test('ai center keeps the local coding block in next state when local benchmark coverage is incomplete', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'ollama',
+      trainingOllamaModel: 'qwen2.5-coder:14b',
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+      aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+      aiEngineWrappedProfileId: 'gse-1-engine',
+      aiWrappedProfiles: [
+        {
+          id: 'gs-dev-1-default',
+          displayName: 'GS-Dev-1 Default',
+          role: 'workspace',
+          baseModel: 'qwen2.5-coder:14b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+        {
+          id: 'gse-1-engine',
+          displayName: 'GSE-1 Engine',
+          role: 'engine',
+          baseModel: 'qwen2.5-coder:7b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+      ],
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 2 },
+        memory: { usedPercent: 42 },
+        cpuUsagePercent: 22,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+    benchmarkRuns: [
+      { id: 'bench-plan', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'planner', status: 'pass', ok: true, completedAt: '2026-03-25T10:00:00Z' },
+      { id: 'bench-code', model: 'qwen2.5-coder:14b', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama', taskMode: 'coder', status: 'pass', ok: true, completedAt: '2026-03-25T10:05:00Z' },
+    ],
+    acceptance: {
+      exists: true,
+      report: {
+        overallStatus: 'warn',
+        summary: 'Acceptance has warnings.',
+        checks: [
+          { id: 'smoke-ui', label: 'UI smoke', status: 'pass', summary: 'UI smoke passed.' },
+        ],
+      },
+      controlSummary: {
+        acceptanceStatus: 'warn',
+        safeForNextDay: false,
+        nextDaySummary: 'Proceed with caution - acceptance raised warnings.',
+        nextSafeAction: 'Finish the remaining gate before widening.',
+      },
+    },
+  });
+
+  assert.equal(status.localCodingProof.status, 'next');
+  assert.equal(status.localCodingProof.benchmark.status, 'next');
+  assert.deepEqual(status.localCodingProof.benchmark.missingTaskModes, ['validator']);
+  assert.equal(status.localCodingProof.acceptance.status, 'next');
+  assert.equal(status.localCodingProof.canWidenAutonomy, false);
 });
 
 test('ai center applies manual lane overrides without losing benchmark context', () => {

@@ -28,15 +28,15 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
       workspaceProviderSource: 'ollama',
       engineModelProfileId: 'gse-1-engine',
       engineModelDisplayName: 'GSE-1 Engine',
-      engineBaseModel: 'gpt-5.4-mini',
-      engineBaseProvider: 'openai',
-      engineProviderSource: 'openai',
-      plannerProvider: 'openai',
-      plannerModel: 'gpt-5.4-pro',
+      engineBaseModel: 'qwen2.5-coder:7b',
+      engineBaseProvider: 'ollama',
+      engineProviderSource: 'ollama',
+      plannerProvider: 'ollama',
+      plannerModel: 'qwen2.5-coder:7b',
       coderProvider: 'ollama',
       coderModel: 'qwen2.5-coder:14b',
-      validatorProvider: 'openai',
-      validatorModel: 'gpt-5.4-pro',
+      validatorProvider: 'ollama',
+      validatorModel: 'qwen2.5-coder:7b',
       summarizerProvider: 'openai',
       summarizerModel: 'gpt-4.1-mini',
     });
@@ -47,10 +47,10 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
     assert.equal(config.workspaceModelProfileId, 'gs-dev-1-default');
     assert.equal(config.workspaceBaseModel, 'qwen2.5-coder:14b');
     assert.equal(config.engineModelProfileId, 'gse-1-engine');
-    assert.equal(config.engineBaseProvider, 'openai');
+    assert.equal(config.engineBaseProvider, 'ollama');
     assert.equal(config.dailySafeAutonomousTarget, 5);
     assert.equal(config.dailySelfImprovementTarget, 5);
-    assert.equal(config.taskModeRoutes.planner.model, 'gpt-5.4-pro');
+    assert.equal(config.taskModeRoutes.planner.model, 'qwen2.5-coder:7b');
     assert.equal(config.taskModeRoutes.coder.provider, 'ollama');
     assert.equal(config.taskModeRoutes.summarizer.model, 'gpt-4.1-mini');
 

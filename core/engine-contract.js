@@ -162,8 +162,36 @@ function resolveExecutionModelRole({ taskMode = '', action = '', laneId = '' } =
   return ['planner', 'validator', 'summarizer', 'research'].includes(normalizedTaskMode) ? 'engine' : 'workspace';
 }
 
+function resolveTaskModeRouteKey({ taskMode = '', laneId = '' } = {}) {
+  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
+  if (['chat-fast', 'plan-reasoning', 'research-docs'].includes(normalizedLaneId)) {
+    return 'planner';
+  }
+  if (normalizedLaneId === 'review-verify') {
+    return 'validator';
+  }
+  if (normalizedLaneId === 'ops-summary') {
+    return 'summarizer';
+  }
+  if (['code-main', 'repair-fast'].includes(normalizedLaneId)) {
+    return 'coder';
+  }
+  const normalizedTaskMode = normalizeTaskLoopMode(taskMode || '');
+  if (normalizedTaskMode === 'repair') {
+    return 'coder';
+  }
+  if (normalizedTaskMode === 'research' || normalizedTaskMode === 'chat') {
+    return 'planner';
+  }
+  return ['planner', 'coder', 'validator', 'summarizer'].includes(normalizedTaskMode) ? normalizedTaskMode : 'coder';
+}
+
 function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', action = '', laneId = '' } = {}) {
   const modelRole = resolveExecutionModelRole({ taskMode, action, laneId });
+  const routeKey = resolveTaskModeRouteKey({ taskMode, laneId });
+  const routeConfig = assistantConfig.taskModeRoutes && typeof assistantConfig.taskModeRoutes === 'object'
+    ? assistantConfig.taskModeRoutes[routeKey] || {}
+    : {};
   const workspace = {
     modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
     modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
@@ -178,12 +206,21 @@ function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', act
     baseProvider: String(assistantConfig.engineBaseProvider || workspace.baseProvider || '').trim().toLowerCase(),
     providerSource: String(assistantConfig.engineProviderSource || workspace.providerSource || '').trim().toLowerCase(),
   };
+  const activeBase = modelRole === 'engine' ? engine : workspace;
+  const routeProvider = String(routeConfig.provider || '').trim().toLowerCase();
+  const routeModel = String(routeConfig.model || '').trim();
+  const active = {
+    ...activeBase,
+    baseModel: routeModel || activeBase.baseModel,
+    baseProvider: routeProvider || activeBase.baseProvider,
+    providerSource: routeProvider || activeBase.providerSource || activeBase.baseProvider,
+  };
   return {
     modelRole,
     wrappedProfileRole: modelRole,
     workspace,
     engine,
-    active: modelRole === 'engine' ? engine : workspace,
+    active,
   };
 }
 

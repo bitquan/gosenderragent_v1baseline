@@ -820,6 +820,11 @@ function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | nu
   const benchmarkSummary = Array.isArray(aiStatus?.benchmarkSummary) ? aiStatus.benchmarkSummary : [];
   const benchmarkLeader = benchmarkSummary[0] || {};
   const benchmarkLeaderIsLocal = isLocalProvider(benchmarkLeader.providerSource || benchmarkLeader.provider || currentProvider);
+  const localCodingProof = aiStatus?.localCodingProof && typeof aiStatus.localCodingProof === 'object'
+    ? aiStatus.localCodingProof
+    : (aiStatus?.gsDev1?.localCodingProof && typeof aiStatus.gsDev1.localCodingProof === 'object'
+      ? aiStatus.gsDev1.localCodingProof
+      : null);
   const acceptance = snapshot?.acceptance?.report && typeof snapshot.acceptance.report === 'object'
     ? snapshot.acceptance.report
     : {};
@@ -841,11 +846,11 @@ function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | nu
   const routingStatus = localRuntimeReady && localModels.length > 0
     ? ((activeLaneOverrideCount > 0 || routePolicy.includes('local') || routePolicy.includes('hybrid')) ? 'verified' : 'next')
     : 'locked';
-  const codingStatus = acceptanceStatus === 'pass'
+  const codingStatus = String(localCodingProof?.status || '').trim().toLowerCase() || (acceptanceStatus === 'pass'
     ? 'verified'
     : acceptanceStatus === 'warn' || benchmarkSummary.length > 0
       ? 'next'
-      : 'locked';
+      : 'locked');
   const promotionStatus = promotedCandidates.length > 0
     ? 'verified'
     : (Number(modelFoundry.candidateCount || 0) > 0 || candidates.length > 0 ? 'next' : 'locked');
@@ -880,11 +885,11 @@ function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | nu
       id: 'coding',
       label: 'Layer 2: Verified coding block',
       status: codingStatus,
-      summary: codingStatus === 'verified'
+      summary: String(localCodingProof?.summary || '').trim() || (codingStatus === 'verified'
         ? `Acceptance is green and ${benchmarkLeaderIsLocal ? 'the current benchmark leader is local-first' : 'benchmark evidence exists'} for the coding block.`
         : codingStatus === 'next'
           ? 'Benchmark or partial acceptance evidence exists, but the local-first coding block is not fully proven yet.'
-          : 'The local-first coding block still needs benchmark and acceptance proof before autonomy expands.',
+          : 'The local-first coding block still needs benchmark and acceptance proof before autonomy expands.'),
       unlockRule: 'Need benchmark plus acceptance proof for local-first planner/coder/validator lanes.',
     },
     {

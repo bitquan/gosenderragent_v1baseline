@@ -68,6 +68,12 @@ test('engine contract resolves model profile selection without inventing a secon
     engineBaseModel: 'gpt-4.1-mini',
     engineBaseProvider: 'openai',
     engineProviderSource: 'openai',
+    taskModeRoutes: {
+      planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+      validator: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      summarizer: { provider: 'openai', model: 'gpt-4.1-mini' },
+    },
   }, {
     laneId: 'plan-reasoning',
     taskMode: 'planner',
@@ -76,6 +82,8 @@ test('engine contract resolves model profile selection without inventing a secon
 
   assert.equal(selection.modelRole, 'engine');
   assert.equal(selection.active.modelProfileId, 'engine-profile');
+  assert.equal(selection.active.baseProvider, 'ollama');
+  assert.equal(selection.active.baseModel, 'qwen2.5-coder:7b');
   assert.equal(selection.workspace.modelProfileId, 'workspace-profile');
 });
 

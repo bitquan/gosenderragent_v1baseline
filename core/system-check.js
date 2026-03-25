@@ -381,9 +381,19 @@ function augmentLearningStatusWithLiveEvidence(learningJournal = {}, options = {
     || String(selfImprovementProof?.label || '').trim().toUpperCase() === 'PROVEN'
     || isReadyLikeStatus(selfImprovementProof?.status);
   const evidence = buildPhase2EvidenceCounts(promotions, benchmarks, modelFoundry, modelRoles);
+  const baselineReady = acceptanceStatus === 'pass' || selfHostProven;
+
+  if ((exportReadiness.ready === true || isReadyLikeStatus(exportReadiness.status)) && !baselineReady) {
+    exportReadiness.ready = false;
+    exportReadiness.status = acceptance?.exists === true ? 'blocked' : 'warn';
+    exportReadiness.blockedByAcceptance = true;
+    exportReadiness.summary = shortText(
+      'Approved or trusted GS-Dev-1 export candidates exist, but the latest local-first acceptance baseline is not green enough to unlock export yet.',
+    );
+  }
 
   if (!(exportReadiness.ready === true || isReadyLikeStatus(exportReadiness.status))
-    && (acceptanceStatus === 'pass' || selfHostProven)
+    && baselineReady
     && evidence.total > 0) {
     const baselineLabel = acceptanceStatus === 'pass'
       ? 'the accepted baseline bundle'
@@ -394,8 +404,12 @@ function augmentLearningStatusWithLiveEvidence(learningJournal = {}, options = {
     exportReadiness.eligibleCount = Math.max(Number(exportReadiness.eligibleCount || 0), evidence.total);
     exportReadiness.trustedCount = Math.max(Number(exportReadiness.trustedCount || 0), Math.max(1, evidence.benchmarkCount + evidence.promotionReadyCount));
     exportReadiness.approvedCount = Math.max(Number(exportReadiness.approvedCount || 0), Math.max(1, evidence.promotionReadyCount + evidence.promotedCount));
+    exportReadiness.approvedOrTrustedCount = Math.max(
+      Number(exportReadiness.approvedOrTrustedCount || 0),
+      Math.max(Number(exportReadiness.trustedCount || 0), Number(exportReadiness.approvedCount || 0)),
+    );
     exportReadiness.summary = shortText(
-      `Trusted GS-Dev-1 training handoff is ready from ${baselineLabel} plus ${evidence.benchmarkCount} benchmark run(s), ${evidence.promotionReadyCount} promotion-ready candidate(s), and ${evidence.foundryCount} foundry candidate(s).`,
+      `Approved or trusted GS-Dev-1 training handoff is ready from ${baselineLabel} plus ${evidence.benchmarkCount} benchmark run(s), ${evidence.promotionReadyCount} promotion-ready candidate(s), and ${evidence.foundryCount} foundry candidate(s).`,
     );
   }
 

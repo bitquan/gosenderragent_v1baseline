@@ -4,10 +4,13 @@ const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const { readLatestAcceptanceReport, summarizeAcceptanceReport } = require('./acceptance-report');
+const { buildAcceptanceControlSummary, readLatestAcceptanceReport, summarizeAcceptanceReport } = require('./acceptance-report');
 const { getConfiguredAssistantPromotionsRoot } = require('./assistant-paths');
 const { buildBenchmarkIdentity, listBenchmarkRuns } = require('./benchmarks');
+const { resolveExecutionModelRole, resolveModelProfileSelection } = require('./engine-contract');
+const { listFoundryCandidates } = require('./model-foundry');
 const { ensureDirectory, isWithin, nowIso, randomId, readJsonFile, writeJsonFileAtomic } = require('./utils');
+const { configPathForWorkspace, readAssistantConfig, writeAssistantModelSettings } = require('../host/assistant-config');
 
 const CANDIDATES_FILE = 'candidates.json';
 const HISTORY_FILE = 'history.json';
@@ -17,6 +20,7 @@ const LAB_META_FILE = '.gos-lab.json';
 const INTERNAL_PROMOTION_PATHS = new Set([
   '.gos-lab.json',
 ]);
+const LOCAL_PROVIDER_SOURCES = new Set(['huggingface-local', 'lmstudio', 'local', 'ollama']);
 
 function normalizeWorkspacePath(value) {
   const text = String(value || '').trim();
@@ -258,16 +262,22 @@ function normalizeCandidate(candidate = {}) {
     createdFromRecipe: String(candidate.createdFromRecipe || '').trim(),
     verification: candidate.verification && typeof candidate.verification === 'object' ? candidate.verification : {},
     changeSummary: candidate.changeSummary && typeof candidate.changeSummary === 'object' ? candidate.changeSummary : { count: 0, top: [] },
+    governance: candidate.governance && typeof candidate.governance === 'object' ? candidate.governance : {},
     notes: String(candidate.notes || '').trim(),
     promotionState: String(candidate.promotionState || '').trim() || 'blocked',
     promotionSummary: String(candidate.promotionSummary || '').trim(),
     promotedAt: String(candidate.promotedAt || '').trim(),
     latestBackupId: String(candidate.latestBackupId || '').trim(),
+    foundryCandidateId: String(candidate.foundryCandidateId || '').trim(),
     modelProfileId: String(candidate.modelProfileId || '').trim(),
     variantType: String(candidate.variantType || 'wrapped').trim().toLowerCase() || 'wrapped',
     baseModel: String(candidate.baseModel || '').trim(),
     taskMode: String(candidate.taskMode || '').trim().toLowerCase(),
     providerSource: String(candidate.providerSource || '').trim().toLowerCase(),
+    targetLanes: Array.isArray(candidate.targetLanes) ? candidate.targetLanes.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean) : [],
+    rollbackSource: String(candidate.rollbackSource || '').trim(),
+    routeBundlePromotion: candidate.routeBundlePromotion && typeof candidate.routeBundlePromotion === 'object' ? candidate.routeBundlePromotion : {},
+    promotedRouteBundle: candidate.promotedRouteBundle && typeof candidate.promotedRouteBundle === 'object' ? candidate.promotedRouteBundle : {},
   };
 }
 
@@ -295,11 +305,13 @@ function candidateMatchesWorkspace(candidate = {}, workspaceRoot = '', selectedL
 function readPromotionAcceptanceState(workspaceRoot) {
   const acceptance = readLatestAcceptanceReport(workspaceRoot);
   const report = acceptance?.report && typeof acceptance.report === 'object' ? acceptance.report : null;
+  const controlSummary = report ? buildAcceptanceControlSummary(report, { exists: acceptance?.exists === true }) : null;
   const summary = report ? summarizeAcceptanceReport(report) : null;
   return {
     exists: acceptance?.exists === true,
     outputPath: String(acceptance?.outputPath || '').trim(),
     report,
+    controlSummary,
     summary,
   };
 }
@@ -357,6 +369,357 @@ function buildChangeSummary(entries = []) {
   };
 }
 
+function normalizeStringArray(values) {
+  return Array.isArray(values)
+    ? values.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+}
+
+function resolvePromotionRouteKey({ taskMode = '', laneId = '' } = {}) {
+  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
+  if (['chat-fast', 'plan-reasoning', 'research-docs'].includes(normalizedLaneId)) {
+    return 'planner';
+  }
+  if (normalizedLaneId === 'review-verify') {
+    return 'validator';
+  }
+  if (normalizedLaneId === 'ops-summary') {
+    return 'summarizer';
+  }
+  if (['code-main', 'repair-fast'].includes(normalizedLaneId)) {
+    return 'coder';
+  }
+  const normalizedTaskMode = String(taskMode || '').trim().toLowerCase();
+  if (normalizedTaskMode === 'repair') {
+    return 'coder';
+  }
+  if (normalizedTaskMode === 'research' || normalizedTaskMode === 'chat') {
+    return 'planner';
+  }
+  return ['planner', 'coder', 'validator', 'summarizer'].includes(normalizedTaskMode) ? normalizedTaskMode : 'coder';
+}
+
+function normalizeProviderSource(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isLocalProviderSource(value) {
+  return LOCAL_PROVIDER_SOURCES.has(normalizeProviderSource(value));
+}
+
+function buildLinkedBenchmarkIdentity(benchmark = null) {
+  if (!benchmark || typeof benchmark !== 'object') {
+    return null;
+  }
+  return benchmark.benchmarkIdentity && typeof benchmark.benchmarkIdentity === 'object'
+    ? benchmark.benchmarkIdentity
+    : buildBenchmarkIdentity(benchmark);
+}
+
+function arraysIntersect(left = [], right = []) {
+  const rightSet = new Set(normalizeStringArray(right).map((item) => item.toLowerCase()));
+  return normalizeStringArray(left).some((item) => rightSet.has(item.toLowerCase()));
+}
+
+function findLinkedFoundryCandidate(workspaceRoot, candidate = {}, linkedBenchmark = null) {
+  const foundryCandidates = listFoundryCandidates(workspaceRoot);
+  if (!foundryCandidates.length) {
+    return null;
+  }
+  const benchmarkIdentity = buildLinkedBenchmarkIdentity(linkedBenchmark);
+  const benchmarkId = String(benchmarkIdentity?.id || candidate?.verification?.benchmarkRunId || '').trim();
+  const targetLanes = normalizeStringArray(candidate.targetLanes).map((item) => item.toLowerCase());
+  const modelProfileId = String(candidate.modelProfileId || benchmarkIdentity?.wrappedProfileId || '').trim();
+  const baseModel = String(candidate.baseModel || benchmarkIdentity?.baseModel || '').trim();
+  const providerSource = normalizeProviderSource(candidate.providerSource || benchmarkIdentity?.providerSource || '');
+  const taskMode = String(candidate.taskMode || benchmarkIdentity?.taskMode || '').trim().toLowerCase();
+  const explicitId = String(candidate.foundryCandidateId || '').trim();
+
+  return foundryCandidates.find((entry) => {
+    const current = entry && typeof entry === 'object' ? entry : {};
+    if (explicitId && String(current.id || '').trim() === explicitId) {
+      return true;
+    }
+    const sourceBenchmarks = normalizeStringArray(current.sourceBenchmarks);
+    const benchmarkMatches = benchmarkId ? sourceBenchmarks.includes(benchmarkId) : false;
+    const laneMatches = targetLanes.length === 0 || arraysIntersect(targetLanes, current.targetLanes);
+    const profileMatches = modelProfileId && String(current.modelProfileId || '').trim() === modelProfileId;
+    const baseMatches = baseModel && String(current.baseModel || '').trim() === baseModel;
+    const providerMatches = providerSource && normalizeProviderSource(current.providerSource || '') === providerSource;
+    const taskModeMatches = !taskMode || String(current.taskMode || '').trim().toLowerCase() === taskMode;
+    const modelMatches = profileMatches || ((baseMatches || !baseModel) && (providerMatches || !providerSource));
+    return benchmarkMatches && laneMatches && modelMatches && taskModeMatches;
+  }) || null;
+}
+
+function buildRouteBundlePromotionState(workspaceRoot, candidate = {}, linkedBenchmark = null, acceptanceState = {}) {
+  const benchmarkIdentity = buildLinkedBenchmarkIdentity(linkedBenchmark);
+  const foundryCandidate = findLinkedFoundryCandidate(workspaceRoot, candidate, linkedBenchmark);
+  const explicitVariant = String(candidate.variantType || '').trim().toLowerCase();
+  const foundryType = String(foundryCandidate?.type || foundryCandidate?.workerVariantType || '').trim().toLowerCase();
+  const targetLanes = normalizeStringArray(foundryCandidate?.targetLanes || candidate.targetLanes).map((item) => item.toLowerCase());
+  const applies = explicitVariant === 'route-bundle'
+    || foundryType === 'route-bundle'
+    || (String(candidate.foundryCandidateId || '').trim() && targetLanes.length > 0);
+  if (!applies) {
+    return {
+      applies: false,
+      canActivate: false,
+      status: 'not-applicable',
+      summary: 'This candidate is not linked to a live route-bundle promotion.',
+      reasons: [],
+      foundryCandidateId: String(foundryCandidate?.id || '').trim(),
+      benchmarkId: String(benchmarkIdentity?.id || '').trim(),
+      targetLanes,
+    };
+  }
+
+  const providerSource = normalizeProviderSource(
+    foundryCandidate?.providerSource
+    || candidate.providerSource
+    || benchmarkIdentity?.providerSource
+    || ''
+  );
+  const baseModel = String(
+    foundryCandidate?.baseModel
+    || candidate.baseModel
+    || benchmarkIdentity?.baseModel
+    || ''
+  ).trim();
+  const modelProfileId = String(
+    foundryCandidate?.modelProfileId
+    || candidate.modelProfileId
+    || benchmarkIdentity?.wrappedProfileId
+    || ''
+  ).trim();
+  const taskMode = String(foundryCandidate?.taskMode || candidate.taskMode || benchmarkIdentity?.taskMode || '').trim().toLowerCase();
+  const benchmarkId = String(benchmarkIdentity?.id || '').trim();
+  const sourceBenchmarks = normalizeStringArray(foundryCandidate?.sourceBenchmarks);
+  const benchmarkBacked = Boolean(
+    benchmarkId
+    && String(linkedBenchmark?.status || '').trim().toLowerCase() === 'pass'
+    && (sourceBenchmarks.length === 0 || sourceBenchmarks.includes(benchmarkId))
+  );
+  const acceptanceReady = acceptanceState?.controlSummary?.safeForNextDay === true;
+  const reasons = [];
+  if (!foundryCandidate) {
+    reasons.push('Seed a matching Model Foundry route bundle before promoting it into the live lane map.');
+  }
+  if (!isLocalProviderSource(providerSource)) {
+    reasons.push('Only local route bundles can become the default live lane map.');
+  }
+  if (!benchmarkBacked) {
+    reasons.push('The linked route bundle needs a passing benchmark artifact before it can become a default route.');
+  }
+  if (!acceptanceReady) {
+    reasons.push('Keep route-bundle promotion blocked until the latest acceptance bundle is green for the next day.');
+  }
+  if (!targetLanes.length) {
+    reasons.push('The linked route bundle is missing target lanes to activate.');
+  }
+  if (!baseModel || !providerSource) {
+    reasons.push('The linked route bundle is missing model identity.');
+  }
+
+  const canActivate = reasons.length === 0;
+  return {
+    applies: true,
+    canActivate,
+    status: canActivate ? 'ready' : 'blocked',
+    summary: canActivate
+      ? `Ready to activate ${providerSource}:${baseModel} across ${targetLanes.length} lane(s).`
+      : reasons[0],
+    reasons,
+    foundryCandidateId: String(foundryCandidate?.id || '').trim(),
+    foundryTitle: String(foundryCandidate?.title || '').trim(),
+    benchmarkId,
+    targetLanes,
+    providerSource,
+    baseModel,
+    modelProfileId,
+    taskMode,
+    rollbackSource: String(foundryCandidate?.rollbackSource || candidate.rollbackSource || '').trim(),
+  };
+}
+
+function captureAssistantConfigBackup(workspaceRoot, targetWorkspaceRoot, backupId) {
+  const configPath = configPathForWorkspace(targetWorkspaceRoot);
+  const existed = fs.existsSync(configPath);
+  const manifest = {
+    configPath,
+    existed,
+    backupPath: '',
+    snapshot: readAssistantConfig(targetWorkspaceRoot),
+  };
+  if (!existed) {
+    return manifest;
+  }
+  const backupFilePath = path.join(backupRoot(workspaceRoot, backupId), 'config', 'dev_assistant.yaml');
+  ensureDirectory(path.dirname(backupFilePath));
+  fs.cpSync(configPath, backupFilePath, { recursive: true });
+  manifest.backupPath = path.relative(backupRoot(workspaceRoot, backupId), backupFilePath);
+  return manifest;
+}
+
+function restoreAssistantConfigBackup(workspaceRoot, backupId, configBackup = {}) {
+  const configPath = String(configBackup.configPath || '').trim();
+  if (!configPath) {
+    return;
+  }
+  if (!configBackup.existed) {
+    if (fs.existsSync(configPath)) {
+      fs.rmSync(configPath, { force: true });
+    }
+    return;
+  }
+  const backupFilePath = path.join(backupRoot(workspaceRoot, backupId), String(configBackup.backupPath || '').trim());
+  if (!fs.existsSync(backupFilePath)) {
+    return;
+  }
+  ensureDirectory(path.dirname(configPath));
+  fs.cpSync(backupFilePath, configPath, { recursive: true });
+}
+
+function updateBackupManifest(workspaceRoot, backupId, mutate) {
+  const manifestPath = path.join(backupRoot(workspaceRoot, backupId), 'manifest.json');
+  const current = readJsonFile(manifestPath, {});
+  const next = typeof mutate === 'function' ? (mutate(current) || current) : current;
+  writeJsonFileAtomic(manifestPath, next);
+  return next;
+}
+
+function buildRouteBundleActivationSettings(currentConfig = {}, routeBundlePromotion = {}, candidate = {}) {
+  const providerSource = normalizeProviderSource(routeBundlePromotion.providerSource || candidate.providerSource || currentConfig.providerSource || currentConfig.workspaceProviderSource || '');
+  const baseModel = String(routeBundlePromotion.baseModel || candidate.baseModel || currentConfig.baseModel || currentConfig.workspaceBaseModel || '').trim();
+  const modelProfileId = String(routeBundlePromotion.modelProfileId || candidate.modelProfileId || currentConfig.modelProfileId || '').trim();
+  const displayName = String(candidate.name || routeBundlePromotion.foundryTitle || modelProfileId || baseModel || '').trim();
+  const targetLanes = normalizeStringArray(routeBundlePromotion.targetLanes).map((item) => item.toLowerCase());
+  const routeKeys = Array.from(new Set(targetLanes.map((laneId) => resolvePromotionRouteKey({ laneId, taskMode: routeBundlePromotion.taskMode })).filter(Boolean)));
+  const includesWorkspaceRole = targetLanes.some((laneId) => resolveExecutionModelRole({ laneId, taskMode: routeBundlePromotion.taskMode }) === 'workspace');
+  const includesEngineRole = targetLanes.some((laneId) => resolveExecutionModelRole({ laneId, taskMode: routeBundlePromotion.taskMode }) === 'engine');
+  const settings = {};
+
+  if (modelProfileId) {
+    settings.modelProfileId = modelProfileId;
+  }
+  if (displayName) {
+    settings.modelDisplayName = displayName;
+  }
+  if (baseModel) {
+    settings.baseModel = baseModel;
+  }
+  if (providerSource) {
+    settings.baseProvider = providerSource;
+    settings.providerSource = providerSource;
+  }
+
+  if (includesWorkspaceRole) {
+    if (modelProfileId) {
+      settings.workspaceModelProfileId = modelProfileId;
+    }
+    if (displayName) {
+      settings.workspaceModelDisplayName = displayName;
+    }
+    if (baseModel) {
+      settings.workspaceBaseModel = baseModel;
+    }
+    if (providerSource) {
+      settings.workspaceBaseProvider = providerSource;
+      settings.workspaceProviderSource = providerSource;
+    }
+  }
+  if (includesEngineRole) {
+    if (modelProfileId) {
+      settings.engineModelProfileId = modelProfileId;
+    }
+    if (displayName) {
+      settings.engineModelDisplayName = displayName;
+    }
+    if (baseModel) {
+      settings.engineBaseModel = baseModel;
+    }
+    if (providerSource) {
+      settings.engineBaseProvider = providerSource;
+      settings.engineProviderSource = providerSource;
+    }
+  }
+
+  for (const routeKey of routeKeys) {
+    if (routeKey === 'planner') {
+      settings.plannerProvider = providerSource;
+      settings.plannerModel = baseModel;
+    } else if (routeKey === 'coder') {
+      settings.coderProvider = providerSource;
+      settings.coderModel = baseModel;
+    } else if (routeKey === 'validator') {
+      settings.validatorProvider = providerSource;
+      settings.validatorModel = baseModel;
+    } else if (routeKey === 'summarizer') {
+      settings.summarizerProvider = providerSource;
+      settings.summarizerModel = baseModel;
+    }
+  }
+
+  return settings;
+}
+
+function verifyRouteBundlePromotion(targetWorkspaceRoot, routeBundlePromotion = {}) {
+  const targetLanes = normalizeStringArray(routeBundlePromotion.targetLanes).map((item) => item.toLowerCase());
+  if (!targetLanes.length) {
+    return {
+      ok: false,
+      verifiedCount: 0,
+      missingCount: 0,
+      missingLanes: [],
+      summary: 'No target lanes were declared for route-bundle verification.',
+    };
+  }
+  const config = readAssistantConfig(targetWorkspaceRoot);
+  const expectedModel = String(routeBundlePromotion.baseModel || '').trim();
+  const expectedProvider = normalizeProviderSource(routeBundlePromotion.providerSource || '');
+  const missingLanes = [];
+
+  for (const laneId of targetLanes) {
+    const selection = resolveModelProfileSelection(config, {
+      laneId,
+      taskMode: routeBundlePromotion.taskMode,
+      action: laneId === 'review-verify' ? 'run' : 'implement',
+    });
+    const activeModel = String(selection?.active?.baseModel || '').trim();
+    const activeProvider = normalizeProviderSource(selection?.active?.providerSource || selection?.active?.baseProvider || '');
+    if (activeModel !== expectedModel || activeProvider !== expectedProvider) {
+      missingLanes.push(laneId);
+    }
+  }
+
+  return {
+    ok: missingLanes.length === 0,
+    verifiedCount: targetLanes.length - missingLanes.length,
+    missingCount: missingLanes.length,
+    missingLanes,
+    summary: missingLanes.length === 0
+      ? `Verified route-bundle activation across ${targetLanes.length} lane(s).`
+      : `Route-bundle activation is missing on ${missingLanes.length} lane(s).`,
+  };
+}
+
+function applyRouteBundlePromotion(targetWorkspaceRoot, routeBundlePromotion = {}, candidate = {}) {
+  const currentConfig = readAssistantConfig(targetWorkspaceRoot);
+  const settings = buildRouteBundleActivationSettings(currentConfig, routeBundlePromotion, candidate);
+  const nextConfig = writeAssistantModelSettings(targetWorkspaceRoot, settings);
+  const verification = verifyRouteBundlePromotion(targetWorkspaceRoot, routeBundlePromotion);
+  return {
+    ok: verification.ok,
+    appliedAt: nowIso(),
+    appliedSettings: settings,
+    config: nextConfig,
+    verification,
+    summary: verification.ok
+      ? `Activated ${routeBundlePromotion.providerSource}:${routeBundlePromotion.baseModel} for ${routeBundlePromotion.targetLanes.length} live lane(s).`
+      : verification.summary,
+  };
+}
+
 
 
 function verifyPromotionState(targetWorkspaceRoot, changedEntries = []) {
@@ -391,13 +754,14 @@ function verifyPromotionState(targetWorkspaceRoot, changedEntries = []) {
   };
 }
 
-function buildPromotionGovernance(candidate, acceptanceState, changedEntries = []) {
+function buildPromotionGovernance(candidate, acceptanceState, changedEntries = [], routeBundlePromotion = null) {
   const gate = buildPromotionGate(candidate, acceptanceState);
   return {
     canPromote: gate.canPromote === true,
     hold: gate.canPromote !== true,
     rollbackRecommended: gate.status === 'blocked' || gate.status === 'warn',
     changedPathCount: Array.isArray(changedEntries) ? changedEntries.length : 0,
+    routeBundleStatus: routeBundlePromotion?.status || 'not-applicable',
     summary: gate.summary,
     status: gate.status,
   };
@@ -427,11 +791,12 @@ function createCandidate(workspaceRoot, payload = {}) {
     throw new Error('Candidate creation requires a passing benchmark or explicit verified result.');
   }
   const acceptanceState = readPromotionAcceptanceState(workspaceRoot);
+  const routeBundlePromotion = buildRouteBundlePromotionState(workspaceRoot, payload, latestBenchmark, acceptanceState);
   const promotionGate = buildPromotionGate({
     verification: { ok: verified },
   }, acceptanceState);
 
-  const governance = buildPromotionGovernance({ verification: { ok: verified } }, acceptanceState, changedEntries);
+  const governance = buildPromotionGovernance({ verification: { ok: verified } }, acceptanceState, changedEntries, routeBundlePromotion);
   const candidate = normalizeCandidate({
     id: payload.id || randomId(`candidate_${slugify(payload.name || path.basename(labRoot), 'candidate')}`),
     name: payload.name || path.basename(labRoot),
@@ -456,11 +821,15 @@ function createCandidate(workspaceRoot, payload = {}) {
     promotionState: promotionGate.status,
     promotionSummary: promotionGate.summary,
     governance,
+    foundryCandidateId: String(payload.foundryCandidateId || routeBundlePromotion.foundryCandidateId || '').trim(),
     modelProfileId: String(payload.modelProfileId || latestBenchmark?.modelProfileId || latestBenchmark?.wrappedProfileId || '').trim(),
     variantType: String(payload.variantType || 'wrapped').trim().toLowerCase() || 'wrapped',
     baseModel: String(payload.baseModel || latestBenchmark?.baseModel || latestBenchmark?.model || '').trim(),
     taskMode: String(payload.taskMode || latestBenchmark?.taskMode || '').trim().toLowerCase(),
     providerSource: String(payload.providerSource || latestBenchmark?.providerSource || '').trim().toLowerCase(),
+    targetLanes: Array.isArray(payload.targetLanes) ? payload.targetLanes : routeBundlePromotion.targetLanes,
+    rollbackSource: String(payload.rollbackSource || routeBundlePromotion.rollbackSource || '').trim(),
+    routeBundlePromotion,
   });
 
   const candidates = readCandidates(workspaceRoot);
@@ -499,6 +868,10 @@ function createPromotionBackup(workspaceRoot, payload = {}) {
     labRoot: String(payload.labRoot || '').trim(),
     candidateId: String(payload.candidateId || '').trim(),
     entries: [],
+    assistantConfig: captureAssistantConfigBackup(workspaceRoot, targetWorkspaceRoot, backupId),
+    routeBundlePromotion: payload.routeBundlePromotion && typeof payload.routeBundlePromotion === 'object'
+      ? payload.routeBundlePromotion
+      : null,
   };
 
   for (const entry of changedEntries) {
@@ -566,6 +939,11 @@ function promoteCandidate(workspaceRoot, payload = {}) {
   if (!promotionGate.canPromote && payload.force !== true) {
     throw new Error(promotionGate.summary);
   }
+  const linkedBenchmark = findLatestRelevantBenchmark(workspaceRoot, candidate.labRoot);
+  const routeBundlePromotion = buildRouteBundlePromotionState(workspaceRoot, candidate, linkedBenchmark, acceptanceState);
+  if (routeBundlePromotion.applies && !routeBundlePromotion.canActivate && payload.force !== true) {
+    throw new Error(routeBundlePromotion.summary);
+  }
   const changedEntries = collectChangedEntries(candidate.labRoot);
   if (!changedEntries.length) {
     throw new Error('This candidate has no changed files to promote.');
@@ -577,8 +955,9 @@ function promoteCandidate(workspaceRoot, payload = {}) {
       dryRun: true,
       candidate,
       changedEntries,
+      routeBundlePromotion,
       verification: verifyPromotionState(targetWorkspaceRoot, changedEntries),
-      governance: buildPromotionGovernance(candidate, acceptanceState, changedEntries),
+      governance: buildPromotionGovernance(candidate, acceptanceState, changedEntries, routeBundlePromotion),
     };
   }
   const backup = createPromotionBackup(workspaceRoot, {
@@ -586,13 +965,31 @@ function promoteCandidate(workspaceRoot, payload = {}) {
     targetWorkspaceRoot,
     labRoot: candidate.labRoot,
     changedEntries,
+    routeBundlePromotion,
   });
   let verification = null;
+  let routeActivation = null;
   try {
     applyChangedEntries(targetWorkspaceRoot, candidate.labRoot, changedEntries);
     verification = verifyPromotionState(targetWorkspaceRoot, changedEntries);
     if (!verification.ok) {
       throw new Error(verification.summary);
+    }
+    if (routeBundlePromotion.canActivate) {
+      routeActivation = applyRouteBundlePromotion(targetWorkspaceRoot, routeBundlePromotion, candidate);
+      if (!routeActivation.ok) {
+        throw new Error(routeActivation.summary);
+      }
+      updateBackupManifest(workspaceRoot, backup.id, (manifest) => ({
+        ...manifest,
+        routeBundlePromotion: {
+          ...routeBundlePromotion,
+          status: 'promoted',
+          activatedAt: routeActivation.appliedAt,
+          activationSummary: routeActivation.summary,
+          verification: routeActivation.verification,
+        },
+      }));
     }
   } catch (error) {
     rollbackPromotion(workspaceRoot, { backupId: backup.id });
@@ -615,7 +1012,28 @@ function promoteCandidate(workspaceRoot, payload = {}) {
     changeSummary: buildChangeSummary(changedEntries),
     promotionState: 'promoted',
     promotionSummary: `Promoted from ${candidate.labRoot || 'lab'} into ${candidate.targetWorkspaceRoot || workspaceRoot}.`,
-    governance: buildPromotionGovernance({ ...candidate, status: 'promoted' }, acceptanceState, changedEntries),
+    governance: buildPromotionGovernance({ ...candidate, status: 'promoted' }, acceptanceState, changedEntries, routeBundlePromotion),
+    routeBundlePromotion: routeBundlePromotion.applies
+      ? {
+          ...routeBundlePromotion,
+          status: routeActivation ? 'promoted' : routeBundlePromotion.status,
+          summary: routeActivation ? routeActivation.summary : routeBundlePromotion.summary,
+          latestBackupId: backup.id,
+        }
+      : candidate.routeBundlePromotion,
+    promotedRouteBundle: routeActivation
+      ? {
+          foundryCandidateId: routeBundlePromotion.foundryCandidateId,
+          benchmarkId: routeBundlePromotion.benchmarkId,
+          targetLanes: routeBundlePromotion.targetLanes,
+          providerSource: routeBundlePromotion.providerSource,
+          baseModel: routeBundlePromotion.baseModel,
+          modelProfileId: routeBundlePromotion.modelProfileId,
+          appliedSettings: routeActivation.appliedSettings,
+          verification: routeActivation.verification,
+          appliedAt: routeActivation.appliedAt,
+        }
+      : candidate.promotedRouteBundle,
   });
   candidates[candidateIndex] = nextCandidate;
   writeCandidates(workspaceRoot, candidates);
@@ -626,12 +1044,14 @@ function promoteCandidate(workspaceRoot, payload = {}) {
     targetWorkspaceRoot: nextCandidate.targetWorkspaceRoot,
     labRoot: nextCandidate.labRoot,
     changeCount: nextCandidate.changeSummary.count,
+    routeBundleActivated: routeActivation?.ok === true,
   });
   return {
     ok: true,
     candidate: nextCandidate,
     backup,
     verification,
+    routeActivation,
   };
 }
 
@@ -671,6 +1091,7 @@ function rollbackPromotion(workspaceRoot, payload = {}) {
   for (const entry of entries) {
     restoreBackupEntry(workspaceRoot, targetWorkspaceRoot, backupId, entry);
   }
+  restoreAssistantConfigBackup(workspaceRoot, backupId, manifest.assistantConfig);
   const candidates = readCandidates(workspaceRoot).map((candidate) => {
     if (String(candidate.id || '').trim() !== String(manifest.candidateId || '').trim()) {
       return candidate;
@@ -680,6 +1101,13 @@ function rollbackPromotion(workspaceRoot, payload = {}) {
       status: 'rolled-back',
       updatedAt: nowIso(),
       latestBackupId: backupId,
+      routeBundlePromotion: candidate.routeBundlePromotion && typeof candidate.routeBundlePromotion === 'object'
+        ? {
+            ...candidate.routeBundlePromotion,
+            status: 'rolled-back',
+            summary: `Rolled back the live route bundle from backup ${backupId}.`,
+          }
+        : candidate.routeBundlePromotion,
     });
   });
   writeCandidates(workspaceRoot, candidates);
@@ -708,6 +1136,13 @@ function listPromotionState(workspaceRoot, payload = {}) {
         const normalized = normalizeCandidate(candidate);
         const linkedBenchmark = findLatestRelevantBenchmark(workspaceRoot, normalized.labRoot || selectedLabRoot, benchmarkRuns);
         const gate = buildPromotionGate(normalized, acceptanceState);
+        const routeBundlePromotion = buildRouteBundlePromotionState(workspaceRoot, normalized, linkedBenchmark, acceptanceState);
+        const effectiveRouteBundlePromotion = normalized.status === 'promoted' && normalized.routeBundlePromotion && Object.keys(normalized.routeBundlePromotion).length > 0
+          ? {
+              ...routeBundlePromotion,
+              ...normalized.routeBundlePromotion,
+            }
+          : routeBundlePromotion;
         return {
           ...normalized,
           benchmarkIdentity: linkedBenchmark
@@ -722,6 +1157,7 @@ function listPromotionState(workspaceRoot, payload = {}) {
           promotionState: normalized.status === 'promoted' ? 'promoted' : gate.status,
           promotionSummary: normalized.status === 'promoted' ? normalized.promotionSummary : gate.summary,
           promotionGate: gate,
+          routeBundlePromotion: effectiveRouteBundlePromotion,
         };
       })
       .filter((candidate) => candidateMatchesWorkspace(candidate, workspaceRoot, selectedLabRoot))

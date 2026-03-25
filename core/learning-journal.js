@@ -335,11 +335,15 @@ function summarizeGsDev1ExportReadiness(entries = []) {
   let eligibleCount = 0;
   let trustedCount = 0;
   let approvedCount = 0;
+  let approvedOrTrustedCount = 0;
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (!eventQualifiesForTraining(entry)) {
       continue;
     }
     const payload = entry && typeof entry.payload === 'object' ? entry.payload : {};
+    const approvedLike = payload.trusted === true
+      || payload.accepted === true
+      || String(payload.verdict || payload.status || '').trim().toLowerCase() === 'approved';
     eligibleCount += 1;
     if (payload.trusted === true || String(payload.verdict || payload.status || '').trim().toLowerCase() === 'approved') {
       trustedCount += 1;
@@ -347,17 +351,21 @@ function summarizeGsDev1ExportReadiness(entries = []) {
     if (payload.accepted === true || String(payload.status || '').trim().toLowerCase() === 'approved') {
       approvedCount += 1;
     }
+    if (approvedLike) {
+      approvedOrTrustedCount += 1;
+    }
   }
-  const ready = trustedCount > 0;
+  const ready = approvedOrTrustedCount > 0;
   return {
     eligibleCount,
     trustedCount,
     approvedCount,
+    approvedOrTrustedCount,
     ready,
     status: ready ? 'ready' : (eligibleCount > 0 ? 'warn' : 'idle'),
     summary: ready
-      ? `${trustedCount} trusted example(s) are ready for GS-Dev-1 training handoff export.`
-      : 'Trusted GS-Dev-1 training handoff examples will appear after approved or trusted outcomes land.',
+      ? `${approvedOrTrustedCount} approved or trusted example(s) are ready for GS-Dev-1 training handoff export.`
+      : 'Approved or trusted GS-Dev-1 training handoff examples will appear after safe outcomes land.',
   };
 }
 

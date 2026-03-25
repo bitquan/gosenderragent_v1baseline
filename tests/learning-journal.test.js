@@ -108,6 +108,9 @@ test('learning journal status exposes style profile, reusable prompts, and train
     assert.equal(status.reusablePrompts.length, 1);
     assert.equal(status.reusablePrompts[0].prompt, 'Review the current repo and tell me what needs fixing first.');
     assert.equal(status.trainingReadiness.status, 'ready');
+    assert.equal(status.gsDev1ExportReadiness.ready, true);
+    assert.equal(status.gsDev1ExportReadiness.status, 'ready');
+    assert.match(String(status.gsDev1ExportReadiness.summary || ''), /approved or trusted/i);
   } finally {
     service.stop();
     fs.rmSync(root, { recursive: true, force: true });

@@ -844,9 +844,94 @@ test('system-check infers GS-Dev-1 export and training proof from accepted bench
 
   assert.equal(augmented.gsDev1ExportReadiness.ready, true);
   assert.equal(augmented.gsDev1ExportReadiness.status, 'ready');
-  assert.match(augmented.gsDev1ExportReadiness.summary, /trusted gs-dev-1 training handoff is ready/i);
+  assert.match(augmented.gsDev1ExportReadiness.summary, /approved or trusted gs-dev-1 training handoff is ready/i);
   assert.equal(augmented.trainingReadiness.status, 'ready');
   assert.match(augmented.trainingReadiness.summary, /training handoff is ready/i);
+});
+
+test('system-check keeps GS-Dev-1 export blocked when acceptance is not green', () => {
+  const augmented = augmentLearningStatusWithLiveEvidence({
+    trainingReadiness: {
+      status: 'idle',
+      summary: 'Training is idle until trusted edits land.',
+    },
+    gsDev1ExportReadiness: {
+      ready: true,
+      status: 'ready',
+      summary: '1 approved or trusted example is ready for GS-Dev-1 training handoff export.',
+    },
+  }, {
+    acceptance: {
+      exists: true,
+      report: {
+        overallStatus: 'fail',
+      },
+    },
+    selfHostProof: {
+      label: 'NOT RUN',
+      status: 'idle',
+    },
+    selfImprovement: {
+      proof: {
+        label: 'PROVEN',
+        status: 'ready',
+        proven: true,
+      },
+    },
+    benchmarks: {
+      runs: [
+        {
+          id: 'bench-gs-dev1-blocked',
+          modelProfileId: 'gs-dev-1-default',
+          wrappedProfileId: 'gs-dev-1-default',
+          status: 'pass',
+          passRate: 100,
+        },
+      ],
+    },
+    promotions: {
+      readyCandidates: [
+        {
+          id: 'candidate-gs-dev1-blocked',
+          modelProfileId: 'gs-dev-1-default',
+          promotionGate: {
+            status: 'ready',
+            canPromote: true,
+          },
+        },
+      ],
+      candidates: [
+        {
+          id: 'candidate-gs-dev1-blocked',
+          modelProfileId: 'gs-dev-1-default',
+          status: 'candidate',
+          promotionState: 'ready',
+          promotionGate: {
+            status: 'ready',
+            canPromote: true,
+          },
+        },
+      ],
+    },
+    modelFoundry: {
+      candidates: [
+        {
+          id: 'foundry-gs-dev1-blocked',
+          modelProfileId: 'gs-dev-1-default',
+        },
+      ],
+    },
+    modelRoles: {
+      workspace: {
+        modelProfileId: 'gs-dev-1-default',
+      },
+    },
+  });
+
+  assert.equal(augmented.gsDev1ExportReadiness.ready, false);
+  assert.equal(augmented.gsDev1ExportReadiness.status, 'blocked');
+  assert.match(augmented.gsDev1ExportReadiness.summary, /acceptance baseline is not green enough/i);
+  assert.notEqual(augmented.trainingReadiness.status, 'ready');
 });
 
 test('system-check CLI supports filtered JSON output', () => {

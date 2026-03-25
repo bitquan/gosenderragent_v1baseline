@@ -159,10 +159,10 @@ When debugging the engine, capture these artifacts if needed:
 - BAT<OPS-004> DONE: Expose in-app desktop update controls so downloaded desktop releases can be checked, downloaded, and installed from the running app without leaving the shell.
 - BAT<MODEL-PLAN-001> DONE: Define the local-model-first MVP ladder, unlock rules, and operator workflow in this board so the next phase is explicit and stable.
 - BAT<MODEL-UI-001> DONE: Add a local-model ladder and capability-unlock monitor to the desktop Monitor overview so operators can see what is verified, what is next, and what stays locked.
-- BAT<MODEL-001> TODO: Lock planner, coder, and validator lanes to a local-first profile with remote models reserved for compare, overflow, or approval-only fallback.
-- BAT<MODEL-002> TODO: Add benchmark packs and acceptance gates for local planner, coder, and validator lanes before widening autonomy beyond the current verified block.
-- BAT<MODEL-003> TODO: Promote only benchmark-backed foundry candidates into the engine lane map and prove rollback from the latest known-good model bundle.
-- BAT<MODEL-004> TODO: Keep self-improvement exports limited to approved or trusted runs until local-first acceptance stays green across the baseline labs.
+- BAT<MODEL-001> DONE: Lock planner, coder, and validator lanes to local-first defaults in the routing core and runtime contract so remote models stay fallback-only unless an operator deliberately chooses compare or summary paths.
+- BAT<MODEL-002> DONE: Add a canonical local coding proof gate that requires local benchmark coverage for planner, coder, and validator plus a safe acceptance baseline before the local-first block can widen.
+- BAT<MODEL-003> DONE: Promote only benchmark-backed local foundry route bundles into the live lane map, back up the active assistant model config, and restore the last known-good bundle on rollback.
+- BAT<MODEL-004> DONE: Keep self-improvement and GS-Dev-1 export readiness limited to approved or trusted runs, and clamp that readiness behind a green local-first acceptance baseline.
 
 ## 10. Local-Model MVP Ladder
 
@@ -220,10 +220,10 @@ Current Windows RTX 4060 starter local stack:
 
 Current board status:
 
-1. All active BAT items on this board are complete.
+1. All active BAT items on this board are complete through Layer 4 of the local-model MVP ladder.
 2. Inbox and stored approval state are currently clear, with no pending approvals queued in the recorded runtime artifacts.
-3. The next phase is the local-model MVP ladder above: local-first routing, verified benchmark plus acceptance blocks, then promotion and self-improvement widening.
-4. The Monitor overview is now the operator surface for that ladder, so board policy and UI status stay aligned.
+3. The first local-model MVP target is complete: local-first routing, verified coding proof, rollback-ready route-bundle promotion, and approval-or-trust-gated self-improvement export proof all exist in source and tests.
+4. The Monitor overview and system-check surfaces are the operator proof points for that ladder, so board policy, routing state, and widening gates stay aligned.
 
 ## 12. Completion Standard
 
