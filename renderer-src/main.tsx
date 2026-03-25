@@ -1017,6 +1017,7 @@ function App() {
         attachments,
         chatContext: {
           activeView: store.getState().activeModuleId,
+          chatMode: store.getState().snapshot?.settings?.chatMode || 'auto',
           activeFile: store.getState().inspector.selectedPath,
           changedFiles: changedItems.length,
           approvalCount: approvalItems.length,
@@ -2015,62 +2016,15 @@ function WorkbenchPanel(props: {
             </section>
           ) : null}
 
-          <div className="workbench-start-shell">
-            <section className="workbench-hero-panel">
-              {isFreshThread ? (
+          {isFreshThread ? (
+            <div className="workbench-start-shell">
+              <section className="workbench-hero-panel">
                 <div className="chat-empty-state compact start-hero-copy" data-legacy-empty-title="Let's build">
                   <div className="start-hero-mark">GS</div>
                   <h2>Ask anything</h2>
                   <p>{workspaceLabel} • {modelLabel}</p>
                 </div>
-              ) : (
-                <div className="chat-stage start-conversation-stage">
-                  <div className="chat-log" data-chat-log="true">
-                    {messages.map((message) => (
-                      <article key={message.id} className={`chat-bubble ${message.role}`}>
-                        <header>
-                          <strong>{message.role}</strong>
-                          <span>{formatStamp(message.createdAt)}</span>
-                        </header>
-                        <p>{message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? 'Attached screenshot context.' : '')}</p>
-                        {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
-                          <div className="chip-row">
-                            {message.attachments.map((attachment, index) => (
-                              <span key={`${message.id}-attachment-${index}`} className="attachment-chip">
-                                {attachment.originalName || attachment.name || `attachment ${index + 1}`}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                        {message.refs?.length ? (
-                          <div className="chip-row">
-                            {message.refs.map((ref, index) => (
-                              <button
-                                key={`${message.id}-${index}`}
-                                className="ghost"
-                                onClick={() => ref.path ? props.onSelectPath(String(ref.path), 'chat-ref') : undefined}
-                              >
-                                {ref.label || shortPath(ref.path)}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                        {message.suggestions?.length ? (
-                          <div className="chip-row">
-                            {message.suggestions.map((suggestion) => (
-                              <button key={suggestion} className="ghost" onClick={() => props.onQuickChat(suggestion)}>
-                                {suggestion}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="composer chat-composer launch-composer">
+                <div className="composer chat-composer launch-composer">
                 <div className="chat-mode-bar launch-toolbar">
                   <label className="selector-chip">
                     <UiIcon name="mode" className="toolbar-icon" />
@@ -2201,34 +2155,169 @@ function WorkbenchPanel(props: {
                     ))}
                   </div>
                 ) : null}
-              </div>
-            </section>
-
-            <section className="recent-session-card recent-session-panel">
-              <div className="panel-header compact">
-                <div>
-                  <div className="eyebrow">Recent agent sessions</div>
-                  <h2>{latestRun?.runtimeLabel || latestTask?.title || 'Latest workspace activity'}</h2>
                 </div>
-                <button className="ghost" onClick={() => setManagerPanelOpen((current) => !current)}>Manager panel</button>
+              </section>
+
+              <section className="recent-session-card recent-session-panel">
+                <div className="panel-header compact">
+                  <div>
+                    <div className="eyebrow">Recent agent sessions</div>
+                    <h2>{latestRun?.runtimeLabel || latestTask?.title || 'Latest workspace activity'}</h2>
+                  </div>
+                  <button className="ghost" onClick={() => setManagerPanelOpen((current) => !current)}>Manager panel</button>
+                </div>
+                <div className="recent-session-list">
+                  {recentSessionItems.map((item) => (
+                    <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
+                      <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
+                        <div className="recent-session-title-row">
+                          <UiIcon name="session" className="recent-session-icon" />
+                          <strong>{item.title}</strong>
+                        </div>
+                        <span>{item.status}</span>
+                        <span>{item.detail}</span>
+                        <small>{item.meta || 'Ready'}</small>
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : (
+            <div className="active-thread-shell">
+              <div className="chat-stage active-thread-stage">
+                <div className="chat-log" data-chat-log="true">
+                  {messages.map((message) => (
+                    <article key={message.id} className={`chat-bubble ${message.role}`}>
+                      <header>
+                        <strong>{message.role}</strong>
+                        <span>{formatStamp(message.createdAt)}</span>
+                      </header>
+                      <p>{message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? 'Attached screenshot context.' : '')}</p>
+                      {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
+                        <div className="chip-row">
+                          {message.attachments.map((attachment, index) => (
+                            <span key={`${message.id}-attachment-${index}`} className="attachment-chip">
+                              {attachment.originalName || attachment.name || `attachment ${index + 1}`}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.refs?.length ? (
+                        <div className="chip-row">
+                          {message.refs.map((ref, index) => (
+                            <button
+                              key={`${message.id}-${index}`}
+                              className="ghost"
+                              onClick={() => ref.path ? props.onSelectPath(String(ref.path), 'chat-ref') : undefined}
+                            >
+                              {ref.label || shortPath(ref.path)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.suggestions?.length ? (
+                        <div className="chip-row">
+                          {message.suggestions.map((suggestion) => (
+                            <button key={suggestion} className="ghost" onClick={() => props.onQuickChat(suggestion)}>
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
               </div>
-              <div className="recent-session-list">
-                {recentSessionItems.map((item) => (
-                  <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
-                    <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
-                      <div className="recent-session-title-row">
-                        <UiIcon name="session" className="recent-session-icon" />
-                        <strong>{item.title}</strong>
-                      </div>
-                      <span>{item.status}</span>
-                      <span>{item.detail}</span>
-                      <small>{item.meta || 'Ready'}</small>
+
+              <div className="composer chat-composer active-thread-composer">
+                <div className="chat-mode-bar launch-toolbar">
+                  <label className="selector-chip">
+                    <UiIcon name="mode" className="toolbar-icon" />
+                    <span>Mode</span>
+                    <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
+                      {chatModes.map((mode) => (
+                        <option key={mode} value={mode}>{mode}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button className={openModule === 'monitor' ? 'ghost active' : 'ghost'} onClick={() => setManagerPanelOpen((current) => !current)}>
+                    Manager panel
+                  </button>
+                  <button className="ghost" onClick={props.onPickAttachments}>Attach screenshot</button>
+                  <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Inbox {props.inboxItems.length ? `(${props.inboxItems.length})` : ''}</button>
+                </div>
+
+                {managerPanelOpen ? (
+                  <section className="manager-drawer compact">
+                    <div>
+                      <div className="eyebrow">Manager</div>
+                      <strong>Use auto manager</strong>
+                      <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
+                    </div>
+                    <div className="composer-selector-row">
+                      <label className="selector-chip">
+                        <span>Manager</span>
+                        <select defaultValue="auto" aria-label="Manager mode">
+                          <option value="auto">auto</option>
+                          <option value="guided">guided</option>
+                        </select>
+                      </label>
+                      <label className="selector-chip">
+                        <span>Worker</span>
+                        <select defaultValue="workspace" aria-label="Worker routing">
+                          <option value="workspace">workspace</option>
+                          <option value="engine">engine</option>
+                        </select>
+                      </label>
+                      <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {props.pendingAttachments.length > 0 ? (
+                  <div className="chip-row attachment-row">
+                    {props.pendingAttachments.map((attachment, index) => (
+                      <span key={`${attachment.id || attachment.path || index}`} className="attachment-chip">
+                        {attachment.originalName || attachment.name || `image ${index + 1}`}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <textarea
+                  id="chatInput"
+                  data-chat-input="true"
+                  value={props.composerText}
+                  onChange={(event) => props.onComposerChange(event.target.value)}
+                  onFocus={() => props.onChatFocusChange(true)}
+                  onBlur={() => props.onChatFocusChange(false)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      props.onSendChat();
+                    }
+                  }}
+                  placeholder="Ask anything"
+                />
+
+                <div className="composer-footer launch-footer">
+                  <div className="chat-activity-strip">
+                    <span>{modeSummaryLabel}</span>
+                    <span>{modeRouteSummary[chatMode]}</span>
+                    <span>{branchLabel}</span>
+                    <span>{safetyLabel}</span>
+                  </div>
+                  <div className="launch-send-row">
+                    <span className="composer-model-tag">{modelLabel}</span>
+                    <button className="primary send-icon-button" id="chatSend" data-chat-send="true" onClick={props.onSendChat} disabled={props.busyChat}>
+                      {props.busyChat ? 'Working…' : 'Send'}
                     </button>
-                  </article>
-                ))}
+                  </div>
+                </div>
               </div>
-            </section>
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </section>

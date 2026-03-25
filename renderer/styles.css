@@ -704,6 +704,42 @@ textarea {
   min-height: 0;
 }
 
+.active-thread-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(100%, 980px);
+  margin: 0 auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.active-thread-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.active-thread-composer {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  border-radius: 14px;
+  background: #0d1117;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.active-thread-composer textarea {
+  min-height: 112px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .workbench-hero-panel {
   display: flex;
   flex-direction: column;
@@ -1665,6 +1701,11 @@ textarea,
 
   .recent-session-panel {
     min-height: 0;
+  }
+
+  .active-thread-shell,
+  .active-thread-composer {
+    width: 100%;
   }
 }
 

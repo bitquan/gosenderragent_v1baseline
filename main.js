@@ -7200,6 +7200,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
   let text = String(payload.text || '').trim();
   const directive = parseChatModeDirective(text);
+  const modeDirective = directive;
   const initialChatMode = directive.mode || payload.chatContext?.chatMode || store.get('chatMode') || 'auto';
   const chatMode = resolveChatModeValue(initialChatMode);
   if (directive.mode) {

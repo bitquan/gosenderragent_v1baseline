@@ -22610,6 +22610,7 @@
           attachments,
           chatContext: {
             activeView: store.getState().activeModuleId,
+            chatMode: store.getState().snapshot?.settings?.chatMode || "auto",
             activeFile: store.getState().inspector.selectedPath,
             changedFiles: changedItems.length,
             approvalCount: approvalItems.length,
@@ -23505,9 +23506,9 @@
               props.safeMode.rollbackAvailable ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onRollbackLatestBackup(String(props.safeMode.latestBackupId || "")), children: "Restore latest backup" }) : null
             ] })
           ] }) : null,
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-start-shell", children: [
+          isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-start-shell", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-hero-panel", children: [
-              isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state compact start-hero-copy", "data-legacy-empty-title": "Let's build", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state compact start-hero-copy", "data-legacy-empty-title": "Let's build", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "start-hero-mark", children: "GS" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Ask anything" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
@@ -23515,24 +23516,7 @@
                   " \u2022 ",
                   modelLabel
                 ] })
-              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage start-conversation-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? "Attached screenshot context." : "") }),
-                Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.attachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `attachment ${index + 1}` }, `${message.id}-attachment-${index}`)) }) : null,
-                message.refs?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.refs.map((ref, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "button",
-                  {
-                    className: "ghost",
-                    onClick: () => ref.path ? props.onSelectPath(String(ref.path), "chat-ref") : void 0,
-                    children: ref.label || shortPath(ref.path)
-                  },
-                  `${message.id}-${index}`
-                )) }) : null,
-                message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
-              ] }, message.id)) }) }),
+              ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
@@ -23645,6 +23629,95 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.detail }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: item.meta || "Ready" })
               ] }) }, item.id)) })
+            ] })
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "active-thread-shell", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage active-thread-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? "Attached screenshot context." : "") }),
+              Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.attachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `attachment ${index + 1}` }, `${message.id}-attachment-${index}`)) }) : null,
+              message.refs?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.refs.map((ref, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "ghost",
+                  onClick: () => ref.path ? props.onSelectPath(String(ref.path), "chat-ref") : void 0,
+                  children: ref.label || shortPath(ref.path)
+                },
+                `${message.id}-${index}`
+              )) }) : null,
+              message.suggestions?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.suggestions.map((suggestion) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(suggestion), children: suggestion }, suggestion)) }) : null
+            ] }, message.id)) }) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer active-thread-composer", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "mode", className: "toolbar-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: openModule === "monitor" ? "ghost active" : "ghost", onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPickAttachments, children: "Attach screenshot" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
+                  "Inbox ",
+                  props.inboxItems.length ? `(${props.inboxItems.length})` : ""
+                ] })
+              ] }),
+              managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer compact", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Manager" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "auto", "aria-label": "Manager mode", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "auto" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "guided", children: "guided" })
+                    ] })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "workspace", "aria-label": "Worker routing", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "workspace", children: "workspace" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "engine", children: "engine" })
+                    ] })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" })
+                ] })
+              ] }) : null,
+              props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "textarea",
+                {
+                  id: "chatInput",
+                  "data-chat-input": "true",
+                  value: props.composerText,
+                  onChange: (event) => props.onComposerChange(event.target.value),
+                  onFocus: () => props.onChatFocusChange(true),
+                  onBlur: () => props.onChatFocusChange(false),
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      props.onSendChat();
+                    }
+                  },
+                  placeholder: "Ask anything"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeSummaryLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "launch-send-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "composer-model-tag", children: modelLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
+                ] })
+              ] })
             ] })
           ] })
         ]
