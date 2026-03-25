@@ -3055,7 +3055,57 @@ function SettingsPanel(props: {
   const selectedSafetyLevel = String(groupedAutonomy.safetyLevel || 'supervised-auto');
   const activeSafetyLevel = safetyLevels.find((item: JsonMap) => String(item?.id || '') === selectedSafetyLevel) || safetyLevels[0] || null;
   const providerSecretName = String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || 'OPENAI_API_KEY').trim() || 'OPENAI_API_KEY';
-  const [providerKeyValue, setProviderKeyValue] = React.useState('');
+  const fallbackRemoteKeyEntries: JsonMap[] = [
+    { id: 'openai', label: 'OpenAI', secretName: 'OPENAI_API_KEY', baseUrl: 'https://api.openai.com/v1', available: false, detail: 'Hosted OpenAI models and compatibility endpoints.' },
+    { id: 'huggingface', label: 'Hugging Face Router', secretName: 'HUGGINGFACE_API_KEY', baseUrl: 'https://router.huggingface.co/v1', available: false, detail: 'OpenAI-compatible router for hosted models plus Hugging Face discovery.' },
+    { id: 'custom-compatible', label: 'Custom Compatible', secretName: 'OPENAI_COMPAT_API_KEY', baseUrl: '', available: false, detail: 'Bring your own OpenAI-compatible endpoint and secret slot.' },
+  ];
+  const keyPanelEntries: JsonMap[] = [];
+  const seenKeyPanelIds = new Set<string>();
+  for (const provider of (aiRemoteProviders.length ? aiRemoteProviders : fallbackRemoteKeyEntries)) {
+    const id = String(provider?.id || provider?.secretName || '').trim();
+    const secretName = String(provider?.secretName || provider?.apiKeyName || '').trim();
+    if (!id || !secretName || seenKeyPanelIds.has(id)) {
+      continue;
+    }
+    seenKeyPanelIds.add(id);
+    keyPanelEntries.push({
+      id,
+      label: String(provider?.label || provider?.id || secretName),
+      secretName,
+      baseUrl: String(provider?.baseUrl || ''),
+      summary: String(provider?.detail || provider?.summary || ''),
+      available: provider?.available === true,
+      kind: 'provider',
+    });
+  }
+  if (!seenKeyPanelIds.has('huggingface-hub-token')) {
+    keyPanelEntries.push({
+      id: 'huggingface-hub-token',
+      label: 'Hugging Face Hub token',
+      secretName: 'HF_TOKEN',
+      baseUrl: 'https://huggingface.co',
+      summary: 'Used by Hugging Face Hub downloads and higher-rate model staging.',
+      available: false,
+      kind: 'download',
+    });
+  }
+  const preferredKeyPanelId = keyPanelEntries.some((entry: JsonMap) => String(entry?.id || '') === selectedRemoteProviderId)
+    ? selectedRemoteProviderId
+    : String(keyPanelEntries.find((entry: JsonMap) => String(entry?.id || '') === 'huggingface')?.id || keyPanelEntries[0]?.id || '');
+  const [keyPanelOpen, setKeyPanelOpen] = React.useState(false);
+  const [keyPanelSelectedId, setKeyPanelSelectedId] = React.useState(preferredKeyPanelId);
+  const [keyPanelDrafts, setKeyPanelDrafts] = React.useState<Record<string, string>>({});
+  const [keyPanelPresence, setKeyPanelPresence] = React.useState<Record<string, boolean>>({});
+  const [keyPanelBusySecretName, setKeyPanelBusySecretName] = React.useState('');
+  const [keyPanelError, setKeyPanelError] = React.useState('');
+  const [keyPanelMessage, setKeyPanelMessage] = React.useState('');
+  const selectedKeyPanelEntry = keyPanelEntries.find((entry: JsonMap) => String(entry?.id || '') === keyPanelSelectedId) || keyPanelEntries[0] || null;
+  const selectedKeyPanelSecretName = String(selectedKeyPanelEntry?.secretName || '').trim();
+  const selectedKeyPanelDraft = selectedKeyPanelSecretName ? String(keyPanelDrafts[selectedKeyPanelSecretName] || '') : '';
+  const selectedRemoteKeyConfigured = Object.prototype.hasOwnProperty.call(keyPanelPresence, providerSecretName)
+    ? keyPanelPresence[providerSecretName] === true
+    : selectedRemoteProvider?.available === true;
   const binaryUpdateState = String(binaryUpdates.state || 'idle').trim().toLowerCase();
   const binaryCurrentVersion = String(binaryUpdates.version || props.snapshot?.meta?.version || '').trim() || 'current build';
   const binaryAvailableVersion = String(binaryUpdates.availableVersion || '').trim() || 'not announced';
@@ -3066,35 +3116,93 @@ function SettingsPanel(props: {
   const binaryInstallLabel = String(binaryUpdates.localArtifactPath || '').trim() ? 'Open staged installer' : 'Install update';
   const autoInstallEnabled = settings.autoUpdateEnabled === true && settings.autoUpdateAutoApply === true;
 
-  const saveSelectedRemoteKey = async () => {
-    if (!selectedRemoteProvider) {
+  const refreshKeyPanelPresence = useEffectEvent(async () => {
+    const entries = keyPanelEntries.filter((entry: JsonMap) => String(entry?.secretName || '').trim());
+    const results = await Promise.all(entries.map(async (entry: JsonMap) => {
+      const secretName = String(entry.secretName || '').trim();
+      const response = await window.gosAgent.getSecret(secretName);
+      return [secretName, !!String(response?.value || '').trim()] as const;
+    }));
+    const nextPresence = results.reduce((accumulator, [secretName, configured]) => {
+      accumulator[secretName] = configured;
+      return accumulator;
+    }, {} as Record<string, boolean>);
+    setKeyPanelPresence(nextPresence);
+  });
+
+  const openKeyPanel = (preferredId = '') => {
+    const nextSelectedId = keyPanelEntries.some((entry: JsonMap) => String(entry?.id || '') === preferredId)
+      ? preferredId
+      : preferredKeyPanelId;
+    setKeyPanelSelectedId(nextSelectedId);
+    setKeyPanelOpen(true);
+    setKeyPanelError('');
+    setKeyPanelMessage('');
+    void refreshKeyPanelPresence();
+  };
+
+  const closeKeyPanel = () => {
+    setKeyPanelOpen(false);
+    setKeyPanelError('');
+    setKeyPanelMessage('');
+  };
+
+  React.useEffect(() => {
+    if (!keyPanelOpen) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setKeyPanelOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [keyPanelOpen]);
+
+  const saveSelectedKeyPanelEntry = async () => {
+    if (!selectedKeyPanelEntry || !selectedKeyPanelSecretName) {
       return;
     }
-    const nextValue = String(providerKeyValue || '').trim();
+    const nextValue = String(keyPanelDrafts[selectedKeyPanelSecretName] || '').trim();
     if (!nextValue) {
+      setKeyPanelError('Enter a key before saving it.');
+      setKeyPanelMessage('');
       return;
     }
-    setProviderKeyBusy(true);
+    setKeyPanelBusySecretName(selectedKeyPanelSecretName);
+    setKeyPanelError('');
+    setKeyPanelMessage('');
     try {
-      await window.gosAgent.setSecret(providerSecretName, nextValue);
-      setProviderKeyValue('');
+      await window.gosAgent.setSecret(selectedKeyPanelSecretName, nextValue);
+      setKeyPanelDrafts((current) => ({ ...current, [selectedKeyPanelSecretName]: '' }));
+      setKeyPanelPresence((current) => ({ ...current, [selectedKeyPanelSecretName]: true }));
+      setKeyPanelMessage(`${selectedKeyPanelEntry.label || 'Key'} saved to ${selectedKeyPanelSecretName}.`);
       props.onRefresh();
+    } catch (error) {
+      setKeyPanelError(error instanceof Error ? error.message : 'Unable to save the key.');
     } finally {
-      setProviderKeyBusy(false);
+      setKeyPanelBusySecretName('');
     }
   };
 
-  const clearSelectedRemoteKey = async () => {
-    if (!selectedRemoteProvider) {
+  const clearSelectedKeyPanelEntry = async () => {
+    if (!selectedKeyPanelEntry || !selectedKeyPanelSecretName) {
       return;
     }
-    setProviderKeyBusy(true);
+    setKeyPanelBusySecretName(selectedKeyPanelSecretName);
+    setKeyPanelError('');
+    setKeyPanelMessage('');
     try {
-      await window.gosAgent.setSecret(providerSecretName, '');
-      setProviderKeyValue('');
+      await window.gosAgent.setSecret(selectedKeyPanelSecretName, '');
+      setKeyPanelDrafts((current) => ({ ...current, [selectedKeyPanelSecretName]: '' }));
+      setKeyPanelPresence((current) => ({ ...current, [selectedKeyPanelSecretName]: false }));
+      setKeyPanelMessage(`${selectedKeyPanelEntry.label || 'Key'} cleared from ${selectedKeyPanelSecretName}.`);
       props.onRefresh();
+    } catch (error) {
+      setKeyPanelError(error instanceof Error ? error.message : 'Unable to clear the key.');
     } finally {
-      setProviderKeyBusy(false);
+      setKeyPanelBusySecretName('');
     }
   };
 
@@ -3591,12 +3699,7 @@ function SettingsPanel(props: {
                 </label>
                 <label>
                   <span>Provider API key</span>
-                  <input
-                    type="password"
-                    value={providerKeyValue}
-                    onChange={(event) => setProviderKeyValue(event.target.value)}
-                    placeholder={`Save to ${providerSecretName}`}
-                  />
+                  <input value={`${selectedRemoteKeyConfigured ? 'Configured' : 'Missing'} • ${providerSecretName}`} readOnly />
                 </label>
                 <label>
                   <span>Local AI command</span>
@@ -3628,12 +3731,7 @@ function SettingsPanel(props: {
                 </label>
                 <label>
                   <span>Provider API key</span>
-                  <input
-                    type="password"
-                    value={providerKeyValue}
-                    onChange={(event) => setProviderKeyValue(event.target.value)}
-                    placeholder={`Save to ${providerSecretName}`}
-                  />
+                  <input value={`${selectedRemoteKeyConfigured ? 'Configured' : 'Missing'} • ${providerSecretName}`} readOnly />
                 </label>
               </>
             )}
@@ -3644,11 +3742,8 @@ function SettingsPanel(props: {
             <button className="ghost" onClick={() => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh)}>Import selected model</button>
             <button className="ghost" onClick={() => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh)}>Import all stored models</button>
             <button className="primary" data-run-benchmark="true" onClick={props.onRunBenchmark}>Run benchmark</button>
-            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy || !String(providerKeyValue || '').trim()} onClick={() => void saveSelectedRemoteKey()}>
-              {providerKeyBusy ? 'Saving key…' : `Save ${selectedRemoteProvider?.label || 'remote'} key`}
-            </button>
-            <button className="ghost" disabled={!selectedRemoteProvider || providerKeyBusy} onClick={() => void clearSelectedRemoteKey()}>
-              Clear key
+            <button className="ghost" onClick={() => openKeyPanel(selectedRemoteProviderId)}>
+              API keys
             </button>
             {nextFoundryCandidate ? (
               <button
@@ -3780,6 +3875,111 @@ function SettingsPanel(props: {
             ))}
             {savedFoundryCandidates.length === 0 ? <p className="empty-copy">No foundry candidates have been seeded yet.</p> : null}
           </section>
+          {keyPanelOpen ? (
+            <div className="modal-scrim" data-api-key-modal="true" onClick={closeKeyPanel}>
+              <section
+                className="settings-modal api-key-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="API keys"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="settings-modal-header">
+                  <div>
+                    <div className="eyebrow">Secure key manager</div>
+                    <h2>API keys</h2>
+                    <p>Keys are stored through the desktop secret store. Use Hugging Face Router for hosted models and HF_TOKEN for Hub downloads.</p>
+                  </div>
+                  <div className="row-actions">
+                    <button className="ghost" onClick={() => void refreshKeyPanelPresence()}>Refresh status</button>
+                    <button className="ghost" onClick={closeKeyPanel}>Close</button>
+                  </div>
+                </div>
+                <div className="api-key-modal-layout">
+                  <div className="api-key-provider-list">
+                    {keyPanelEntries.map((entry: JsonMap) => {
+                      const entryId = String(entry.id || '');
+                      const entrySecretName = String(entry.secretName || '');
+                      const configured = Object.prototype.hasOwnProperty.call(keyPanelPresence, entrySecretName)
+                        ? keyPanelPresence[entrySecretName] === true
+                        : entry.available === true;
+                      return (
+                        <button
+                          key={entryId}
+                          className={`api-key-provider-button${keyPanelSelectedId === entryId ? ' active' : ''}`}
+                          onClick={() => {
+                            setKeyPanelSelectedId(entryId);
+                            setKeyPanelError('');
+                            setKeyPanelMessage('');
+                          }}
+                        >
+                          <strong>{String(entry.label || entry.id || 'Key')}</strong>
+                          <span>{entrySecretName}</span>
+                          <small>{configured ? 'Configured' : 'Missing'}</small>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="api-key-editor">
+                    {selectedKeyPanelEntry ? (
+                      <>
+                        <div className="card-grid compact">
+                          <article className="metric-card compact">
+                            <div className="eyebrow">Selected key</div>
+                            <strong>{String(selectedKeyPanelEntry.label || selectedKeyPanelEntry.id || 'Key')}</strong>
+                            <p>{String(selectedKeyPanelEntry.summary || 'Store this secret securely for the current desktop profile.')}</p>
+                          </article>
+                          <article className="metric-card compact">
+                            <div className="eyebrow">Secret slot</div>
+                            <strong>{selectedKeyPanelSecretName}</strong>
+                            <p>{String(selectedKeyPanelEntry.baseUrl || 'Stored locally in encrypted desktop secrets.')}</p>
+                          </article>
+                        </div>
+                        <label>
+                          <span>Provider API key</span>
+                          <input
+                            type="password"
+                            value={selectedKeyPanelDraft}
+                            onChange={(event) => setKeyPanelDrafts((current) => ({
+                              ...current,
+                              [selectedKeyPanelSecretName]: event.target.value,
+                            }))}
+                            placeholder={`Save to ${selectedKeyPanelSecretName}`}
+                          />
+                        </label>
+                        <div className="api-key-status-row">
+                          <span className={`status-pill${(Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? ' ready' : ''}`}>
+                            {(Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? 'Configured' : 'Missing'}
+                          </span>
+                          <span>{selectedKeyPanelEntry.id === 'huggingface-hub-token' ? 'Use this token for Hugging Face Hub downloads and higher rate limits.' : 'Use this key for the selected hosted provider route.'}</span>
+                        </div>
+                        {keyPanelError ? <p className="api-key-feedback error">{keyPanelError}</p> : null}
+                        {keyPanelMessage ? <p className="api-key-feedback success">{keyPanelMessage}</p> : null}
+                        <div className="row-actions">
+                          <button
+                            className="primary"
+                            disabled={!selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName || !selectedKeyPanelDraft.trim()}
+                            onClick={() => void saveSelectedKeyPanelEntry()}
+                          >
+                            {keyPanelBusySecretName === selectedKeyPanelSecretName ? 'Saving key…' : `Save ${String(selectedKeyPanelEntry.label || 'key')}`}
+                          </button>
+                          <button
+                            className="ghost"
+                            disabled={!selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName}
+                            onClick={() => void clearSelectedKeyPanelEntry()}
+                          >
+                            Clear key
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="empty-copy">No provider key slots are available yet.</p>
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+          ) : null}
           <section className="queue-card">
             <div className="eyebrow">Training fallback plan</div>
             {trainingFallback ? (

@@ -11,6 +11,7 @@ if (-not $ProjectRoot) {
 }
 
 $projectRoot = (Resolve-Path $ProjectRoot).Path
+. (Join-Path $PSScriptRoot "use-ssd-storage.ps1")
 $defaultLabRoot = "E:\dev\projects\gosenderr_dev_offload\assistant_labs\persistent\self-host"
 if (-not $SchedulerRoot) {
   if (Test-Path $defaultLabRoot) {

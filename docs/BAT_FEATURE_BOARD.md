@@ -78,6 +78,8 @@ Primary workspace tasks:
 Install note:
 
 - The Windows recommended-model task pulls the registry-backed Qwen models directly and stages DeepSeek/Qwen3 GGUF files into `assistant_training_model_storage_root`; import those staged files from Settings -> AI -> Import all stored models.
+- If `HF_TOKEN` or `HUGGINGFACE_API_KEY` is saved in Settings -> AI -> API keys, the Windows recommended-model task will pick it up automatically for authenticated Hugging Face downloads.
+- Windows task scripts now pin desktop app state, temp files, npm/pip caches, Hugging Face cache, and Ollama model paths to the configured E-drive live offload root, while promotions, release archives, and migration backups can be pinned to the configured D-drive cold-storage root.
 
 Primary npm commands:
 

@@ -1,8 +1,11 @@
 assistant_artifacts_root: E:/dev/projects/gosenderr_dev_offload
-assistant_promotions_root: E:/dev/projects/gosenderr_dev_offload/assistant_promotions
+assistant_cold_storage_root: D:/dev/projects/gosenderr_dev_backup
+assistant_promotions_root: D:/dev/projects/gosenderr_dev_backup/assistant_promotions
 assistant_benchmark_root: E:/dev/projects/gosenderr_dev_offload/assistant_benchmarks
 assistant_labs_root: E:/dev/projects/gosenderr_dev_offload/assistant_labs
 assistant_model_foundry_root: E:/dev/projects/gosenderr_dev_offload/model_foundry
+assistant_desktop_release_dir: D:/dev/projects/gosenderr_dev_backup/desktop_releases
+assistant_migrated_internal_root: D:/dev/projects/gosenderr_dev_backup/migrated_internal
 assistant_training_hardware_target: windows-i9-32gb-rtx4060-8gb
 assistant_training_profile: medium
 assistant_training_eco_mode: false

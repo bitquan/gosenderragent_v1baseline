@@ -12,10 +12,11 @@ This folder is the operator handoff for the Windows desktop-agent repo at `E:\de
 ## Critical paths
 
 - App repo: `E:\dev\projects\gosenderr-desktop-agent-PC`
-- Shared offload: `E:\dev\projects\gosenderr_dev_offload`
+- Live offload: `E:\dev\projects\gosenderr_dev_offload`
 - Persistent self-host lab: `E:\dev\projects\gosenderr_dev_offload\assistant_labs\persistent\self-host`
 - Model storage: `E:\dev\projects\gosenderr_dev_offload\local_model_storage`
-- Windows builds: `E:\dev\projects\gosenderr_dev_offload\desktop_builds`
+- Windows builds and live update channel: `E:\dev\projects\gosenderr_dev_offload`
+- Cold backup/archive storage: `D:\dev\projects\gosenderr_dev_backup`
 
 ## Self-improvement mental model
 

@@ -1,4 +1,12 @@
 # Windows PC tuning template for GoSenderr Desktop Agent PC
+# Keep active runtime, models, and caches on the fast SSD.
+# assistant_artifacts_root: E:/dev/projects/gosenderr_dev_offload
+# assistant_training_model_storage_root: E:/dev/projects/gosenderr_dev_offload/local_model_storage/models
+# Keep rollback archives, releases, and migration backups on the backup drive.
+# assistant_cold_storage_root: D:/dev/projects/gosenderr_dev_backup
+# assistant_promotions_root: D:/dev/projects/gosenderr_dev_backup/assistant_promotions
+# assistant_desktop_release_dir: D:/dev/projects/gosenderr_dev_backup/desktop_releases
+# assistant_migrated_internal_root: D:/dev/projects/gosenderr_dev_backup/migrated_internal
 assistant_training_hardware_target: windows-i9-32gb-rtx4060-8gb
 assistant_training_profile: high
 assistant_training_eco_mode: false
@@ -18,6 +26,3 @@ assistant_task_mode_validator_provider: ollama
 assistant_task_mode_validator_model: qwen2.5-coder:7b
 assistant_task_mode_summarizer_provider: ollama
 assistant_task_mode_summarizer_model: qwen2.5-coder:7b
-
-# Update this path after copying the bundle onto Windows.
-# assistant_training_model_storage_root: D:/gosenderr-models

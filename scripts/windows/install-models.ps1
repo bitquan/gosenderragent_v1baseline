@@ -1,8 +1,10 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $projectRoot
+. (Join-Path $PSScriptRoot "use-ssd-storage.ps1")
 Write-Host "[gosenderr-pc] project = $projectRoot"
 
+$nodeExe = "node"
 $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $pythonExe)) {
 	$pythonExe = "python"
@@ -20,6 +22,47 @@ if (-not $modelStorageRoot) {
 	$modelStorageRoot = Join-Path $env:USERPROFILE "large-storage\models"
 }
 New-Item -ItemType Directory -Force -Path $modelStorageRoot | Out-Null
+
+$desktopSecretReader = Join-Path $projectRoot "scripts\read-desktop-secret.js"
+
+function Resolve-DesktopSecretValue {
+	param(
+		[string[]]$SecretNames
+	)
+	if (-not (Test-Path $desktopSecretReader)) {
+		return $null
+	}
+	foreach ($secretName in $SecretNames) {
+		try {
+			$secretPayloadRaw = & $nodeExe $desktopSecretReader $secretName
+			if ($LASTEXITCODE -ne 0 -or -not $secretPayloadRaw) {
+				continue
+			}
+			$secretPayload = $secretPayloadRaw | ConvertFrom-Json
+			if ($secretPayload.ok -and $secretPayload.value) {
+				return [PSCustomObject]@{
+					secretName = $secretName
+					value = [string]$secretPayload.value
+					backend = [string]$secretPayload.backend
+				}
+			}
+		} catch {
+			Write-Host "[gosenderr-pc] warning: could not read $secretName from desktop secrets"
+		}
+	}
+	return $null
+}
+
+if (-not $env:HF_TOKEN) {
+	$desktopHuggingFaceSecret = Resolve-DesktopSecretValue -SecretNames @('HF_TOKEN', 'HUGGINGFACE_API_KEY')
+	if ($desktopHuggingFaceSecret) {
+		$env:HF_TOKEN = $desktopHuggingFaceSecret.value
+		Write-Host "[gosenderr-pc] using Hugging Face token from desktop secrets ($($desktopHuggingFaceSecret.secretName) via $($desktopHuggingFaceSecret.backend))"
+	}
+}
+if (-not $env:HF_TOKEN) {
+	Write-Host "[gosenderr-pc] HF_TOKEN not found in environment or desktop secrets; continuing with unauthenticated Hugging Face downloads"
+}
 
 & $pythonExe -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('huggingface_hub') else 1)"
 if ($LASTEXITCODE -ne 0) {

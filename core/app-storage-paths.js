@@ -25,7 +25,7 @@ function buildAppStoragePaths({
   const resolvedFallbackUserDataDir = resolveOptionalPath(fallbackUserDataDir);
 
   const userDataDir = resolveOptionalPath(requestedUserDataDir)
-    || (isDev && storageRoot ? path.join(storageRoot, 'user-data') : resolvedFallbackUserDataDir);
+    || (storageRoot ? path.join(storageRoot, 'user-data') : resolvedFallbackUserDataDir);
 
   const sessionDataDir = resolveOptionalPath(requestedSessionDataDir)
     || (storageRoot ? path.join(storageRoot, 'session-data') : path.join(userDataDir, 'session-data'));

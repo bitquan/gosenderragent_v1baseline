@@ -81,7 +81,10 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.doesNotMatch(settingsSection, /window\.prompt/);
   assert.match(settingsSection, /Provider API key/);
   assert.match(settingsSection, /type: "password"/);
-  assert.match(settingsSection, /Save .* key/);
+  assert.match(settingsSection, /API keys/);
+  assert.match(settingsSection, /Hugging Face Hub token/);
+  assert.match(settingsSection, /Save .*key/);
+  assert.match(settingsSection, /data-api-key-modal/);
   assert.match(workbenchSection, /const scheduleRefresh = \(0, import_react2\.useEffectEvent\)/);
 });
 
@@ -164,4 +167,7 @@ test('styles define the codex-style workbench shell and theme system', () => {
   assert.match(stylesCss, /\.event-stream \{/);
   assert.match(stylesCss, /body\[data-theme="obsidian"\]/);
   assert.match(stylesCss, /body\[data-theme="codex"\]/);
+  assert.match(stylesCss, /\.modal-scrim \{/);
+  assert.match(stylesCss, /\.settings-modal \{/);
+  assert.match(stylesCss, /\.api-key-modal-layout \{/);
 });

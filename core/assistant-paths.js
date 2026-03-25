@@ -210,6 +210,10 @@ function getConfiguredAssistantDesktopReleaseDir(workspaceRoot) {
   if (config.assistant_desktop_release_dir) {
     return resolveConfiguredPath(entries.assistant_desktop_release_dir, '');
   }
+  const coldRoot = getConfiguredAssistantColdStorageRoot(workspaceRoot);
+  if (coldRoot) {
+    return path.join(coldRoot, 'desktop_releases');
+  }
   const root = getAssistantArtifactsRoot(workspaceRoot);
   return root ? path.join(root, 'desktop_releases') : '';
 }
@@ -254,11 +258,24 @@ function getConfiguredAssistantBenchmarkRoot(workspaceRoot) {
   return root ? path.join(root, 'assistant_benchmarks') : '';
 }
 
+function getConfiguredAssistantColdStorageRoot(workspaceRoot) {
+  const config = readConfigMap(workspaceRoot);
+  const entries = readConfigEntries(workspaceRoot);
+  if (config.assistant_cold_storage_root) {
+    return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_cold_storage_root, ''), workspaceRoot, entries.assistant_cold_storage_root);
+  }
+  return '';
+}
+
 function getConfiguredAssistantPromotionsRoot(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
   if (config.assistant_promotions_root) {
     return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_promotions_root, ''), workspaceRoot, entries.assistant_promotions_root);
+  }
+  const coldRoot = getConfiguredAssistantColdStorageRoot(workspaceRoot);
+  if (coldRoot) {
+    return path.join(coldRoot, 'assistant_promotions');
   }
   const root = getAssistantArtifactsRoot(workspaceRoot);
   return root ? path.join(root, 'assistant_promotions') : '';
@@ -318,6 +335,7 @@ module.exports = {
   getAssistantArtifactsRoot,
   getConfiguredAssistantBenchmarkRoot,
   getConfiguredAssistantChatAttachmentsRoot,
+  getConfiguredAssistantColdStorageRoot,
   getConfiguredAssistantDesktopBuildDir,
   getConfiguredAssistantDesktopLiveChannelDir,
   getConfiguredAssistantDesktopReleaseDir,

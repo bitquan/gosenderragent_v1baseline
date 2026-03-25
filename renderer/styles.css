@@ -1805,6 +1805,120 @@ textarea,
   border: 1px solid var(--line-strong);
 }
 
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 10, 12, 0.62);
+  backdrop-filter: blur(10px);
+}
+
+.settings-modal {
+  width: min(100%, 980px);
+  max-height: min(88vh, 820px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%),
+    var(--panel);
+  box-shadow: var(--shadow-strong);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.api-key-modal-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.api-key-provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.api-key-provider-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  border-radius: 16px;
+  padding: 14px;
+  background: var(--panel-strong);
+}
+
+.api-key-provider-button strong,
+.api-key-provider-button span,
+.api-key-provider-button small {
+  text-align: left;
+}
+
+.api-key-provider-button span,
+.api-key-provider-button small {
+  color: var(--muted);
+}
+
+.api-key-provider-button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.api-key-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.api-key-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--panel-strong);
+  color: var(--warn);
+}
+
+.status-pill.ready {
+  color: var(--success);
+}
+
+.api-key-feedback {
+  margin: 0;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.api-key-feedback.success {
+  background: rgba(73, 209, 125, 0.12);
+  color: #b6f3cc;
+}
+
+.api-key-feedback.error {
+  background: rgba(240, 109, 109, 0.12);
+  color: #ffc6c6;
+}
+
 .error-banner {
   bottom: 22px;
   background: rgba(166, 63, 68, 0.95);
@@ -1866,11 +1980,16 @@ textarea,
   .topbar-actions,
   .composer-toolbar,
   .composer-footer,
+  .settings-modal-header,
   .settings-grid,
   .card-grid,
   .prompt-grid,
   .workbench-status-strip,
   .toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-key-modal-layout {
     grid-template-columns: 1fr;
   }
 

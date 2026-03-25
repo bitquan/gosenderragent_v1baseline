@@ -17,15 +17,19 @@ const {
 } = require('electron');
 const packageMeta = require('./package.json');
 const { buildAppStoragePaths } = require('./core/app-storage-paths');
+const { getConfiguredAssistantDevDataRoot } = require('./core/assistant-paths');
 const APP_NAME = String(packageMeta.productName || 'GoSenderr Desktop Agent').trim() || 'GoSenderr Desktop Agent';
 const IS_DEV_BUILD = !app.isPackaged;
 app.setName(APP_NAME);
 const requestedUserDataDir = String(process.env.DESKTOP_AGENT_USER_DATA_DIR || '').trim();
 const requestedSessionDataDir = String(process.env.DESKTOP_AGENT_SESSION_DATA_DIR || '').trim();
 const requestedCacheDir = String(process.env.DESKTOP_AGENT_CACHE_DIR || '').trim();
-const requestedLocalStorageRoot = process.platform === 'win32'
-  ? path.resolve(String(process.env.LOCALAPPDATA || '').trim() || app.getPath('temp'))
-  : '';
+const configuredDevDataRoot = getConfiguredAssistantDevDataRoot(path.resolve(__dirname));
+const configuredLocalStorageRoot = configuredDevDataRoot ? path.join(configuredDevDataRoot, 'desktop_app_state') : '';
+const requestedLocalStorageRoot = String(process.env.DESKTOP_AGENT_LOCAL_STORAGE_ROOT || '').trim()
+  || (process.platform === 'win32'
+    ? path.resolve(configuredLocalStorageRoot || String(process.env.LOCALAPPDATA || '').trim() || app.getPath('temp'))
+    : '');
 function ensureAppStoragePath(pathName, targetPath) {
   const resolvedPath = path.resolve(String(targetPath || '').trim());
   if (!resolvedPath) {
@@ -96,6 +100,7 @@ app.commandLine.appendSwitch('media-cache-dir', resolvedCacheDir);
 process.env.DESKTOP_AGENT_USER_DATA_DIR = resolvedUserDataDir;
 process.env.DESKTOP_AGENT_SESSION_DATA_DIR = resolvedSessionDataDir;
 process.env.DESKTOP_AGENT_CACHE_DIR = resolvedCacheDir;
+process.env.DESKTOP_AGENT_LOCAL_STORAGE_ROOT = requestedLocalStorageRoot;
 const StoreModule = require('electron-store');
 const Store = StoreModule.default || StoreModule;
 const { createResilientStore } = require('./core/settings-store');
