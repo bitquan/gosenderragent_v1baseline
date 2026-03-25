@@ -21783,6 +21783,14 @@
   var ACTIVE_THREAD_KEY = "gosenderr.desktop.workbench.active-thread.v3";
   var SETTINGS_TABS = ["general", "workspace", "ai", "autonomy", "skills", "extensions", "tools", "automations", "labs", "learning", "storage"];
   var MONITOR_TABS = ["overview", "runs", "learning", "promotions", "debug"];
+  var INSPECTOR_TABS = ["manager", "inbox", "file", "diff", "learning"];
+  var INSPECTOR_TAB_LABELS = {
+    manager: "Manager",
+    inbox: "Inbox",
+    file: "File",
+    diff: "Diff",
+    learning: "Learning"
+  };
   var initialState = {
     loading: true,
     error: "",
@@ -21809,6 +21817,7 @@
     composerText: "",
     pendingAttachments: [],
     busyChat: false,
+    busyBinaryUpdate: false,
     busyAcceptance: false,
     busySafetyController: false,
     chatFocused: false,
@@ -22356,6 +22365,46 @@
     }
     return options;
   }
+  function mergeUpdateSnapshot(snapshot, payload) {
+    if (!snapshot || !payload || typeof payload !== "object") {
+      return snapshot;
+    }
+    const currentUpdates = snapshot.updates && typeof snapshot.updates === "object" ? snapshot.updates : {};
+    const currentBinary = currentUpdates.binary && typeof currentUpdates.binary === "object" ? currentUpdates.binary : {};
+    const nextBinary = payload.binary && typeof payload.binary === "object" ? { ...currentBinary, ...payload.binary } : currentBinary;
+    return {
+      ...snapshot,
+      updates: {
+        ...currentUpdates,
+        ...payload,
+        ...payload.binary && typeof payload.binary === "object" ? { binary: nextBinary } : {}
+      }
+    };
+  }
+  function mergeBinaryUpdateSnapshot(snapshot, payload) {
+    if (!snapshot || !payload || typeof payload !== "object") {
+      return snapshot;
+    }
+    const interestingKeys = [
+      "state",
+      "message",
+      "downloaded",
+      "availableVersion",
+      "progressPercent",
+      "localArtifactPath",
+      "localReleaseDir",
+      "feedUrl",
+      "configured",
+      "autoDownload",
+      "version",
+      "localStaged",
+      "liveVersion"
+    ];
+    if (!interestingKeys.some((key) => payload[key] !== void 0)) {
+      return snapshot;
+    }
+    return mergeUpdateSnapshot(snapshot, { binary: payload });
+  }
   function App() {
     const state = useStoreValue(store);
     const reportRendererError = window.gosAgent.reportRendererError;
@@ -22365,6 +22414,8 @@
     const threadIsFresh = !Array.isArray(thread?.messages) || !thread.messages.some((message) => message.role !== "system");
     const status = shellStatus(state.snapshot);
     const safeMode = readSafeMode(state.snapshot);
+    const updates = state.snapshot?.updates && typeof state.snapshot.updates === "object" ? state.snapshot.updates : {};
+    const binaryUpdates = updates.binary && typeof updates.binary === "object" ? updates.binary : {};
     const approvalItems = readApprovalItems(state.snapshot);
     const changedItems = readChangedFileItems(state.snapshot);
     const inboxItems = buildInboxItems({
@@ -22385,6 +22436,11 @@
       return count;
     }, 0);
     const chatSignalState = safeMode.active ? "alert" : state.busyChat || state.chatFocused ? "active" : unreadThreadCount > 0 ? "message" : "idle";
+    const binaryUpdateState = String(binaryUpdates.state || "").trim().toLowerCase();
+    const binaryUpdateProgress = Math.round(Number(binaryUpdates.progressPercent || 0));
+    const binaryUpdateReadyToInstall = Boolean(binaryUpdates.downloaded) || String(binaryUpdates.localArtifactPath || "").trim().length > 0;
+    const binaryUpdateCanDownload = binaryUpdateState === "available" && !binaryUpdateReadyToInstall;
+    const binaryUpdateInstallLabel = String(binaryUpdates.localArtifactPath || "").trim() ? "Open installer" : "Install update";
     const activeTaskRun = taskRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.runtimeState || item.status || "").toLowerCase())) || (Array.isArray(state.snapshot?.recentRuns) ? state.snapshot.recentRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item.state || item.status || "").toLowerCase())) : null);
     const refreshTimerRef = import_react2.default.useRef(null);
     const refreshInFlightRef = import_react2.default.useRef(false);
@@ -22437,6 +22493,11 @@
       });
       const offUpdate = window.gosAgent.onUpdateEvent((payload) => {
         appendRuntimeEvent("runtimeEvents", { ...payload, kind: "updates" });
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: payload?.binary?.state ? ["checking", "downloading", "installing"].includes(String(payload.binary.state || "").toLowerCase()) : current.busyBinaryUpdate,
+          snapshot: mergeUpdateSnapshot(current.snapshot, payload)
+        }));
       });
       const offTuning = window.gosAgent.onTuningImportEvent((payload) => {
         appendRuntimeEvent("runtimeEvents", { ...payload, kind: "tuning-import" });
@@ -22750,11 +22811,22 @@
         await onLoadInspectorPath(item.path, item.source || "inbox");
         return;
       }
+      const inspectorTab = INSPECTOR_TABS.includes(item.targetTab) ? item.targetTab : "inbox";
       store.update((current) => ({
         ...current,
         rightRailOpen: true,
-        activeInspectorTab: item.targetTab === "file" || item.targetTab === "diff" || item.targetTab === "learning" ? item.targetTab : "inbox"
+        activeInspectorTab: inspectorTab
       }));
+    };
+    const onToggleManagerInspector = () => {
+      store.update((current) => {
+        const isOpen = current.rightRailOpen && current.activeInspectorTab === "manager";
+        return {
+          ...current,
+          rightRailOpen: !isOpen,
+          activeInspectorTab: "manager"
+        };
+      });
     };
     const onSwitchWorkspace = async () => {
       await window.gosAgent.pickWorkspace();
@@ -22879,6 +22951,81 @@
         changeSessionId: thread?.changeSessionId || ""
       });
       await refreshApp("lite");
+    };
+    const onCheckBinaryUpdate = async () => {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: true,
+        error: ""
+      }));
+      try {
+        const result = await window.gosAgent.checkBinaryUpdates();
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: result?.ok === false ? String(result?.message || "Unable to check for desktop updates.") : "",
+          snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result)
+        }));
+        if (result?.ok !== false) {
+          await refreshApp("lite");
+        }
+      } catch (error) {
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: error instanceof Error ? error.message : "Unable to check for desktop updates."
+        }));
+      }
+    };
+    const onDownloadBinaryUpdate = async () => {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: true,
+        error: ""
+      }));
+      try {
+        const result = await window.gosAgent.downloadBinaryUpdate();
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: result?.ok === false ? String(result?.message || "Unable to download the desktop update.") : "",
+          snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result)
+        }));
+        if (result?.ok !== false) {
+          await refreshApp("lite");
+        }
+      } catch (error) {
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: error instanceof Error ? error.message : "Unable to download the desktop update."
+        }));
+      }
+    };
+    const onInstallBinaryUpdate = async () => {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: true,
+        error: ""
+      }));
+      try {
+        const result = await window.gosAgent.installBinaryUpdate();
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: result?.ok === false ? String(result?.message || "Unable to install the desktop update.") : "",
+          snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result)
+        }));
+        if (result?.ok !== false && String(result?.path || "").trim()) {
+          await refreshApp("lite");
+        }
+      } catch (error) {
+        store.update((current) => ({
+          ...current,
+          busyBinaryUpdate: false,
+          error: error instanceof Error ? error.message : "Unable to install the desktop update."
+        }));
+      }
     };
     const onCreateSuggestedTask = async (candidate) => {
       const snapshot = store.getState().snapshot;
@@ -23218,6 +23365,10 @@
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-actions", children: [
+            binaryUpdateState === "checking" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", disabled: true, children: "Checking update\u2026" }) : null,
+            binaryUpdateState === "downloading" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", disabled: true, children: `Downloading ${binaryUpdateProgress}%` }) : null,
+            binaryUpdateCanDownload ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void onDownloadBinaryUpdate(), disabled: state.busyBinaryUpdate, children: state.busyBinaryUpdate ? "Downloading\u2026" : "Download update" }) : null,
+            binaryUpdateReadyToInstall ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip primary", onClick: () => void onInstallBinaryUpdate(), disabled: state.busyBinaryUpdate, children: state.busyBinaryUpdate ? "Installing\u2026" : binaryUpdateInstallLabel }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
               {
@@ -23313,9 +23464,13 @@
               benchmarks: state.benchmarks,
               learningStatus: state.learningStatus,
               learningChanges: state.learningChanges,
+              binaryUpdateBusy: state.busyBinaryUpdate,
               onPickWorkspace: onSwitchWorkspace,
               onSetActiveTab: (tab) => onOpenSettingsTab(tab),
               onUpdateSetting,
+              onCheckBinaryUpdate,
+              onDownloadBinaryUpdate,
+              onInstallBinaryUpdate,
               onSelectLab,
               onClearLab,
               onCaptureLearning,
@@ -23365,21 +23520,38 @@
           ) : null
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: "inspector", children: [
+      !state.rightRailOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "right-rail-toggle", "data-sidebar-toggle": "right", onClick: onToggleManagerInspector, children: "Manager" }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: `inspector inspector-${state.activeInspectorTab}`, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-header", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Context" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: state.activeInspectorTab === "manager" ? "Manager" : "Context" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "right", onClick: () => store.update((current) => ({ ...current, rightRailOpen: false })), children: "Close" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "inspector-tabs", children: ["inbox", "file", "diff", "learning"].map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "inspector-tabs", children: INSPECTOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "button",
           {
             className: state.activeInspectorTab === tab ? "active" : "",
             "data-inspector-tab": tab,
             onClick: () => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true })),
-            children: tab
+            children: INSPECTOR_TAB_LABELS[tab]
           },
           tab
         )) }),
+        state.activeInspectorTab === "manager" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          ManagerInspector,
+          {
+            snapshot: state.snapshot,
+            safeMode,
+            inboxCount: inboxItems.length,
+            quickPrompts: [
+              "Plan the next safe coding task in this repo.",
+              "Review the current repo and tell me what needs fixing first.",
+              "Set up the coding model and verify the engine is ready."
+            ],
+            onUpdateSetting,
+            onQuickChat,
+            onShowInspector: (tab) => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true }))
+          }
+        ) : null,
         state.activeInspectorTab === "inbox" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           InboxInspector,
           {
@@ -23421,7 +23593,6 @@
     ] });
   }
   function WorkbenchPanel(props) {
-    const [managerPanelOpen, setManagerPanelOpen] = import_react2.default.useState(false);
     const settings = props.snapshot?.settings || {};
     const chatModes = ["auto", "ask", "plan", "edit", "agent"];
     const messages = props.thread?.messages || [];
@@ -23557,11 +23728,11 @@
                   }
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeSummaryLabel }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip launch-status-row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeSummaryLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeRouteSummary[chatMode] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel })
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "launch-send-row", children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "composer-model-tag", children: modelLabel }),
@@ -23572,63 +23743,25 @@
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: action.icon, className: "action-icon" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: action.label })
                 ] }, action.label)) }),
-                isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact launch-prompts", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }) }),
-                managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer compact", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Manager" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "auto", "aria-label": "Manager mode", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "auto" }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "guided", children: "guided" })
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "workspace", "aria-label": "Worker routing", children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "workspace", children: "workspace" }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "engine", children: "engine" })
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: effectiveChatMode, onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Effective mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, `drawer-${mode}`)) })
-                    ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                      modeRouteSummary[chatMode],
-                      " \u2022 ",
-                      chatTransparencyLevel
-                    ] })
-                  ] })
-                ] }) : null,
+                !isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }) }) : null,
                 props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null
               ] })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "recent-session-card recent-session-panel", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header compact", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recent agent sessions" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: latestRun?.runtimeLabel || latestTask?.title || "Latest workspace activity" })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" })
-              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recent agent sessions" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: latestRun?.runtimeLabel || latestTask?.title || "Latest workspace activity" })
+              ] }) }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "recent-session-list", children: recentSessionItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("article", { className: `recent-session-item${item.id === props.activeThreadId ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "recent-session-button", onClick: item.onClick, disabled: !item.onClick, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-title-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "session", className: "recent-session-icon" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-top", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-title-row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "session", className: "recent-session-icon" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `recent-session-badge status-${String(item.status || "").toLowerCase()}`, children: item.status })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.status }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.detail }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: item.meta || "Ready" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "recent-session-summary", children: item.detail }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { className: "recent-session-meta", children: item.meta || "Ready" })
               ] }) }, item.id)) })
             ] })
           ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "active-thread-shell", children: [
@@ -23657,37 +23790,12 @@
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: openModule === "monitor" ? "ghost active" : "ghost", onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPickAttachments, children: "Attach screenshot" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
                   "Inbox ",
                   props.inboxItems.length ? `(${props.inboxItems.length})` : ""
                 ] })
               ] }),
-              managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer compact", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Manager" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "auto", "aria-label": "Manager mode", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "auto" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "guided", children: "guided" })
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { defaultValue: "workspace", "aria-label": "Worker routing", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "workspace", children: "workspace" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "engine", children: "engine" })
-                    ] })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" })
-                ] })
-              ] }) : null,
               props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 "textarea",
@@ -23724,6 +23832,74 @@
         ]
       }
     ) }) });
+  }
+  function ManagerInspector(props) {
+    const settings = props.snapshot?.settings || {};
+    const chatModes = ["auto", "ask", "plan", "edit", "agent"];
+    const chatMode = chatModes.includes(String(settings.chatMode || "").trim().toLowerCase()) ? String(settings.chatMode || "").trim().toLowerCase() : "auto";
+    const chatTransparencyLevel = String(settings.chatTransparencyLevel || "balanced");
+    const modeRouteSummary = {
+      auto: "supervised engine loop",
+      ask: "answer directly without mutating the workspace",
+      plan: "shape the next safe slice before making edits",
+      edit: "focus on bounded repo edits and validation",
+      agent: "use auto manager to route the full operator loop"
+    };
+    const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "workspace";
+    const modelLabel = String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b");
+    const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || "workspace").trim() || "workspace";
+    const safetyLabel = props.safeMode.active ? "Safe mode active" : props.safeMode.watchOnly ? "Safety watch active" : "Safety ready";
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "inspector-body manager-inspector-body", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer manager-drawer-rail", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-copy", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Operator rail" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row manager-control-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "auto" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "workspace" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Manager mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, `manager-${mode}`)) })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip manager-status-strip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeRouteSummary[chatMode] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip manager-compact-strip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+            modeRouteSummary[chatMode],
+            " \u2022 ",
+            chatTransparencyLevel
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-quick-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
+            "Open inbox ",
+            props.inboxCount ? `(${props.inboxCount})` : ""
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onShowInspector("file"), children: "Open workspace files" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact manager-prompt-grid", children: props.quickPrompts.map((prompt) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(prompt), children: prompt }, prompt)) })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card manager-summary-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: workspaceLabel }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modelLabel }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: props.inboxCount > 0 ? `${props.inboxCount} inbox item${props.inboxCount === 1 ? "" : "s"} pending review` : "Inbox is clear" })
+      ] })
+    ] });
   }
   function LabsPanel(props) {
     const labs = Array.isArray(props.labs?.labs) ? props.labs.labs : [];
@@ -23862,6 +24038,8 @@
     const groupedStorage = settings.storage || {};
     const groupedAutonomy = settings.autonomy || {};
     const groupedAutomations = settings.automations || {};
+    const updates = props.snapshot?.updates && typeof props.snapshot.updates === "object" ? props.snapshot.updates : {};
+    const binaryUpdates = updates.binary && typeof updates.binary === "object" ? updates.binary : {};
     const resourcePolicy = props.aiStatus?.resourcePolicy || {};
     const aiTelemetry = props.aiStatus?.telemetry || {};
     const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
@@ -23921,6 +24099,15 @@
     const activeSafetyLevel = safetyLevels.find((item) => String(item?.id || "") === selectedSafetyLevel) || safetyLevels[0] || null;
     const providerSecretName = String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY").trim() || "OPENAI_API_KEY";
     const [providerKeyValue, setProviderKeyValue] = import_react2.default.useState("");
+    const binaryUpdateState = String(binaryUpdates.state || "idle").trim().toLowerCase();
+    const binaryCurrentVersion = String(binaryUpdates.version || props.snapshot?.meta?.version || "").trim() || "current build";
+    const binaryAvailableVersion = String(binaryUpdates.availableVersion || "").trim() || "not announced";
+    const binaryFeedUrl = String(settings.releaseFeedUrl || binaryUpdates.feedUrl || "").trim();
+    const binaryProgressPercent = Math.round(Number(binaryUpdates.progressPercent || 0));
+    const binaryDownloaded = Boolean(binaryUpdates.downloaded) || String(binaryUpdates.localArtifactPath || "").trim().length > 0;
+    const binaryConfigured = binaryUpdates.configured === true || binaryFeedUrl.length > 0 || binaryDownloaded;
+    const binaryInstallLabel = String(binaryUpdates.localArtifactPath || "").trim() ? "Open staged installer" : "Install update";
+    const autoInstallEnabled = settings.autoUpdateEnabled === true && settings.autoUpdateAutoApply === true;
     const saveSelectedRemoteKey = async () => {
       if (!selectedRemoteProvider) {
         return;
@@ -24058,6 +24245,85 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Reusable prompts" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) > 0 ? "Chat suggestions can pull from trusted prompt patterns as you work." : "Trusted prompt patterns will show up here after accepted runs." })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Update Center" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Install desktop updates without leaving the app" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.message || "Connect a release feed or stage a local release so the desktop shell can check, download, and install updates here.") })
+          ] }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Release feed URL" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  defaultValue: binaryFeedUrl,
+                  placeholder: "https://updates.example.com/live",
+                  onBlur: (event) => void props.onUpdateSetting("releaseFeedUrl", event.target.value)
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-check interval minutes" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "number",
+                  min: 5,
+                  max: 240,
+                  value: String(settings.autoUpdateIntervalMinutes || 30),
+                  onChange: (event) => void props.onUpdateSetting("autoUpdateIntervalMinutes", Number(event.target.value || 30))
+                }
+              )
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toggle-grid", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: settings.releaseAutoDownload === true, onChange: (event) => void props.onUpdateSetting("releaseAutoDownload", event.target.checked) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-download desktop releases when one is found" })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: autoInstallEnabled,
+                  onChange: (event) => {
+                    const checked = event.target.checked;
+                    void props.onUpdateSetting("autoUpdateEnabled", checked);
+                    void props.onUpdateSetting("autoUpdateAutoApply", checked);
+                    if (checked && settings.releaseAutoDownload !== true) {
+                      void props.onUpdateSetting("releaseAutoDownload", true);
+                    }
+                  }
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Install downloaded updates automatically when the app is idle and safe" })
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Desktop update status" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryUpdateState || "idle" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryConfigured ? "Updater is configured for this build." : "Add a feed URL or stage a local installer to enable in-app desktop updates." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current version" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryCurrentVersion }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryAvailableVersion !== "not announced" ? `Latest announced: ${binaryAvailableVersion}` : "No newer desktop release is announced yet." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Download state" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryDownloaded ? "Ready to install" : binaryUpdateState === "downloading" ? `${binaryProgressPercent}%` : "Waiting" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.localArtifactPath || "").trim() ? "A staged local installer is ready." : "Feed-downloaded releases can install directly from the app once they are ready." })
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onCheckBinaryUpdate(), disabled: props.binaryUpdateBusy, children: props.binaryUpdateBusy && binaryUpdateState === "checking" ? "Checking\u2026" : "Check for updates" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onDownloadBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryConfigured && !binaryDownloaded || binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "downloading" ? `Downloading ${binaryProgressPercent}%` : "Download update" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onInstallBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "installing" ? "Installing\u2026" : binaryInstallLabel })
           ] })
         ] })
       ] }) : null,

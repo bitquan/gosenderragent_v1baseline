@@ -46,6 +46,7 @@ What is working:
 - The Windows validation wrapper now fails fast on external command exit codes instead of masking failing `npm` steps.
 - Validator `git_status` now skips cleanly in disposable non-git labs instead of surfacing fatal repository noise.
 - The repo now has a cheap focused `npm run test:ui-shell` regression path for the settings-shell contract.
+- The desktop shell now exposes in-app desktop update controls, including a check/download/install path in Settings and a live install button when a downloaded release is ready.
 
 What is still broken:
 
@@ -148,6 +149,7 @@ When debugging the engine, capture these artifacts if needed:
 - BAT<QUALITY-001> DONE: Add `tests/repo-inspection-ranking.test.js` and `npm run test:planner-ranking` to prove JS/TS test imports promote implementation files into planner search results.
 - BAT<PERF-001> DONE: Reduce large-journal tail-read cost in `core/learning-journal.js` and lock the bounded parse behavior with the large-journal regression fixture.
 - BAT<DOCS-001> DONE: Retire overlapping daily workflow ownership by routing desktop and owner docs back to this board while keeping them as deeper reference material.
+- BAT<OPS-004> DONE: Expose in-app desktop update controls so downloaded desktop releases can be checked, downloaded, and installed from the running app without leaving the shell.
 
 ## 10. Audit Plan
 

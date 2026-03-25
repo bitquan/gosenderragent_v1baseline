@@ -138,6 +138,7 @@ textarea {
   height: 100%;
   padding: 6px 10px 10px;
   gap: 0;
+  position: relative;
 }
 
 .workbench-shell.left-open {
@@ -175,6 +176,28 @@ textarea {
   min-width: 0;
   min-height: 0;
   padding: 0 10px;
+}
+
+.right-rail-toggle {
+  position: absolute;
+  top: 88px;
+  right: 10px;
+  z-index: 5;
+  min-width: 34px;
+  min-height: 124px;
+  padding: 14px 8px;
+  border-radius: 14px 0 0 14px;
+  border-right: 0;
+  background: #171c22;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: var(--shadow-soft);
+}
+
+.right-rail-toggle:hover {
+  transform: translateY(0);
 }
 
 .eyebrow {
@@ -710,8 +733,8 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 26px;
-  width: min(100%, 960px);
+  gap: 22px;
+  width: min(100%, 680px);
   margin: 0 auto;
   min-height: 0;
 }
@@ -755,14 +778,14 @@ textarea {
 .workbench-hero-panel {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   min-height: 0;
   width: 100%;
 }
 
 .start-hero-copy {
-  min-height: 138px;
-  gap: 12px;
+  min-height: 96px;
+  gap: 10px;
 }
 
 .start-hero-mark {
@@ -837,9 +860,10 @@ textarea {
 .workbench-status-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  gap: 18px;
+  gap: 10px;
   width: min(100%, 760px);
+}
+
 .workbench-status-strip.compact {
   justify-content: center;
 }
@@ -847,14 +871,16 @@ textarea {
 .status-inline-chip {
   display: inline-flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
   min-height: 34px;
   padding: 7px 12px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
-  min-height: 96px;
-  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
 
 .safety-banner {
   display: flex;
@@ -925,9 +951,9 @@ textarea {
 }
 
 .launch-composer {
-  width: min(100%, 608px);
+  width: 100%;
   margin: 0 auto;
-  padding: 10px 12px 10px;
+  padding: 12px;
   border-radius: 12px;
   background: #0d1117;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -935,6 +961,10 @@ textarea {
 }
 
 .launch-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   padding: 0;
   border: 0;
   background: transparent;
@@ -953,7 +983,7 @@ textarea {
 }
 
 .workspace-button {
-  max-width: 220px;
+  max-width: 260px;
 }
 
 .launch-composer textarea {
@@ -969,8 +999,19 @@ textarea {
 }
 
 .launch-footer {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.launch-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .launch-send-row {
@@ -995,7 +1036,7 @@ textarea {
 .launch-action-row {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
   flex-wrap: wrap;
 }
@@ -1018,7 +1059,7 @@ textarea {
 }
 
 .launch-prompts {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .launch-prompts .prompt-card {
@@ -1028,7 +1069,8 @@ textarea {
 }
 
 .recent-session-panel {
-  margin-top: 2px;
+  margin-top: 6px;
+  width: 100%;
 }
 
 .chat-mode-bar {
@@ -1086,7 +1128,7 @@ textarea {
 
 .launch-footer .chat-activity-strip {
   flex: 1 1 auto;
-  min-width: 280px;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1095,7 +1137,7 @@ textarea {
 
 .chat-compact-strip,
 .chat-activity-strip {
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .chat-compact-strip.inline {
@@ -1121,6 +1163,8 @@ textarea {
 }
 
 .selector-chip select {
+  width: auto;
+  flex: 0 0 auto;
   min-width: 90px;
   border: 0;
   background: transparent;
@@ -1143,6 +1187,63 @@ textarea {
 
 .manager-drawer.compact {
   padding: 12px;
+}
+
+.manager-drawer-rail {
+  padding: 16px;
+  background: #11161c;
+}
+
+.manager-inspector-body {
+  gap: 12px;
+}
+
+.manager-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manager-copy p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.manager-mode-field {
+  width: 100%;
+}
+
+.manager-status-strip {
+  width: 100%;
+}
+
+.manager-quick-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.manager-quick-grid button {
+  justify-content: flex-start;
+  min-height: 34px;
+  border-radius: 10px;
+  background: #1b2026;
+}
+
+.manager-prompt-grid {
+  width: 100%;
+}
+
+.manager-prompt-grid .prompt-card {
+  width: 100%;
+}
+
+.manager-summary-card strong {
+  font-size: 15px;
+}
+
+.manager-summary-card span {
+  color: var(--muted);
 }
 
 .chat-stage {
@@ -1427,13 +1528,13 @@ textarea {
 .recent-session-panel {
   min-height: 0;
   background: #0e1218;
-  width: min(100%, 608px);
+  width: 100%;
 }
 
 .recent-session-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .recent-session-item {
@@ -1449,15 +1550,23 @@ textarea {
 }
 
 .recent-session-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   width: 100%;
   padding: 10px 12px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   text-align: left;
+}
+
+.recent-session-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
 }
 
 .recent-session-title-row {
@@ -1482,17 +1591,32 @@ textarea {
   font-weight: 560;
 }
 
-.recent-session-item span {
+.recent-session-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: lowercase;
+}
+
+.recent-session-badge.status-unread {
+  color: #8aa8ff;
+  border-color: rgba(138, 168, 255, 0.24);
+}
+
+.recent-session-summary {
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.45;
 }
 
-.recent-session-item span:last-child {
-  grid-column: 1 / -1;
-}
-
-.recent-session-item small {
-  grid-column: 1 / -1;
+.recent-session-meta {
   color: var(--muted);
   font-size: 10px;
 }
@@ -1708,6 +1832,10 @@ textarea,
   }
 
   .inspector {
+    display: none;
+  }
+
+  .right-rail-toggle {
     display: none;
   }
 

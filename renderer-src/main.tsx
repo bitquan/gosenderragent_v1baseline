@@ -9,9 +9,19 @@ const THREADS_KEY = 'gosenderr.desktop.workbench.threads.v3';
 const ACTIVE_THREAD_KEY = 'gosenderr.desktop.workbench.active-thread.v3';
 const SETTINGS_TABS = ['general', 'workspace', 'ai', 'autonomy', 'skills', 'extensions', 'tools', 'automations', 'labs', 'learning', 'storage'] as const;
 const MONITOR_TABS = ['overview', 'runs', 'learning', 'promotions', 'debug'] as const;
+const INSPECTOR_TABS = ['manager', 'inbox', 'file', 'diff', 'learning'] as const;
 type SettingsTabId = typeof SETTINGS_TABS[number];
 type MonitorTabId = typeof MONITOR_TABS[number];
+type InspectorTabId = typeof INSPECTOR_TABS[number];
 type UiIconName = 'plus' | 'agents' | 'spaces' | 'spark' | 'mode' | 'repo' | 'issue' | 'git' | 'pull-request' | 'session';
+
+const INSPECTOR_TAB_LABELS: Record<InspectorTabId, string> = {
+  manager: 'Manager',
+  inbox: 'Inbox',
+  file: 'File',
+  diff: 'Diff',
+  learning: 'Learning',
+};
 
 type AppState = {
   loading: boolean;
@@ -31,7 +41,7 @@ type AppState = {
   activeModuleId: string;
   activeSettingsTab: SettingsTabId;
   activeMonitorTab: MonitorTabId;
-  activeInspectorTab: 'inbox' | 'file' | 'diff' | 'learning';
+  activeInspectorTab: InspectorTabId;
   activeBottomTab: 'runtime' | 'learning' | 'labs' | 'benchmarks';
   threads: ChatThread[];
   activeThreadId: string;
@@ -39,6 +49,7 @@ type AppState = {
   composerText: string;
   pendingAttachments: JsonMap[];
   busyChat: boolean;
+  busyBinaryUpdate: boolean;
   busyAcceptance: boolean;
   busySafetyController: boolean;
   chatFocused: boolean;
@@ -77,6 +88,7 @@ const initialState: AppState = {
   composerText: '',
   pendingAttachments: [],
   busyChat: false,
+  busyBinaryUpdate: false,
   busyAcceptance: false,
   busySafetyController: false,
   chatFocused: false,
@@ -106,7 +118,7 @@ type InboxItem = {
   path?: string;
   source?: string;
   openModule?: 'monitor' | 'settings' | 'workbench';
-  targetTab?: AppState['activeInspectorTab'] | MonitorTabId;
+  targetTab?: InspectorTabId | MonitorTabId;
   actionLabel?: string;
   backupId?: string;
 };
@@ -738,6 +750,50 @@ function readAiModelOptions(aiStatus: JsonMap | null, tuning: JsonMap | null, se
   return options;
 }
 
+function mergeUpdateSnapshot(snapshot: JsonMap | null, payload: JsonMap) {
+  if (!snapshot || !payload || typeof payload !== 'object') {
+    return snapshot;
+  }
+  const currentUpdates = snapshot.updates && typeof snapshot.updates === 'object' ? snapshot.updates : {};
+  const currentBinary = currentUpdates.binary && typeof currentUpdates.binary === 'object' ? currentUpdates.binary : {};
+  const nextBinary = payload.binary && typeof payload.binary === 'object'
+    ? { ...currentBinary, ...payload.binary }
+    : currentBinary;
+  return {
+    ...snapshot,
+    updates: {
+      ...currentUpdates,
+      ...payload,
+      ...(payload.binary && typeof payload.binary === 'object' ? { binary: nextBinary } : {}),
+    },
+  };
+}
+
+function mergeBinaryUpdateSnapshot(snapshot: JsonMap | null, payload: JsonMap) {
+  if (!snapshot || !payload || typeof payload !== 'object') {
+    return snapshot;
+  }
+  const interestingKeys = [
+    'state',
+    'message',
+    'downloaded',
+    'availableVersion',
+    'progressPercent',
+    'localArtifactPath',
+    'localReleaseDir',
+    'feedUrl',
+    'configured',
+    'autoDownload',
+    'version',
+    'localStaged',
+    'liveVersion',
+  ];
+  if (!interestingKeys.some((key) => payload[key] !== undefined)) {
+    return snapshot;
+  }
+  return mergeUpdateSnapshot(snapshot, { binary: payload });
+}
+
 function App() {
   const state = useStoreValue(store);
   const reportRendererError = window.gosAgent.reportRendererError;
@@ -747,6 +803,8 @@ function App() {
   const threadIsFresh = !Array.isArray(thread?.messages) || !thread.messages.some((message) => message.role !== 'system');
   const status = shellStatus(state.snapshot);
   const safeMode = readSafeMode(state.snapshot);
+  const updates = state.snapshot?.updates && typeof state.snapshot.updates === 'object' ? state.snapshot.updates : {};
+  const binaryUpdates = updates.binary && typeof updates.binary === 'object' ? updates.binary : {};
   const approvalItems = readApprovalItems(state.snapshot);
   const changedItems = readChangedFileItems(state.snapshot);
   const inboxItems = buildInboxItems({
@@ -773,6 +831,11 @@ function App() {
       : unreadThreadCount > 0
         ? 'message'
         : 'idle';
+  const binaryUpdateState = String(binaryUpdates.state || '').trim().toLowerCase();
+  const binaryUpdateProgress = Math.round(Number(binaryUpdates.progressPercent || 0));
+  const binaryUpdateReadyToInstall = Boolean(binaryUpdates.downloaded) || String(binaryUpdates.localArtifactPath || '').trim().length > 0;
+  const binaryUpdateCanDownload = binaryUpdateState === 'available' && !binaryUpdateReadyToInstall;
+  const binaryUpdateInstallLabel = String(binaryUpdates.localArtifactPath || '').trim() ? 'Open installer' : 'Install update';
   const activeTaskRun = taskRuns.find((item: JsonMap) => ['running', 'queued', 'active', 'in_progress', 'starting'].includes(String(item.runtimeState || item.status || '').toLowerCase()))
     || (Array.isArray(state.snapshot?.recentRuns)
       ? state.snapshot.recentRuns.find((item: JsonMap) => ['running', 'queued', 'active', 'in_progress', 'starting'].includes(String(item.state || item.status || '').toLowerCase()))
@@ -832,6 +895,13 @@ function App() {
     });
     const offUpdate = window.gosAgent.onUpdateEvent((payload) => {
       appendRuntimeEvent('runtimeEvents', { ...payload, kind: 'updates' });
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: payload?.binary?.state
+          ? ['checking', 'downloading', 'installing'].includes(String(payload.binary.state || '').toLowerCase())
+          : current.busyBinaryUpdate,
+        snapshot: mergeUpdateSnapshot(current.snapshot, payload),
+      }));
     });
     const offTuning = window.gosAgent.onTuningImportEvent((payload) => {
       appendRuntimeEvent('runtimeEvents', { ...payload, kind: 'tuning-import' });
@@ -1178,13 +1248,25 @@ function App() {
       await onLoadInspectorPath(item.path, item.source || 'inbox');
       return;
     }
+    const inspectorTab = INSPECTOR_TABS.includes(item.targetTab as InspectorTabId)
+      ? (item.targetTab as InspectorTabId)
+      : 'inbox';
     store.update((current) => ({
       ...current,
       rightRailOpen: true,
-      activeInspectorTab: item.targetTab === 'file' || item.targetTab === 'diff' || item.targetTab === 'learning'
-        ? item.targetTab
-        : 'inbox',
+      activeInspectorTab: inspectorTab,
     }));
+  };
+
+  const onToggleManagerInspector = () => {
+    store.update((current) => {
+      const isOpen = current.rightRailOpen && current.activeInspectorTab === 'manager';
+      return {
+        ...current,
+        rightRailOpen: !isOpen,
+        activeInspectorTab: 'manager',
+      };
+    });
   };
 
   const onSwitchWorkspace = async () => {
@@ -1319,6 +1401,84 @@ function App() {
       changeSessionId: thread?.changeSessionId || '',
     });
     await refreshApp('lite');
+  };
+
+  const onCheckBinaryUpdate = async () => {
+    store.update((current) => ({
+      ...current,
+      busyBinaryUpdate: true,
+      error: '',
+    }));
+    try {
+      const result = await window.gosAgent.checkBinaryUpdates();
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: result?.ok === false ? String(result?.message || 'Unable to check for desktop updates.') : '',
+        snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result),
+      }));
+      if (result?.ok !== false) {
+        await refreshApp('lite');
+      }
+    } catch (error) {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: error instanceof Error ? error.message : 'Unable to check for desktop updates.',
+      }));
+    }
+  };
+
+  const onDownloadBinaryUpdate = async () => {
+    store.update((current) => ({
+      ...current,
+      busyBinaryUpdate: true,
+      error: '',
+    }));
+    try {
+      const result = await window.gosAgent.downloadBinaryUpdate();
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: result?.ok === false ? String(result?.message || 'Unable to download the desktop update.') : '',
+        snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result),
+      }));
+      if (result?.ok !== false) {
+        await refreshApp('lite');
+      }
+    } catch (error) {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: error instanceof Error ? error.message : 'Unable to download the desktop update.',
+      }));
+    }
+  };
+
+  const onInstallBinaryUpdate = async () => {
+    store.update((current) => ({
+      ...current,
+      busyBinaryUpdate: true,
+      error: '',
+    }));
+    try {
+      const result = await window.gosAgent.installBinaryUpdate();
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: result?.ok === false ? String(result?.message || 'Unable to install the desktop update.') : '',
+        snapshot: mergeBinaryUpdateSnapshot(current.snapshot, result),
+      }));
+      if (result?.ok !== false && String(result?.path || '').trim()) {
+        await refreshApp('lite');
+      }
+    } catch (error) {
+      store.update((current) => ({
+        ...current,
+        busyBinaryUpdate: false,
+        error: error instanceof Error ? error.message : 'Unable to install the desktop update.',
+      }));
+    }
   };
 
   const onCreateSuggestedTask = async (candidate: JsonMap) => {
@@ -1666,6 +1826,26 @@ function App() {
           </div>
 
           <div className="topbar-actions">
+            {binaryUpdateState === 'checking' ? (
+              <button className="toolbar-chip" disabled>
+                Checking update…
+              </button>
+            ) : null}
+            {binaryUpdateState === 'downloading' ? (
+              <button className="toolbar-chip" disabled>
+                {`Downloading ${binaryUpdateProgress}%`}
+              </button>
+            ) : null}
+            {binaryUpdateCanDownload ? (
+              <button className="toolbar-chip" onClick={() => void onDownloadBinaryUpdate()} disabled={state.busyBinaryUpdate}>
+                {state.busyBinaryUpdate ? 'Downloading…' : 'Download update'}
+              </button>
+            ) : null}
+            {binaryUpdateReadyToInstall ? (
+              <button className="toolbar-chip primary" onClick={() => void onInstallBinaryUpdate()} disabled={state.busyBinaryUpdate}>
+                {state.busyBinaryUpdate ? 'Installing…' : binaryUpdateInstallLabel}
+              </button>
+            ) : null}
             <button
               className={`toolbar-chip${state.activeModuleId === 'monitor' ? ' active' : ''}`}
               data-route-tab="monitor"
@@ -1755,9 +1935,13 @@ function App() {
               benchmarks={state.benchmarks}
               learningStatus={state.learningStatus}
               learningChanges={state.learningChanges}
+              binaryUpdateBusy={state.busyBinaryUpdate}
               onPickWorkspace={onSwitchWorkspace}
               onSetActiveTab={(tab) => onOpenSettingsTab(tab)}
               onUpdateSetting={onUpdateSetting}
+              onCheckBinaryUpdate={onCheckBinaryUpdate}
+              onDownloadBinaryUpdate={onDownloadBinaryUpdate}
+              onInstallBinaryUpdate={onInstallBinaryUpdate}
               onSelectLab={onSelectLab}
               onClearLab={onClearLab}
               onCaptureLearning={onCaptureLearning}
@@ -1808,26 +1992,48 @@ function App() {
         </main>
       </div>
 
-      <aside className="inspector">
+      {!state.rightRailOpen ? (
+        <button className="right-rail-toggle" data-sidebar-toggle="right" onClick={onToggleManagerInspector}>
+          Manager
+        </button>
+      ) : null}
+
+      <aside className={`inspector inspector-${state.activeInspectorTab}`}>
         <div className="rail-header">
-          <div className="eyebrow">Context</div>
+          <div className="eyebrow">{state.activeInspectorTab === 'manager' ? 'Manager' : 'Context'}</div>
           <button className="icon-button" data-sidebar-toggle="right" onClick={() => store.update((current) => ({ ...current, rightRailOpen: false }))}>
             Close
           </button>
         </div>
 
         <div className="inspector-tabs">
-          {(['inbox', 'file', 'diff', 'learning'] as const).map((tab) => (
+          {INSPECTOR_TABS.map((tab) => (
             <button
               key={tab}
               className={state.activeInspectorTab === tab ? 'active' : ''}
               data-inspector-tab={tab}
               onClick={() => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true }))}
             >
-              {tab}
+              {INSPECTOR_TAB_LABELS[tab]}
             </button>
           ))}
         </div>
+
+        {state.activeInspectorTab === 'manager' ? (
+          <ManagerInspector
+            snapshot={state.snapshot}
+            safeMode={safeMode}
+            inboxCount={inboxItems.length}
+            quickPrompts={[
+              'Plan the next safe coding task in this repo.',
+              'Review the current repo and tell me what needs fixing first.',
+              'Set up the coding model and verify the engine is ready.',
+            ]}
+            onUpdateSetting={onUpdateSetting}
+            onQuickChat={onQuickChat}
+            onShowInspector={(tab) => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true }))}
+          />
+        ) : null}
 
         {state.activeInspectorTab === 'inbox' ? (
           <InboxInspector
@@ -1906,11 +2112,10 @@ function WorkbenchPanel(props: {
   onSelectThread: (threadId: string) => void;
   onUpdateSetting: (key: string, value: any) => void | Promise<void>;
   onSelectPath: (path: string, source?: string) => void;
-  onShowInspector: (tab: 'inbox' | 'file' | 'diff' | 'learning') => void;
+  onShowInspector: (tab: InspectorTabId) => void;
   onOpenInbox: () => void;
   onRollbackLatestBackup: (backupId?: string) => void;
 }) {
-  const [managerPanelOpen, setManagerPanelOpen] = React.useState(false);
   const settings = props.snapshot?.settings || {};
   const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
   const messages = props.thread?.messages || [];
@@ -2069,11 +2274,11 @@ function WorkbenchPanel(props: {
                 />
 
                 <div className="composer-footer launch-footer">
-                  <div className="chat-activity-strip">
-                    <span>{modeSummaryLabel}</span>
-                    <span>{modeRouteSummary[chatMode]}</span>
-                    <span>{branchLabel}</span>
-                    <span>{safetyLabel}</span>
+                  <div className="chat-activity-strip launch-status-row">
+                    <span className="status-inline-chip">{modeSummaryLabel}</span>
+                    <span className="status-inline-chip">{modeRouteSummary[chatMode]}</span>
+                    <span className="status-inline-chip">{branchLabel}</span>
+                    <span className="status-inline-chip">{safetyLabel}</span>
                   </div>
                   <div className="launch-send-row">
                     <span className="composer-model-tag">{modelLabel}</span>
@@ -2092,61 +2297,14 @@ function WorkbenchPanel(props: {
                   ))}
                 </div>
 
-                {isFreshThread ? (
-                  <div className="prompt-grid compact launch-prompts">
-                    {promptCards.map((card) => (
-                      <button key={card} className="prompt-card compact" onClick={() => props.onQuickChat(card)}>
-                        {card}
-                      </button>
-                    ))}
+                {!isFreshThread ? (
+                  <div className="composer-toolbar compact">
+                    <div className="chip-row quick-command-row">
+                      {composerSuggestions.map((command) => (
+                        <button key={command} className="ghost" onClick={() => props.onQuickChat(command)}>{command}</button>
+                      ))}
+                    </div>
                   </div>
-                ) : null}
-
-                <div className="composer-toolbar compact">
-                  <div className="chip-row quick-command-row">
-                    {composerSuggestions.map((command) => (
-                      <button key={command} className="ghost" onClick={() => props.onQuickChat(command)}>{command}</button>
-                    ))}
-                  </div>
-                </div>
-
-                {managerPanelOpen ? (
-                  <section className="manager-drawer compact">
-                    <div>
-                      <div className="eyebrow">Manager</div>
-                      <strong>Use auto manager</strong>
-                      <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
-                    </div>
-                    <div className="composer-selector-row">
-                      <label className="selector-chip">
-                        <span>Manager</span>
-                        <select defaultValue="auto" aria-label="Manager mode">
-                          <option value="auto">auto</option>
-                          <option value="guided">guided</option>
-                        </select>
-                      </label>
-                      <label className="selector-chip">
-                        <span>Worker</span>
-                        <select defaultValue="workspace" aria-label="Worker routing">
-                          <option value="workspace">workspace</option>
-                          <option value="engine">engine</option>
-                        </select>
-                      </label>
-                      <label className="selector-chip">
-                        <span>Mode</span>
-                        <select value={effectiveChatMode} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Effective mode">
-                          {chatModes.map((mode) => (
-                            <option key={`drawer-${mode}`} value={mode}>{mode}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
-                    </div>
-                    <div className="chat-compact-strip">
-                      <span>Auto-run queued tasks</span>
-                      <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
-                    </div>
-                  </section>
                 ) : null}
 
                 {props.pendingAttachments.length > 0 ? (
@@ -2167,19 +2325,20 @@ function WorkbenchPanel(props: {
                     <div className="eyebrow">Recent agent sessions</div>
                     <h2>{latestRun?.runtimeLabel || latestTask?.title || 'Latest workspace activity'}</h2>
                   </div>
-                  <button className="ghost" onClick={() => setManagerPanelOpen((current) => !current)}>Manager panel</button>
                 </div>
                 <div className="recent-session-list">
                   {recentSessionItems.map((item) => (
                     <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
                       <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
-                        <div className="recent-session-title-row">
-                          <UiIcon name="session" className="recent-session-icon" />
-                          <strong>{item.title}</strong>
+                        <div className="recent-session-top">
+                          <div className="recent-session-title-row">
+                            <UiIcon name="session" className="recent-session-icon" />
+                            <strong>{item.title}</strong>
+                          </div>
+                          <span className={`recent-session-badge status-${String(item.status || '').toLowerCase()}`}>{item.status}</span>
                         </div>
-                        <span>{item.status}</span>
-                        <span>{item.detail}</span>
-                        <small>{item.meta || 'Ready'}</small>
+                        <p className="recent-session-summary">{item.detail}</p>
+                        <small className="recent-session-meta">{item.meta || 'Ready'}</small>
                       </button>
                     </article>
                   ))}
@@ -2244,39 +2403,9 @@ function WorkbenchPanel(props: {
                       ))}
                     </select>
                   </label>
-                  <button className={openModule === 'monitor' ? 'ghost active' : 'ghost'} onClick={() => setManagerPanelOpen((current) => !current)}>
-                    Manager panel
-                  </button>
                   <button className="ghost" onClick={props.onPickAttachments}>Attach screenshot</button>
                   <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Inbox {props.inboxItems.length ? `(${props.inboxItems.length})` : ''}</button>
                 </div>
-
-                {managerPanelOpen ? (
-                  <section className="manager-drawer compact">
-                    <div>
-                      <div className="eyebrow">Manager</div>
-                      <strong>Use auto manager</strong>
-                      <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
-                    </div>
-                    <div className="composer-selector-row">
-                      <label className="selector-chip">
-                        <span>Manager</span>
-                        <select defaultValue="auto" aria-label="Manager mode">
-                          <option value="auto">auto</option>
-                          <option value="guided">guided</option>
-                        </select>
-                      </label>
-                      <label className="selector-chip">
-                        <span>Worker</span>
-                        <select defaultValue="workspace" aria-label="Worker routing">
-                          <option value="workspace">workspace</option>
-                          <option value="engine">engine</option>
-                        </select>
-                      </label>
-                      <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
-                    </div>
-                  </section>
-                ) : null}
 
                 {props.pendingAttachments.length > 0 ? (
                   <div className="chip-row attachment-row">
@@ -2324,6 +2453,99 @@ function WorkbenchPanel(props: {
         </div>
       </div>
     </section>
+  );
+}
+
+function ManagerInspector(props: {
+  snapshot: JsonMap | null;
+  safeMode: JsonMap;
+  inboxCount: number;
+  quickPrompts: string[];
+  onUpdateSetting: (key: string, value: any) => void | Promise<void>;
+  onQuickChat: (command: string) => void;
+  onShowInspector: (tab: InspectorTabId) => void;
+}) {
+  const settings = props.snapshot?.settings || {};
+  const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
+  const chatMode = chatModes.includes(String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
+    ? (String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
+    : 'auto';
+  const chatTransparencyLevel = String(settings.chatTransparencyLevel || 'balanced');
+  const modeRouteSummary: Record<typeof chatModes[number], string> = {
+    auto: 'supervised engine loop',
+    ask: 'answer directly without mutating the workspace',
+    plan: 'shape the next safe slice before making edits',
+    edit: 'focus on bounded repo edits and validation',
+    agent: 'use auto manager to route the full operator loop',
+  };
+  const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'workspace';
+  const modelLabel = String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b');
+  const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || 'workspace').trim() || 'workspace';
+  const safetyLabel = props.safeMode.active
+    ? 'Safe mode active'
+    : (props.safeMode.watchOnly ? 'Safety watch active' : 'Safety ready');
+
+  return (
+    <div className="inspector-body manager-inspector-body">
+      <section className="manager-drawer manager-drawer-rail">
+        <div className="manager-copy">
+          <div className="eyebrow">Operator rail</div>
+          <strong>Use auto manager</strong>
+          <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
+        </div>
+
+        <div className="composer-selector-row manager-control-row">
+          <label className="selector-chip">
+            <span>Manager</span>
+            <span>auto</span>
+          </label>
+          <label className="selector-chip">
+            <span>Worker</span>
+            <span>workspace</span>
+          </label>
+          <label className="selector-chip">
+            <span>Mode</span>
+            <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting('chatMode', event.target.value)} aria-label="Manager mode">
+              {chatModes.map((mode) => (
+                <option key={`manager-${mode}`} value={mode}>{mode}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="workbench-status-strip manager-status-strip">
+          <span className="status-inline-chip">{modeRouteSummary[chatMode]}</span>
+          <span className="status-inline-chip">{branchLabel}</span>
+          <span className="status-inline-chip">{safetyLabel}</span>
+        </div>
+
+        <div className="chat-compact-strip manager-compact-strip">
+          <span>Auto-run queued tasks</span>
+          <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
+        </div>
+
+        <div className="manager-quick-grid">
+          <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
+          <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Open inbox {props.inboxCount ? `(${props.inboxCount})` : ''}</button>
+          <button className="ghost" onClick={() => props.onShowInspector('file')}>Open workspace files</button>
+        </div>
+
+        <div className="prompt-grid compact manager-prompt-grid">
+          {props.quickPrompts.map((prompt) => (
+            <button key={prompt} className="prompt-card compact" onClick={() => props.onQuickChat(prompt)}>
+              {prompt}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="queue-card manager-summary-card">
+        <div className="eyebrow">Workspace</div>
+        <strong>{workspaceLabel}</strong>
+        <span>{modelLabel}</span>
+        <span>{props.inboxCount > 0 ? `${props.inboxCount} inbox item${props.inboxCount === 1 ? '' : 's'} pending review` : 'Inbox is clear'}</span>
+      </section>
+    </div>
   );
 }
 
@@ -2572,9 +2794,13 @@ function SettingsPanel(props: {
   benchmarks: JsonMap;
   learningStatus: JsonMap;
   learningChanges: JsonMap;
+  binaryUpdateBusy: boolean;
   onPickWorkspace: () => void;
   onSetActiveTab: (tab: SettingsTabId) => void;
-  onUpdateSetting: (field: string, value: any) => void;
+  onUpdateSetting: (field: string, value: any) => void | Promise<void>;
+  onCheckBinaryUpdate: () => Promise<void>;
+  onDownloadBinaryUpdate: () => Promise<void>;
+  onInstallBinaryUpdate: () => Promise<void>;
   onSelectLab: (labRoot: string) => void;
   onClearLab: () => void;
   onCaptureLearning: () => void;
@@ -2588,6 +2814,8 @@ function SettingsPanel(props: {
   const groupedStorage = settings.storage || {};
   const groupedAutonomy = settings.autonomy || {};
   const groupedAutomations = settings.automations || {};
+  const updates = props.snapshot?.updates && typeof props.snapshot.updates === 'object' ? props.snapshot.updates : {};
+  const binaryUpdates = updates.binary && typeof updates.binary === 'object' ? updates.binary : {};
   const resourcePolicy = props.aiStatus?.resourcePolicy || {};
   const aiTelemetry = props.aiStatus?.telemetry || {};
   const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
@@ -2658,6 +2886,15 @@ function SettingsPanel(props: {
   const activeSafetyLevel = safetyLevels.find((item: JsonMap) => String(item?.id || '') === selectedSafetyLevel) || safetyLevels[0] || null;
   const providerSecretName = String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || 'OPENAI_API_KEY').trim() || 'OPENAI_API_KEY';
   const [providerKeyValue, setProviderKeyValue] = React.useState('');
+  const binaryUpdateState = String(binaryUpdates.state || 'idle').trim().toLowerCase();
+  const binaryCurrentVersion = String(binaryUpdates.version || props.snapshot?.meta?.version || '').trim() || 'current build';
+  const binaryAvailableVersion = String(binaryUpdates.availableVersion || '').trim() || 'not announced';
+  const binaryFeedUrl = String(settings.releaseFeedUrl || binaryUpdates.feedUrl || '').trim();
+  const binaryProgressPercent = Math.round(Number(binaryUpdates.progressPercent || 0));
+  const binaryDownloaded = Boolean(binaryUpdates.downloaded) || String(binaryUpdates.localArtifactPath || '').trim().length > 0;
+  const binaryConfigured = binaryUpdates.configured === true || binaryFeedUrl.length > 0 || binaryDownloaded;
+  const binaryInstallLabel = String(binaryUpdates.localArtifactPath || '').trim() ? 'Open staged installer' : 'Install update';
+  const autoInstallEnabled = settings.autoUpdateEnabled === true && settings.autoUpdateAutoApply === true;
 
   const saveSelectedRemoteKey = async () => {
     if (!selectedRemoteProvider) {
@@ -2810,6 +3047,84 @@ function SettingsPanel(props: {
               <p>{Number(props.learningStatus?.reusablePrompts?.length || 0) > 0 ? 'Chat suggestions can pull from trusted prompt patterns as you work.' : 'Trusted prompt patterns will show up here after accepted runs.'}</p>
             </article>
           </div>
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Update Center</div>
+                <h2>Install desktop updates without leaving the app</h2>
+                <p>{String(binaryUpdates.message || 'Connect a release feed or stage a local release so the desktop shell can check, download, and install updates here.')}</p>
+              </div>
+            </div>
+            <div className="settings-grid">
+              <label>
+                <span>Release feed URL</span>
+                <input
+                  defaultValue={binaryFeedUrl}
+                  placeholder="https://updates.example.com/live"
+                  onBlur={(event) => void props.onUpdateSetting('releaseFeedUrl', event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Auto-check interval minutes</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={240}
+                  value={String(settings.autoUpdateIntervalMinutes || 30)}
+                  onChange={(event) => void props.onUpdateSetting('autoUpdateIntervalMinutes', Number(event.target.value || 30))}
+                />
+              </label>
+            </div>
+            <div className="toggle-grid">
+              <label className="toggle-row">
+                <input type="checkbox" checked={settings.releaseAutoDownload === true} onChange={(event) => void props.onUpdateSetting('releaseAutoDownload', event.target.checked)} />
+                <span>Auto-download desktop releases when one is found</span>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={autoInstallEnabled}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    void props.onUpdateSetting('autoUpdateEnabled', checked);
+                    void props.onUpdateSetting('autoUpdateAutoApply', checked);
+                    if (checked && settings.releaseAutoDownload !== true) {
+                      void props.onUpdateSetting('releaseAutoDownload', true);
+                    }
+                  }}
+                />
+                <span>Install downloaded updates automatically when the app is idle and safe</span>
+              </label>
+            </div>
+            <div className="card-grid">
+              <article className="metric-card">
+                <div className="eyebrow">Desktop update status</div>
+                <strong>{binaryUpdateState || 'idle'}</strong>
+                <p>{binaryConfigured ? 'Updater is configured for this build.' : 'Add a feed URL or stage a local installer to enable in-app desktop updates.'}</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Current version</div>
+                <strong>{binaryCurrentVersion}</strong>
+                <p>{binaryAvailableVersion !== 'not announced' ? `Latest announced: ${binaryAvailableVersion}` : 'No newer desktop release is announced yet.'}</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Download state</div>
+                <strong>{binaryDownloaded ? 'Ready to install' : (binaryUpdateState === 'downloading' ? `${binaryProgressPercent}%` : 'Waiting')}</strong>
+                <p>{String(binaryUpdates.localArtifactPath || '').trim() ? 'A staged local installer is ready.' : 'Feed-downloaded releases can install directly from the app once they are ready.'}</p>
+              </article>
+            </div>
+            <div className="row-actions">
+              <button className="ghost" onClick={() => void props.onCheckBinaryUpdate()} disabled={props.binaryUpdateBusy}>
+                {props.binaryUpdateBusy && binaryUpdateState === 'checking' ? 'Checking…' : 'Check for updates'}
+              </button>
+              <button className="ghost" onClick={() => void props.onDownloadBinaryUpdate()} disabled={props.binaryUpdateBusy || (!binaryConfigured && !binaryDownloaded) || binaryDownloaded}>
+                {props.binaryUpdateBusy && binaryUpdateState === 'downloading' ? `Downloading ${binaryProgressPercent}%` : 'Download update'}
+              </button>
+              <button className="primary" onClick={() => void props.onInstallBinaryUpdate()} disabled={props.binaryUpdateBusy || !binaryDownloaded}>
+                {props.binaryUpdateBusy && binaryUpdateState === 'installing' ? 'Installing…' : binaryInstallLabel}
+              </button>
+            </div>
+          </section>
         </section>
       ) : null}
 

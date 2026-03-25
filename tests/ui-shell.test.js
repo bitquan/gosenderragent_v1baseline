@@ -39,8 +39,13 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /Talk to the engine like a teammate/);
   assert.match(appJs, /Let's build/);
   assert.match(appJs, /chat-activity-strip/);
-  assert.match(appJs, /Manager panel/);
+  assert.match(appJs, /right-rail-toggle/);
   assert.match(appJs, /manager-drawer/);
+  assert.match(appJs, /Check for updates/);
+  assert.match(appJs, /Install update|Open staged installer/);
+  assert.match(appJs, /checkBinaryUpdates/);
+  assert.match(appJs, /downloadBinaryUpdate/);
+  assert.match(appJs, /installBinaryUpdate/);
   assert.match(appJs, /props\.onUpdateSetting\("chatMode", event\.target\.value\)/);
   assert.match(appJs, /Manager/);
   assert.match(appJs, /Worker/);
@@ -54,7 +59,7 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /dedupeInboxItems/);
   assert.match(appJs, /deriveInboxDedupeKey/);
   assert.match(appJs, /const scheduleRefresh = \(0, import_react2\.useEffectEvent\)/);
-  assert.match(appJs, /const \[managerPanelOpen, setManagerPanelOpen\]/);
+  assert.doesNotMatch(appJs, /const \[managerPanelOpen, setManagerPanelOpen\]/);
   assert.match(appJs, /chatTransparencyLevel/);
   assert.match(appJs, /MONITOR_TABS = \["overview", "runs", "learning", "promotions", "debug"\]/);
   assert.match(appJs, /data-panel/);

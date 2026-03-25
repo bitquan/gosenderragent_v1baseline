@@ -44,6 +44,15 @@ declare global {
       getLearningChanges: (payload?: LooseRecord) => Promise<LooseRecord>;
       getLearningStatus: (payload?: LooseRecord) => Promise<LooseRecord>;
       exportLearningChanges: (payload?: LooseRecord) => Promise<LooseRecord>;
+      checkUpdates: (payload?: LooseRecord) => Promise<LooseRecord>;
+      planUpdates: (payload?: LooseRecord) => Promise<LooseRecord>;
+      applyUpdates: (payload?: LooseRecord) => Promise<LooseRecord>;
+      buildBinaryUpdate: (payload?: LooseRecord) => Promise<LooseRecord>;
+      checkBinaryUpdates: (payload?: LooseRecord) => Promise<LooseRecord>;
+      downloadBinaryUpdate: (payload?: LooseRecord) => Promise<LooseRecord>;
+      installBinaryUpdate: (payload?: LooseRecord) => Promise<LooseRecord>;
+      promoteBinaryUpdate: (payload?: LooseRecord) => Promise<LooseRecord>;
+      pruneBinaryUpdates: (payload?: LooseRecord) => Promise<LooseRecord>;
       learning: {
         capture: (payload?: LooseRecord) => Promise<LooseRecord>;
       };
@@ -99,8 +108,17 @@ declare global {
         debugBundle: (payload?: LooseRecord) => Promise<LooseRecord>;
       };
       updates: {
+        check: (payload?: LooseRecord) => Promise<LooseRecord>;
+        plan: (payload?: LooseRecord) => Promise<LooseRecord>;
+        apply: (payload?: LooseRecord) => Promise<LooseRecord>;
         rollback: (payload?: LooseRecord) => Promise<LooseRecord>;
         backups: (payload?: LooseRecord) => Promise<LooseRecord[] | LooseRecord>;
+        buildBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
+        checkBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
+        downloadBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
+        installBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
+        promoteBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
+        pruneBinary: (payload?: LooseRecord) => Promise<LooseRecord>;
       };
       onRunEvent: (handler: (payload: LooseRecord) => void) => () => void;
       onSchedulerEvent: (handler: (payload: LooseRecord) => void) => () => void;
