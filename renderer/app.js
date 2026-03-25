@@ -22362,6 +22362,7 @@
     void reportRendererError;
     const handbookPath = "docs/BAT_FEATURE_BOARD.md";
     const thread = activeThread(state);
+    const threadIsFresh = !Array.isArray(thread?.messages) || !thread.messages.some((message) => message.role !== "system");
     const status = shellStatus(state.snapshot);
     const safeMode = readSafeMode(state.snapshot);
     const approvalItems = readApprovalItems(state.snapshot);
@@ -23208,11 +23209,11 @@
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "main-column", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "topbar topbar-minimal", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: `topbar topbar-minimal${state.activeModuleId === "workbench" && threadIsFresh ? " is-fresh-thread" : ""}`, children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-left", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "left", onClick: () => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen })), children: "Menu" }),
+            !state.leftRailOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "left", onClick: () => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen })), children: "Menu" }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-copy", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: thread?.title || "New thread" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: threadIsFresh ? "New chat" : thread?.title || "New thread" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Pick a workspace" })
             ] })
           ] }),

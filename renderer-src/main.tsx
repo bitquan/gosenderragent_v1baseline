@@ -744,6 +744,7 @@ function App() {
   void reportRendererError;
   const handbookPath = 'docs/BAT_FEATURE_BOARD.md';
   const thread = activeThread(state);
+  const threadIsFresh = !Array.isArray(thread?.messages) || !thread.messages.some((message) => message.role !== 'system');
   const status = shellStatus(state.snapshot);
   const safeMode = readSafeMode(state.snapshot);
   const approvalItems = readApprovalItems(state.snapshot);
@@ -1651,13 +1652,15 @@ function App() {
       </aside>
 
       <div className="main-column">
-        <header className="topbar topbar-minimal">
+        <header className={`topbar topbar-minimal${state.activeModuleId === 'workbench' && threadIsFresh ? ' is-fresh-thread' : ''}`}>
           <div className="topbar-left">
-            <button className="icon-button" data-sidebar-toggle="left" onClick={() => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen }))}>
-              Menu
-            </button>
+            {!state.leftRailOpen ? (
+              <button className="icon-button" data-sidebar-toggle="left" onClick={() => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen }))}>
+                Menu
+              </button>
+            ) : null}
             <div className="topbar-copy">
-              <strong>{thread?.title || 'New thread'}</strong>
+              <strong>{threadIsFresh ? 'New chat' : (thread?.title || 'New thread')}</strong>
               <span>{shortPath(status.target) || 'Pick a workspace'}</span>
             </div>
           </div>

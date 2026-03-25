@@ -553,6 +553,18 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 
+.topbar-minimal.is-fresh-thread {
+  padding-bottom: 2px;
+}
+
+.topbar-minimal.is-fresh-thread .topbar-copy strong {
+  font-size: 12px;
+}
+
+.topbar-minimal.is-fresh-thread .topbar-copy span {
+  font-size: 10px;
+}
+
 .topbar-minimal .toolbar-chip,
 .topbar-minimal .icon-button {
   min-height: 28px;
@@ -665,8 +677,8 @@ textarea {
 }
 
 .chat-home-main.is-fresh-thread {
-  justify-content: center;
-  padding-top: 20px;
+  justify-content: flex-start;
+  padding-top: 44px;
 }
 
 .chat-home-main.is-fresh-thread .chat-empty-state {
@@ -826,8 +838,8 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
+  gap: 18px;
+  width: min(100%, 760px);
 .workbench-status-strip.compact {
   justify-content: center;
 }
@@ -835,14 +847,14 @@ textarea {
 .status-inline-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 16px;
   min-height: 34px;
   padding: 7px 12px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-}
+  min-height: 96px;
+  gap: 10px;
 
 .safety-banner {
   display: flex;
@@ -915,7 +927,7 @@ textarea {
 .launch-composer {
   width: min(100%, 608px);
   margin: 0 auto;
-  padding: 12px 14px 10px;
+  padding: 10px 12px 10px;
   border-radius: 12px;
   background: #0d1117;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -945,8 +957,8 @@ textarea {
 }
 
 .launch-composer textarea {
-  min-height: 88px;
-  padding: 14px 0 12px;
+  min-height: 72px;
+  padding: 12px 0 10px;
   border-radius: 0;
   border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -984,7 +996,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -1013,6 +1025,10 @@ textarea {
   padding: 8px 12px;
   font-size: 12px;
   background: #10141a;
+}
+
+.recent-session-panel {
+  margin-top: 2px;
 }
 
 .chat-mode-bar {
@@ -1706,6 +1722,10 @@ textarea,
   .active-thread-shell,
   .active-thread-composer {
     width: 100%;
+  }
+
+  .chat-home-main.is-fresh-thread {
+    padding-top: 24px;
   }
 }
 
