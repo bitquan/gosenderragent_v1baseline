@@ -1538,6 +1538,7 @@ function App() {
         </div>
 
         <button className="new-chat-button" onClick={onNewThread}>
+          <span className="nav-glyph nav-glyph-plus" aria-hidden="true" />
           <span>New chat</span>
         </button>
 
@@ -1548,6 +1549,7 @@ function App() {
             data-route-tab="workbench"
             onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
           >
+            <span className="nav-glyph nav-glyph-agents" aria-hidden="true" />
             <strong>Agents</strong>
             <span>{unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? '' : 's'}` : 'Open the main workspace chat'}</span>
           </button>
@@ -1556,6 +1558,7 @@ function App() {
             data-route-tab="settings"
             onClick={() => onOpenSettingsTab('workspace')}
           >
+            <span className="nav-glyph nav-glyph-spaces" aria-hidden="true" />
             <strong>Spaces</strong>
             <span>{shortPath(status.target) || 'Choose a workspace root'}</span>
           </button>
@@ -1564,6 +1567,7 @@ function App() {
             data-route-tab="monitor"
             onClick={() => onOpenMonitorTab('overview')}
           >
+            <span className="nav-glyph nav-glyph-spark" aria-hidden="true" />
             <strong>Spark</strong>
             <span>{activeTaskRun ? 'Live run status is available' : 'Preview runs, learning, and promotions'}</span>
             <em>Preview</em>
@@ -1587,7 +1591,10 @@ function App() {
                   onClick={() => onSelectThread(entry.id)}
                 >
                   <div className="session-thread-title-row">
-                    <strong>{entry.title}</strong>
+                    <div className="session-thread-heading">
+                      <span className="session-thread-glyph" aria-hidden="true" />
+                      <strong>{entry.title}</strong>
+                    </div>
                     {unread ? <span className="session-unread-dot" aria-hidden="true" /> : null}
                   </div>
                   <span>{summarizeText(preview, 56)}</span>
@@ -2038,6 +2045,7 @@ function WorkbenchPanel(props: {
               <div className="composer chat-composer launch-composer">
                 <div className="chat-mode-bar launch-toolbar">
                   <label className="selector-chip">
+                    <span className="toolbar-glyph toolbar-glyph-mode" aria-hidden="true" />
                     <span>Mode</span>
                     <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
                       {chatModes.map((mode) => (
@@ -2046,12 +2054,15 @@ function WorkbenchPanel(props: {
                     </select>
                   </label>
                   <button className="selector-chip selector-button" onClick={props.onNewThread}>
+                    <span className="toolbar-glyph toolbar-glyph-plus" aria-hidden="true" />
                     <span>New chat</span>
                   </button>
                   <button className="selector-chip selector-button workspace-button" onClick={() => props.onShowInspector('file')}>
+                    <span className="toolbar-glyph toolbar-glyph-repo" aria-hidden="true" />
                     <span>{workspaceLabel}</span>
                   </button>
                   <button className="selector-chip selector-button" onClick={props.onPickAttachments} aria-label="Attach screenshot">
+                    <span className="toolbar-glyph toolbar-glyph-plus" aria-hidden="true" />
                     <span>+</span>
                   </button>
                 </div>
@@ -2089,7 +2100,10 @@ function WorkbenchPanel(props: {
 
                 <div className="launch-action-row">
                   {launcherActions.map((action) => (
-                    <button key={action.label} className="ghost launch-action-pill" onClick={action.onClick}>{action.label}</button>
+                    <button key={action.label} className="ghost launch-action-pill" onClick={action.onClick}>
+                      <span className={`action-glyph action-${action.label.toLowerCase().replace(/\s+/g, '-')}`} aria-hidden="true" />
+                      <span>{action.label}</span>
+                    </button>
                   ))}
                 </div>
 
@@ -2174,7 +2188,10 @@ function WorkbenchPanel(props: {
                 {recentSessionItems.map((item) => (
                   <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
                     <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
-                      <strong>{item.title}</strong>
+                      <div className="recent-session-title-row">
+                        <span className="recent-session-glyph" aria-hidden="true" />
+                        <strong>{item.title}</strong>
+                      </div>
                       <span>{item.status}</span>
                       <span>{item.detail}</span>
                       <small>{item.meta || 'Ready'}</small>

@@ -23083,7 +23083,10 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "rail-brand-badge", children: "GS" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button rail-collapse", onClick: () => store.update((current) => ({ ...current, leftRailOpen: false })), children: "Close" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "new-chat-button", onClick: onNewThread, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "new-chat-button", onClick: onNewThread, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-plus", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
+        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("nav", { className: "rail-nav-list", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
             "button",
@@ -23093,6 +23096,7 @@
               "data-route-tab": "workbench",
               onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
               children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-agents", "aria-hidden": "true" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Agents" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? "" : "s"}` : "Open the main workspace chat" })
               ]
@@ -23105,6 +23109,7 @@
               "data-route-tab": "settings",
               onClick: () => onOpenSettingsTab("workspace"),
               children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-spaces", "aria-hidden": "true" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spaces" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Choose a workspace root" })
               ]
@@ -23117,6 +23122,7 @@
               "data-route-tab": "monitor",
               onClick: () => onOpenMonitorTab("overview"),
               children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "nav-glyph nav-glyph-spark", "aria-hidden": "true" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spark" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeTaskRun ? "Live run status is available" : "Preview runs, learning, and promotions" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("em", { children: "Preview" })
@@ -23140,7 +23146,10 @@
                 onClick: () => onSelectThread(entry.id),
                 children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "session-thread-title-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: entry.title }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "session-thread-heading", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "session-thread-glyph", "aria-hidden": "true" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: entry.title })
+                    ] }),
                     unread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "session-unread-dot", "aria-hidden": "true" }) : null
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: summarizeText(preview, 56) }),
@@ -23501,12 +23510,22 @@
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-mode", "aria-hidden": "true" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" }) }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel }) }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "+" }) })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-plus", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-repo", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "toolbar-glyph toolbar-glyph-plus", "aria-hidden": "true" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "+" })
+                  ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                   "textarea",
@@ -23538,7 +23557,10 @@
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
                   ] })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-action-row", children: launcherActions.map((action) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost launch-action-pill", onClick: action.onClick, children: action.label }, action.label)) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-action-row", children: launcherActions.map((action) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost launch-action-pill", onClick: action.onClick, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `action-glyph action-${action.label.toLowerCase().replace(/\s+/g, "-")}`, "aria-hidden": "true" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: action.label })
+                ] }, action.label)) }),
                 isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact launch-prompts", children: promptCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(card), children: card }, card)) }) : null,
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }) }),
                 managerPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer compact", children: [
@@ -23589,7 +23611,10 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => setManagerPanelOpen((current) => !current), children: "Manager panel" })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "recent-session-list", children: recentSessionItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("article", { className: `recent-session-item${item.id === props.activeThreadId ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "recent-session-button", onClick: item.onClick, disabled: !item.onClick, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-title-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "recent-session-glyph", "aria-hidden": "true" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title })
+                ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.status }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.detail }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: item.meta || "Ready" })
