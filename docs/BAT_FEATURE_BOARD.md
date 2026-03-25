@@ -201,6 +201,15 @@ Stable MVP target:
 - MVP means the app can plan, edit, repair, validate, and review a normal repo with local-first routing, while the operator can see exactly which capability block is verified, next, or locked.
 - The first MVP is not "equal to every remote model". The first MVP is "good enough to carry the daily solo-dev loop locally, with clear fallback and promotion rules".
 
+Current Windows RTX 4060 starter local stack:
+
+- Primary coder: `qwen2.5-coder:14b`
+- Fast planner: `qwen2.5-coder:7b`
+- Fast validator and summarizer: `qwen2.5-coder:7b`
+- Repair and compare fallback: `deepseek-coder-v2-lite-instruct:q4-k-m`
+- Manual reasoning compare lane: `qwen3-14b:q4-k-m`
+- Remote models should stay fallback-only until the local benchmark and acceptance blocks are verified.
+
 ## 11. Audit Plan
 
 Current board status:

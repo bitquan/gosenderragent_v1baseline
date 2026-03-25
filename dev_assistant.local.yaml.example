@@ -7,6 +7,17 @@ assistant_training_thread_limit: 8
 assistant_training_thermal_preset: 85
 assistant_training_live_sampling_sec: 3
 assistant_training_ollama_model: qwen2.5-coder:14b
+assistant_engine_model_base_model: qwen2.5-coder:7b
+assistant_engine_model_base_provider: ollama
+assistant_engine_model_provider_source: ollama
+assistant_task_mode_planner_provider: ollama
+assistant_task_mode_planner_model: qwen2.5-coder:7b
+assistant_task_mode_coder_provider: ollama
+assistant_task_mode_coder_model: qwen2.5-coder:14b
+assistant_task_mode_validator_provider: ollama
+assistant_task_mode_validator_model: qwen2.5-coder:7b
+assistant_task_mode_summarizer_provider: ollama
+assistant_task_mode_summarizer_model: qwen2.5-coder:7b
 
 # Update this path after copying the bundle onto Windows.
 # assistant_training_model_storage_root: D:/gosenderr-models
