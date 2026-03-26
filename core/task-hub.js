@@ -446,7 +446,32 @@ function looksInfrastructureFailure(...values) {
   if (!haystack) {
     return false;
   }
-  return /could not start the python runtime|spawn .*py\.exe enonent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+  return /could not start the python runtime|spawn .* enoent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+}
+
+function isInfrastructureFailureEntity(entity = {}, runLinkByRunId = null, runtimeRunById = null) {
+  if (!entity || typeof entity !== 'object') {
+    return false;
+  }
+  const lastRunId = String(entity.lastRunId || '').trim();
+  if (!lastRunId) {
+    return false;
+  }
+  const linkedRun = runLinkByRunId instanceof Map ? (runLinkByRunId.get(lastRunId) || null) : null;
+  const runtimeRun = runtimeRunById instanceof Map ? (runtimeRunById.get(lastRunId) || null) : null;
+  return looksInfrastructureFailure(
+    entity?.metadata?.lastBlockedReason,
+    linkedRun?.summary,
+    linkedRun?.label,
+    linkedRun?.message,
+    runtimeRun?.stderrTail,
+    runtimeRun?.stdoutTail,
+    runtimeRun?.logTail,
+    runtimeRun?.blockedReason,
+    runtimeRun?.message,
+    runtimeRun?.operatorExecution?.outputTail?.stderr,
+    runtimeRun?.operatorExecution?.outputTail?.stdout,
+  );
 }
 
 function readRuntimeRunMap(workspaceRoot) {
@@ -1873,9 +1898,19 @@ function buildDailyTaskSummary(taskHub = {}, options = {}) {
   const goals = Array.isArray(hub.goals)
     ? hub.goals.filter((goal) => goal && typeof goal === 'object' && entityMatchesWorkspaceScope(goal, workspaceScope))
     : [];
+  const runLinkByRunId = new Map(
+    (Array.isArray(hub.runLinks) ? hub.runLinks : [])
+      .filter((item) => item && typeof item === 'object' && String(item.runId || '').trim())
+      .map((item) => [String(item.runId || '').trim(), item]),
+  );
+  const runtimeRunById = options.runtimeRunById instanceof Map
+    ? options.runtimeRunById
+    : (options.workspaceRoot ? readRuntimeRunMap(options.workspaceRoot) : new Map());
   const roadmapDay = String(options.roadmapDay || localDayKey(options.now || Date.now())).trim();
-  const dailyTasks = tasks.filter((task) => isDailyFocusEntity(task));
-  const dailyGoals = goals.filter((goal) => isDailyFocusEntity(goal));
+  const visibleTasks = tasks.filter((task) => !isInfrastructureFailureEntity(task, runLinkByRunId, runtimeRunById));
+  const visibleGoals = goals.filter((goal) => !isInfrastructureFailureEntity(goal, runLinkByRunId, runtimeRunById));
+  const dailyTasks = visibleTasks.filter((task) => isDailyFocusEntity(task));
+  const dailyGoals = visibleGoals.filter((goal) => isDailyFocusEntity(goal));
   const focusCandidates = dailyTasks
     .filter((task) => isTaskUpdatedOnRoadmapDay(task, roadmapDay))
     .sort((left, right) => {
@@ -1888,11 +1923,11 @@ function buildDailyTaskSummary(taskHub = {}, options = {}) {
     });
   const focusTask = focusCandidates[0] || null;
   const focusGoal = focusTask
-    ? goals.find((goal) => goal.id === focusTask.goalId) || null
+    ? visibleGoals.find((goal) => goal.id === focusTask.goalId) || null
     : dailyGoals
       .filter((goal) => String(goal?.metadata?.roadmapDay || '').trim() === roadmapDay || localDayKey(goal?.updatedAt || goal?.createdAt || options.now || Date.now()) === roadmapDay)
       .sort((left, right) => taskUpdateTimestamp(right) - taskUpdateTimestamp(left))[0] || null;
-  const blockedRescopedTasks = tasks
+  const blockedRescopedTasks = visibleTasks
     .filter((task) => isTaskUpdatedOnRoadmapDay(task, roadmapDay))
     .filter((task) => isBlockedOrRescopedTask(task))
     .sort((left, right) => taskUpdateTimestamp(right) - taskUpdateTimestamp(left));

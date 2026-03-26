@@ -17,8 +17,10 @@ test('resolvePythonCandidates prefers Windows runtime venv paths before generic 
   );
 
   assert.equal(candidates[0], 'E:\\dev\\projects\\gosenderr-desktop-agent-PC\\runtime\\.venv\\Scripts\\python.exe');
+  assert.ok(candidates.includes('E:\\dev\\projects\\gosenderr-desktop-agent-PC\\.venv\\Scripts\\python.exe'));
   assert.ok(candidates.includes('E:\\dev\\projects\\gosenderr-desktop-agent-PC\\runtime\\.venv\\bin\\python'));
   assert.ok(candidates.includes('E:\\dev\\projects\\gosenderr-desktop-agent-PC\\runtime\\.venv\\Scripts\\python.exe'));
+  assert.ok(candidates.indexOf('E:\\dev\\projects\\gosenderr-desktop-agent-PC\\.venv\\Scripts\\python.exe') < candidates.indexOf('py.exe'));
   assert.ok(candidates.includes('py.exe'));
   assert.ok(candidates.includes('python.exe'));
   assert.ok(candidates.includes('python'));

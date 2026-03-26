@@ -793,6 +793,79 @@ test('task hub tracks self-host expansion usage from launched and completed runs
   }
 });
 
+test('buildDailyTaskSummary ignores daily focus tasks backed by infrastructure bootstrap failures', () => {
+  const workspaceRoot = makeWorkspace();
+
+  try {
+    const created = createGoalAndTask(workspaceRoot, {
+      source: 'chat',
+      objective: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+      targetWorkspaceRoot: workspaceRoot,
+      threadId: 'thread_bootstrap',
+      changeSessionId: 'session_bootstrap',
+    });
+
+    const hubPath = path.join(getAssistantRunsDir(workspaceRoot), 'task-hub.json');
+    const hub = JSON.parse(fs.readFileSync(hubPath, 'utf8'));
+    const failedTask = {
+      ...hub.tasks[0],
+      status: 'needs-repair',
+      metadata: {
+        ...(hub.tasks[0].metadata || {}),
+        roadmapDay: '2026-03-26',
+      },
+      lastRunId: 'bootstrap-fail',
+      updatedAt: '2026-03-26T20:46:55.130Z',
+    };
+    const failedGoal = {
+      ...hub.goals[0],
+      lastRunId: 'bootstrap-fail',
+      updatedAt: '2026-03-26T20:46:55.118Z',
+    };
+    fs.writeFileSync(hubPath, `${JSON.stringify({
+      ...hub,
+      goals: [failedGoal],
+      tasks: [failedTask],
+      runLinks: [{
+        taskId: created.task.id,
+        goalId: created.goal.id,
+        runId: 'bootstrap-fail',
+        action: 'orchestrate',
+        status: 'fail',
+        summary: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+      }],
+    }, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(path.join(getAssistantRunsDir(workspaceRoot), 'runtime_state.json'), `${JSON.stringify({
+      runs: [
+        {
+          runId: 'bootstrap-fail',
+          workspaceRoot,
+          targetWorkspaceRoot: workspaceRoot,
+          state: 'fail',
+          stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+          operatorExecution: {
+            outputTail: {
+              stderr: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+            },
+          },
+        },
+      ],
+    }, null, 2)}\n`, 'utf8');
+
+    const summary = buildDailyTaskSummary(readHub(workspaceRoot), {
+      now: '2026-03-26T21:00:00.000Z',
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+    });
+
+    assert.equal(summary.focusTask, null);
+    assert.equal(summary.blockedRescopedCount, 0);
+    assert.match(summary.summary, /no daily focus task/i);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 function readTaskHubRuns(workspaceRoot) {
   const hub = readHub(workspaceRoot);
   return Array.isArray(hub.runLinks) ? hub.runLinks : [];

@@ -653,9 +653,33 @@ function isProofAction(run = {}) {
   return metadata.autonomyProof === true;
 }
 
+function looksInfrastructureFailure(...values) {
+  const haystack = values.map((value) => String(value || '').trim()).filter(Boolean).join('\n').toLowerCase();
+  if (!haystack) {
+    return false;
+  }
+  return /could not start the python runtime|spawn .* enoent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+}
+
+function runLooksInfrastructureFailure(run = {}) {
+  return looksInfrastructureFailure(
+    run?.stderrTail,
+    run?.stdoutTail,
+    run?.logTail,
+    run?.blockedReason,
+    run?.message,
+    run?.operatorExecution?.resultSummary,
+    run?.operatorExecution?.outputTail?.stderr,
+    run?.operatorExecution?.outputTail?.stdout,
+  );
+}
+
 function countsTowardDailyAutonomy(run = {}, entry = {}) {
   const taskText = inferActionText(run).toLowerCase();
   if (NON_DAILY_AUTONOMY_ACTION_PATTERN.test(taskText) && !isProofAction(run)) {
+    return false;
+  }
+  if (runLooksInfrastructureFailure(run)) {
     return false;
   }
   const state = String(entry?.state || run?.state || '').trim().toLowerCase();
@@ -818,6 +842,7 @@ function buildActionEntry(run = {}, modelRoles = {}) {
     label: String(run?.label || '').trim(),
     state,
     task: shortText(run?.operatorExecution?.task || run?.task || run?.label || ''),
+    taskMode: String(run?.operatorExecution?.taskMode || run?.taskMode || '').trim().toLowerCase(),
     changedFiles: changedFiles.slice(0, 4),
     changedFileCount: changedFiles.length,
     startedAt: String(run?.startedAt || '').trim(),
@@ -918,10 +943,11 @@ function buildAutonomousActionSummary(options = {}) {
   const actionsToday = actions.filter((item) => localDayKey(runTimestamp(item) || nowValue) === currentDay);
   const eligibleActions = actions.filter((item) => item.countsTowardDailyTarget === true);
   const eligibleActionsToday = actionsToday.filter((item) => item.countsTowardDailyTarget === true);
+  const validationActionsToday = eligibleActionsToday.filter((item) => item.taskMode === 'validator');
   const safeToday = eligibleActionsToday.filter((item) => item.safeToAdvance);
-  const passTodayCount = eligibleActionsToday.filter((item) => item.state === 'pass').length;
-  const failTodayCount = eligibleActionsToday.filter((item) => ['fail', 'cancelled'].includes(item.state)).length;
-  const reviewBlockedTodayCount = eligibleActionsToday.filter((item) => item.reviewSummary.requiresManualReview || item.reviewSummary.pendingApprovalCount > 0).length;
+  const passTodayCount = validationActionsToday.filter((item) => item.state === 'pass').length;
+  const failTodayCount = validationActionsToday.filter((item) => ['fail', 'cancelled'].includes(item.state)).length;
+  const reviewBlockedTodayCount = validationActionsToday.filter((item) => item.reviewSummary.requiresManualReview || item.reviewSummary.pendingApprovalCount > 0).length;
   const averageAutomationScore = actions.length > 0
     ? Math.round(actions.reduce((sum, item) => sum + Number(item.automationScore || 0), 0) / actions.length)
     : 0;

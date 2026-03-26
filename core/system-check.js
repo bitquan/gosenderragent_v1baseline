@@ -650,6 +650,7 @@ function buildLatestRunSummary(latestRun, pathFilter = '') {
       modelRole: '',
       modelProfileId: '',
       modelDisplayName: '',
+      infrastructureFailure: false,
     };
   }
   const execution = latestRun.operatorExecution && typeof latestRun.operatorExecution === 'object'
@@ -662,6 +663,12 @@ function buildLatestRunSummary(latestRun, pathFilter = '') {
     latestRun.stdoutTail,
     latestRun.stderrTail,
   );
+  const infrastructureFailure = /could not start the python runtime|spawn .* enoent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/i.test([
+    combinedOutput,
+    latestRun.blockedReason,
+    latestRun.message,
+    execution.resultSummary,
+  ].map((value) => String(value || '').trim()).filter(Boolean).join('\n'));
   return {
     status: String(latestRun.state || execution.status || execution.runState || 'unknown').trim().toLowerCase() || 'unknown',
     summary: shortText(firstDefined(
@@ -689,6 +696,7 @@ function buildLatestRunSummary(latestRun, pathFilter = '') {
     modelDisplayName: String(execution.modelDisplayName || latestRun.modelDisplayName || '').trim(),
     retryAvailable: execution.retryAvailable === true,
     repairAvailable: execution.repairAvailable === true,
+    infrastructureFailure,
   };
 }
 
@@ -1293,7 +1301,9 @@ function buildValidationRollup(acceptance = {}, latestRunSummary = {}, autonomy 
     || acceptance?.overallStatus
     || '',
   ).trim().toLowerCase();
-  const latestRunStatus = String(latestRunSummary?.status || latestRunSummary?.runState || '').trim().toLowerCase();
+  const latestRunStatus = latestRunSummary?.infrastructureFailure || String(latestRunSummary?.taskMode || '').trim().toLowerCase() !== 'validator'
+    ? 'idle'
+    : String(latestRunSummary?.status || latestRunSummary?.runState || '').trim().toLowerCase();
   const validationToday = autonomy?.validationToday && typeof autonomy.validationToday === 'object'
     ? autonomy.validationToday
     : {};

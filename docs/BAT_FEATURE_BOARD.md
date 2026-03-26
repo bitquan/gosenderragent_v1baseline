@@ -42,6 +42,7 @@ Primary ownership by layer:
 What is working:
 
 - Acceptance baseline is green after the `reportRendererError` contract/type fix.
+- Runtime bootstrap now prefers real workspace virtual environments before launcher fallbacks, preflight checks the live `runtime/backend/*` paths, and roadmap validation/focus cards ignore infrastructure-only startup failures instead of replaying them as work-state debt.
 - Planner related-file selection now surfaces imported JS source files from failing tests.
 - The engine can now target `src/calculator.js` in the disposable broken Node lab.
 - The tool loop can now synthesize and apply a real file edit for repair/edit objectives, including mixed model responses that wrap file contents in prose plus fenced blocks.
@@ -66,7 +67,6 @@ What is still broken:
 
 - The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
 - Older docs still contain stale Mac-first examples and duplicate information.
-- Repo-wide validation still includes unrelated red tests outside this cleanup block (`tests/app-storage-paths.test.js` and `tests/smart-patch.test.js`), so the global green baseline remains blocked until those failures are repaired.
 
 ## 4. Agent Working Contract
 

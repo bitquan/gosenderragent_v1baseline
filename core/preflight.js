@@ -75,10 +75,10 @@ function runPreflight(workspaceRoot, options = {}) {
   addCheck(checks, {
     name: 'assistant scripts',
     ok:
-      fs.existsSync(path.join(workspaceRoot, 'backend/scripts/dev_assistant.py')) &&
-      fs.existsSync(path.join(workspaceRoot, 'backend/scripts/solo_dev_assistant.py')),
+      fs.existsSync(path.join(workspaceRoot, 'runtime', 'backend', 'scripts', 'dev_assistant.py')) &&
+      fs.existsSync(path.join(workspaceRoot, 'runtime', 'backend', 'scripts', 'solo_dev_assistant.py')),
     severity: 'blocking',
-    detail: 'backend/scripts/dev_assistant.py + solo_dev_assistant.py',
+    detail: 'runtime/backend/scripts/dev_assistant.py + solo_dev_assistant.py',
   });
 
   addCheck(checks, {

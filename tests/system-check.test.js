@@ -1274,3 +1274,143 @@ test('buildSystemCheck falls back chat-fast to the engine route when lane role m
   assert.equal(chatLane.role, 'engine');
   assert.equal(chatLane.modelRoleId, 'orchestrator');
 });
+
+test('buildSystemCheck ignores infrastructure bootstrap failures in roadmap validation and focus cards', () => {
+  const workspaceRoot = createWorkspaceFixture();
+  const acceptanceReport = {
+    runId: 'engine_acceptance_pass',
+    label: 'engine-acceptance',
+    startedAt: '2026-03-26T20:40:00.000Z',
+    completedAt: '2026-03-26T20:41:00.000Z',
+    workspaceRoot,
+    targetWorkspaceRoot: workspaceRoot,
+    overallStatus: 'pass',
+    summary: 'Acceptance passed.',
+    nextAction: 'Keep the next slice bounded.',
+    checks: [
+      {
+        id: 'tests',
+        label: 'Node test suite',
+        status: 'pass',
+        summary: 'Tests passed.',
+      },
+    ],
+  };
+
+  try {
+    const report = buildSystemCheck({
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+      now: '2026-03-26T21:00:00.000Z',
+      acceptance: {
+        ok: true,
+        exists: true,
+        outputPath: path.join(workspaceRoot, 'artifacts', 'assistant_benchmarks', 'acceptance', 'latest.json'),
+        report: acceptanceReport,
+        controlSummary: buildAcceptanceControlSummary(acceptanceReport, { exists: true }),
+      },
+      runtimeState: {
+        runs: [
+          {
+            runId: 'bootstrap-fail',
+            workspaceRoot,
+            targetWorkspaceRoot: workspaceRoot,
+            state: 'fail',
+            task: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+            taskMode: 'coder',
+            modelRole: 'workspace',
+            startedAt: '2026-03-26T20:46:55.111Z',
+            endedAt: '2026-03-26T20:46:55.130Z',
+            stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+            operatorExecution: {
+              task: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+              taskMode: 'coder',
+              modelRole: 'workspace',
+              outputTail: {
+                stderr: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+              },
+            },
+          },
+          {
+            runId: 'validation-pass',
+            workspaceRoot,
+            targetWorkspaceRoot: workspaceRoot,
+            state: 'pass',
+            task: 'Acceptance and review summary',
+            taskMode: 'validator',
+            modelRole: 'engine',
+            startedAt: '2026-03-26T20:41:27.017Z',
+            endedAt: '2026-03-26T20:41:27.017Z',
+            operatorExecution: {
+              task: 'Acceptance and review summary',
+              taskMode: 'validator',
+              modelRole: 'engine',
+              reviewSummary: {
+                requiresManualReview: false,
+                pendingApprovalCount: 0,
+                lowConfidencePatchCount: 0,
+              },
+              trustSummary: {
+                trust_state: 'ready',
+                summary: 'Trust is clear.',
+              },
+            },
+          },
+        ],
+        activeRuns: [],
+      },
+      taskHub: {
+        schemaVersion: '2026-03-15',
+        updatedAt: '2026-03-26T20:46:56.410Z',
+        goals: [
+          {
+            id: 'goal-bootstrap',
+            title: 'Set up the workspace coding model, engine control model, and verify the route plan is ready',
+            objective: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+            status: 'active',
+            workspaceRoot,
+            targetWorkspaceRoot: workspaceRoot,
+            updatedAt: '2026-03-26T20:46:55.118Z',
+            lastRunId: 'bootstrap-fail',
+          },
+        ],
+        tasks: [
+          {
+            id: 'task-bootstrap',
+            goalId: 'goal-bootstrap',
+            title: 'Set up the workspace coding model, engine control model, and verify the route plan is ready',
+            objective: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+            status: 'needs-repair',
+            source: 'chat',
+            workspaceRoot,
+            targetWorkspaceRoot: workspaceRoot,
+            updatedAt: '2026-03-26T20:46:55.130Z',
+            lastRunId: 'bootstrap-fail',
+            metadata: {
+              roadmapDay: '2026-03-26',
+              workspaceScopeRoot: workspaceRoot,
+            },
+          },
+        ],
+        runs: [],
+        runLinks: [
+          {
+            runId: 'bootstrap-fail',
+            taskId: 'task-bootstrap',
+            goalId: 'goal-bootstrap',
+            action: 'orchestrate',
+            status: 'fail',
+            summary: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+          },
+        ],
+      },
+    });
+
+    assert.equal(report.areas.roadmap.dailyQuotaProof.focusTask, null);
+    assert.equal(report.areas.roadmap.dailyQuotaProof.blockedRescopedCount, 0);
+    assert.equal(report.areas.roadmap.dailyQuotaProof.validation.label, 'PASS');
+    assert.equal(report.areas.roadmap.dailyQuotaProof.validation.failCount, 0);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});

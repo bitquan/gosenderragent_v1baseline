@@ -74,18 +74,18 @@ function runPreflight(workspaceRoot, options = {}) {
 
   addCheck(checks, {
     name: 'runtime api',
-    ok: fs.existsSync(path.join(workspaceRoot, 'backend', 'agent', 'runtime', 'runtime_api.py')),
+    ok: fs.existsSync(path.join(workspaceRoot, 'runtime', 'backend', 'agent', 'runtime', 'runtime_api.py')),
     severity: 'blocking',
-    detail: 'backend/agent/runtime/runtime_api.py',
+    detail: 'runtime/backend/agent/runtime/runtime_api.py',
   });
 
   addCheck(checks, {
     name: 'assistant scripts',
     ok:
-      fs.existsSync(path.join(workspaceRoot, 'backend/scripts/dev_assistant.py')) &&
-      fs.existsSync(path.join(workspaceRoot, 'backend/scripts/solo_dev_assistant.py')),
+      fs.existsSync(path.join(workspaceRoot, 'runtime', 'backend', 'scripts', 'dev_assistant.py')) &&
+      fs.existsSync(path.join(workspaceRoot, 'runtime', 'backend', 'scripts', 'solo_dev_assistant.py')),
     severity: 'blocking',
-    detail: 'backend/scripts/dev_assistant.py + solo_dev_assistant.py',
+    detail: 'runtime/backend/scripts/dev_assistant.py + solo_dev_assistant.py',
   });
 
   addCheck(checks, {

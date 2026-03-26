@@ -37,7 +37,7 @@ function looksInfrastructureFailure(...values) {
   if (!haystack) {
     return false;
   }
-  return /could not start the python runtime|spawn .*py\.exe enonent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
+  return /could not start the python runtime|spawn .* enoent|ticket id is required|invalid ticket id|runtime launch failed|python runtime is not available/.test(haystack);
 }
 
 function looksDocsSensitiveReviewContext(targetPath = '', detail = '') {

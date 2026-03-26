@@ -101,9 +101,9 @@ test('buildAutonomousActionSummary scores model fit, daily progress, and oversco
   assert.equal(summary.actionCount, 2);
   assert.equal(summary.overscopedCount, 1);
   assert.equal(summary.dailyTarget.safeCount, 1);
-  assert.equal(summary.validationToday.passCount, 1);
-  assert.equal(summary.validationToday.failCount, 1);
-  assert.equal(summary.validationToday.reviewBlockedCount, 1);
+  assert.equal(summary.validationToday.passCount, 0);
+  assert.equal(summary.validationToday.failCount, 0);
+  assert.equal(summary.validationToday.reviewBlockedCount, 0);
   assert.equal(summary.highestRiskAction.runId, 'run-1');
   assert.equal(summary.highestRiskAction.capabilityFit, 'overscoped');
   assert.equal(summary.highestRiskAction.difficultyLevel, 5);
@@ -251,6 +251,84 @@ test('buildAutonomousActionSummary uses current-workspace proof actions and igno
   assert.equal(summary.dailyTarget.safeCount, 5);
   assert.equal(summary.dailyTarget.met, true);
   assert.equal(summary.latestActions.every((item) => item.runId !== 'foreign-run'), true);
+  assert.equal(summary.status, 'ready');
+});
+
+test('buildAutonomousActionSummary ignores runtime bootstrap failures in daily validation counts', () => {
+  const workspaceRoot = 'E:/dev/projects/gosenderr-desktop-agent-PC';
+  const summary = buildAutonomousActionSummary({
+    now: '2026-03-26T21:00:00.000Z',
+    workspaceRoot,
+    targetWorkspaceRoot: workspaceRoot,
+    modelRoles: {
+      workspace: {
+        modelProfileId: 'gs-dev-1-default',
+        modelDisplayName: 'GS-Dev-1',
+        baseModel: 'qwen2.5-coder:14b',
+        providerSource: 'ollama',
+      },
+      engine: {
+        modelProfileId: 'gse-1-engine',
+        modelDisplayName: 'GSE-1 Engine',
+        baseModel: 'gpt-5.4',
+        providerSource: 'openai',
+      },
+    },
+    runtimeState: {
+      runs: [
+        {
+          runId: 'bootstrap-fail',
+          workspaceRoot,
+          targetWorkspaceRoot: workspaceRoot,
+          task: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+          taskMode: 'coder',
+          modelRole: 'workspace',
+          state: 'fail',
+          startedAt: '2026-03-26T20:46:55.111Z',
+          endedAt: '2026-03-26T20:46:55.130Z',
+          stderrTail: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+          operatorExecution: {
+            task: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
+            taskMode: 'coder',
+            modelRole: 'workspace',
+            outputTail: {
+              stderr: 'Could not start the Python runtime: spawn C:\\WINDOWS\\py.exe ENOENT',
+            },
+          },
+        },
+        {
+          runId: 'validation-pass',
+          workspaceRoot,
+          targetWorkspaceRoot: workspaceRoot,
+          task: 'Acceptance and review summary',
+          taskMode: 'validator',
+          modelRole: 'engine',
+          state: 'pass',
+          startedAt: '2026-03-26T20:41:27.017Z',
+          endedAt: '2026-03-26T20:41:27.017Z',
+          operatorExecution: {
+            task: 'Acceptance and review summary',
+            taskMode: 'validator',
+            modelRole: 'engine',
+            changedFiles: [],
+            reviewSummary: {
+              requiresManualReview: false,
+              pendingApprovalCount: 0,
+              lowConfidencePatchCount: 0,
+            },
+            trustSummary: {
+              trust_state: 'ready',
+              summary: 'Trust is clear.',
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(summary.actionCount, 1);
+  assert.equal(summary.validationToday.passCount, 1);
+  assert.equal(summary.validationToday.failCount, 0);
   assert.equal(summary.status, 'ready');
 });
 

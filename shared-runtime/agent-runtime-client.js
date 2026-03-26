@@ -41,6 +41,10 @@ function resolvePythonCandidates(workspaceRoot, pythonRelative, runtimeRoot) {
     pushCandidate(path.join(root, configuredRelative));
   }
   if (root) {
+    pushCandidate(path.join(root, '.venv', 'Scripts', 'python.exe'));
+    pushCandidate(path.join(root, '.venv', 'bin', 'python'));
+    pushCandidate(path.join(root, 'venv', 'Scripts', 'python.exe'));
+    pushCandidate(path.join(root, 'venv', 'bin', 'python'));
     pushCandidate(path.join(root, 'runtime', '.venv', 'Scripts', 'python.exe'));
     pushCandidate(path.join(root, 'runtime', '.venv', 'bin', 'python'));
     pushCandidate(path.join(root, 'backend', '.venv', 'Scripts', 'python.exe'));
