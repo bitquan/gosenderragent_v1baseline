@@ -23,9 +23,10 @@ function buildAppStoragePaths({
     ? path.join(resolvedLocalStorageRoot, storageAppName)
     : '';
   const resolvedFallbackUserDataDir = resolveOptionalPath(fallbackUserDataDir);
+  const managedUserDataDir = storageRoot ? path.join(storageRoot, 'user-data') : '';
 
   const userDataDir = resolveOptionalPath(requestedUserDataDir)
-    || (storageRoot ? path.join(storageRoot, 'user-data') : resolvedFallbackUserDataDir);
+    || (isDev ? managedUserDataDir : (resolvedFallbackUserDataDir || managedUserDataDir));
 
   const sessionDataDir = resolveOptionalPath(requestedSessionDataDir)
     || (storageRoot ? path.join(storageRoot, 'session-data') : path.join(userDataDir, 'session-data'));

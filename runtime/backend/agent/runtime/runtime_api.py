@@ -93,7 +93,7 @@ def _resolve_default_project_root() -> Path:
             return resolved
     if DEFAULT_COMPATIBILITY_PROJECT_ROOT.exists() and DEFAULT_COMPATIBILITY_PROJECT_ROOT.is_dir():
         return DEFAULT_COMPATIBILITY_PROJECT_ROOT.resolve()
-    return RUNTIME_ROOT
+    return APP_ROOT
 
 
 REPO_ROOT = _resolve_default_project_root()
@@ -316,9 +316,27 @@ def _normalize_runtime_lane_id(value: str | None) -> str:
     return str(value or "").strip().lower()
 
 
+def _explicit_orchestration_steps(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    source = dict(payload or {})
+    steps = list(source.get("steps") or [])
+    if not steps:
+        steps = list(dict(source.get("context") or {}).get("steps") or [])
+    return [dict(item) for item in steps if isinstance(item, dict)]
+
+
+def _step_requires_material_mutation(step: dict[str, Any]) -> bool:
+    action = str(step.get("action") or "").strip().lower()
+    if action == "smart_patch":
+        return not bool(step.get("dry_run", step.get("dryRun", False)))
+    return action in {"edit_file", "write_file", "synthesize_edit", "modify_file"}
+
+
 def _orchestration_expects_mutation(payload: dict[str, Any] | None, result: dict[str, Any] | None = None) -> bool:
     source = dict(payload or {})
     runtime_result = dict(result or {})
+    explicit_steps = _explicit_orchestration_steps(source)
+    if explicit_steps:
+        return any(_step_requires_material_mutation(step) for step in explicit_steps)
     metadata = dict(source.get("metadata") or {})
     runtime_task = dict(runtime_result.get("runtime_task") or {})
     lane_id = _normalize_runtime_lane_id(
