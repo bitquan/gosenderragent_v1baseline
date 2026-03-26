@@ -1033,6 +1033,7 @@ def _refresh_runtime_context(
     memory_state: dict[str, Any] | None = None,
     host_boundary: dict[str, Any] | None = None,
     self_heal_policy: dict[str, Any] | None = None,
+    previous_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return build_runtime_context(
         root,
@@ -1048,6 +1049,7 @@ def _refresh_runtime_context(
         memory_state=memory_state,
         host_boundary=host_boundary,
         self_heal_policy=self_heal_policy,
+        previous_context=previous_context,
     )
 
 
@@ -1247,6 +1249,7 @@ def run_ticket_runtime(
         plan=plan,
         permission_state=permissions.describe_all(),
         host_boundary=host_boundary,
+        previous_context=runtime_context,
     )
     result["runtime_context"] = runtime_context
     if not audit.get("allowed"):
@@ -1359,6 +1362,7 @@ def run_ticket_runtime(
         artifact_paths=created,
         permission_state=permissions.describe_all(),
         host_boundary=host_boundary,
+        previous_context=runtime_context,
     )
     result["runtime_context"] = runtime_context
 
@@ -1438,6 +1442,7 @@ def run_ticket_runtime(
         memory_state=memory_state,
         host_boundary=host_boundary,
         self_heal_policy=self_heal_policy,
+        previous_context=runtime_context,
     )
     result["runtime_context"] = runtime_context
 
@@ -1505,6 +1510,7 @@ def run_ticket_runtime(
         memory_state=_memory_state_payload(failure_memory, validation_memory_hints),
         host_boundary=host_boundary,
         self_heal_policy=_self_heal_policy(result["validation"], _memory_state_payload(failure_memory, validation_memory_hints), runtime_context),
+        previous_context=runtime_context,
     )
     result["runtime_context"] = runtime_context
 
@@ -1615,6 +1621,7 @@ def run_ticket_runtime(
         memory_state=_memory_state_payload(failure_memory, validation_memory_hints),
         host_boundary=host_boundary,
         self_heal_policy=_self_heal_policy(result["validation"], _memory_state_payload(failure_memory, validation_memory_hints), runtime_context),
+        previous_context=runtime_context,
     )
     result["runtime_context"] = runtime_context
 
@@ -1758,6 +1765,7 @@ def run_ticket_runtime(
             "memory_hints": dict(validation_memory_hints),
         },
         artifact_paths=artifact_paths,
+        validation_commands=list((result.get("runtime_context", {}).get("validation_scope") or {}).get("commands") or []),
         retry_available=bool(result.get("runtime_failure", {}).get("retryable")),
         repair_available=bool(ticket_id),
         task_objective=task_objective_contract,

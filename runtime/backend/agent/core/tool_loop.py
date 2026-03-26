@@ -8,7 +8,7 @@ from backend.agent.core.approval import ApprovalGate
 from backend.agent.core.editor_context import build_coding_task_prompt, normalize_editor_context
 from backend.agent.core.orchestrator import OrchestrationTask, SequentialAgentOrchestrator
 from backend.agent.core.patch_review import generate_patch_candidates
-from backend.agent.core.runtime_context import build_runtime_context
+from backend.agent.core.runtime_context import build_runtime_context, extract_runtime_context
 from backend.agent.core.tool_registry import build_default_tool_registry
 from backend.agent.runtime.contracts import (
     DEV_ENGINE_LOOP_STEPS,
@@ -27,11 +27,40 @@ from backend.agent.runtime.contracts import (
 from backend.agent.runtime.orchestration_driver import RuntimeOrchestrationDriver
 from backend.agent.core.patch_review import build_review_summary
 
-_OBJECTIVE_PATH_RE = re.compile(r'([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)+)')
-_MUTATION_KEYWORDS = ('repair', 'fix', 'edit', 'modify', 'implement', 'patch', 'update', 'change')
+_OBJECTIVE_PATH_RE = re.compile(r'([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)*\.[A-Za-z0-9_.-]+)')
+_MUTATION_KEYWORDS = ('repair', 'fix', 'edit', 'modify', 'implement', 'patch', 'update', 'change', 'append', 'add', 'create', 'write')
 _SOURCE_SUFFIXES = {'.py', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.css', '.scss', '.html', '.json'}
+_PREFERRED_MUTATION_DIRS = ('src', 'app', 'lib', 'server', 'renderer', 'renderer-src', 'test', 'tests')
 _MIN_PATCH_SCORE = 0.3
-_FENCED_BLOCK_RE = re.compile(r"```(?P<lang>[A-Za-z0-9_-]*)\s*\n(?P<body>[\s\S]*?)\n```")
+_FENCED_BLOCK_RE = re.compile(r"```(?P<lang>[A-Za-z0-9_-]*)[ \t]*\n?(?P<body>[\s\S]*?)\n?```")
+_SHELL_APPEND_COMMAND_RE = re.compile(
+    r'^(?:echo|printf)\s+(?P<body>"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[^>]+?)\s*>>\s*(?P<path>[^\s]+)\s*$',
+    re.IGNORECASE,
+)
+_SHELL_HEREDOC_WRITE_RE = re.compile(
+    r'^cat\s+(?:(?P<operator_a>>>|>)\s*(?P<path_a>[^\s]+)\s+<<(?P<quote_a>[\'\"]?)(?P<tag_a>[A-Za-z0-9_.-]+)(?P=quote_a)|<<(?P<quote_b>[\'\"]?)(?P<tag_b>[A-Za-z0-9_.-]+)(?P=quote_b)\s*(?P<operator_b>>>|>)\s*(?P<path_b>[^\s]+))\s*$',
+    re.IGNORECASE,
+)
+_SYNTHESIZED_RESPONSE_PREAMBLE_RE = re.compile(
+    r'^(?:here(?: is|\'s)\b|updated (?:file|contents)\b|complete updated file\b|file contents\b|use (?:this|the following)\b|write (?:this|the following)\b|replace the file with\b)',
+    re.IGNORECASE,
+)
+_SYNTHESIZED_REVIEW_HEADER_RE = re.compile(
+    r'^(?:#{1,6}\s*suggested fix\b|\*\*suggested fix:?\*\*|\*\*minimal change:?\*\*|suggested fix:|minimal change:|recommended change:|proposed change:)',
+    re.IGNORECASE,
+)
+_SYNTHESIZED_REVIEW_PROSE_RE = re.compile(
+    r'^(?:update\b|replace\b|change\b|modify\b|the fix\b|this fix\b|apply\b|use\b).*',
+    re.IGNORECASE,
+)
+_SYNTHESIZED_INSTRUCTION_LINE_RE = re.compile(
+    r'^(?:do not\b|return only\b|stay inside\b|make the smallest\b|do not modify\b|do not include\b|//\s*your repair suggestion here\b|#\s*your repair suggestion here\b|your repair suggestion here\b)',
+    re.IGNORECASE,
+)
+_CODE_LIKE_LINE_RE = re.compile(
+    r'^(?:[\'"`]|const\b|let\b|var\b|function\b|async\b|class\b|module\.exports\b|exports\.|if\b|for\b|while\b|switch\b|return\b|import\b|export\b|from\b|def\b|class\b|try\b|except\b|with\b|@|/\*|//|[{\[]|<[^>]+>|[A-Za-z_$][A-Za-z0-9_$]*\s*=)',
+    re.IGNORECASE,
+)
 
 
 def _extract_explicit_objective_paths(objective: str) -> list[str]:
@@ -54,6 +83,26 @@ def _extract_explicit_objective_paths(objective: str) -> list[str]:
         seen.add(lowered)
         paths.append(normalized)
     return paths[:5]
+
+
+def _is_missing_file_read(result: dict[str, Any] | None) -> bool:
+    payload = dict(result or {})
+    if payload.get('ok') is True:
+        return False
+    message = ' '.join(
+        str(part or '').strip().lower()
+        for part in (
+            payload.get('error'),
+            payload.get('message'),
+        )
+        if str(part or '').strip()
+    )
+    return any(token in message for token in (
+        'no such file or directory',
+        'cannot find the file',
+        'does not exist',
+        'errno 2',
+    ))
 
 
 def _parse_bullet_list(raw: str) -> list[str]:
@@ -87,14 +136,126 @@ def _is_source_candidate(path: str) -> bool:
     return True
 
 
+def _is_test_candidate(path: str) -> bool:
+    target = Path(str(path or '').strip())
+    if not target.name:
+        return False
+    lower_name = target.name.lower()
+    if lower_name.endswith(('.test.js', '.test.ts', '.spec.js', '.spec.ts')):
+        return True
+    parts = [part.lower() for part in target.parts]
+    return any(part in {'test', 'tests'} for part in parts)
+
+
+def _is_repair_objective(objective: str, context: dict[str, Any] | None = None) -> bool:
+    payload = dict(context or {})
+    runtime_task = dict(payload.get('runtime_task') or payload.get('runtimeTask') or {})
+    lane_id = str(runtime_task.get('lane_id') or runtime_task.get('laneId') or '').strip().lower()
+    task_mode = str(runtime_task.get('task_mode') or runtime_task.get('taskMode') or '').strip().lower()
+    if lane_id == 'repair-fast' or task_mode == 'repair':
+        return True
+    lowered = str(objective or '').strip().lower()
+    return 'repair' in lowered or 'fix' in lowered
+
+
+def _is_low_signal_mutation_target(path: str) -> bool:
+    normalized = str(path or '').strip().replace('\\', '/').lower()
+    if not normalized:
+        return True
+    leaf = normalized.rsplit('/', 1)[-1]
+    if leaf in {'readme.md', '.gos-lab.json'}:
+        return True
+    return normalized.startswith('.gos-lab-recipes/') or normalized.startswith('docs/')
+
+
+def _merge_target_candidates(primary: list[str], secondary: list[str], *, limit: int = 6) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in [*list(primary or []), *list(secondary or [])]:
+        candidate = str(item or '').strip().replace('\\', '/')
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        merged.append(candidate)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _discover_repo_mutation_targets(project_root: str | Path | None, *, limit: int = 6) -> list[str]:
+    root = Path(str(project_root or '')).resolve() if str(project_root or '').strip() else None
+    if root is None or not root.exists():
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError:
+            return
+        lowered = relative.lower()
+        if lowered in seen or _is_low_signal_mutation_target(relative):
+            return
+        seen.add(lowered)
+        candidates.append(relative)
+
+    for folder in _PREFERRED_MUTATION_DIRS:
+        base = root / folder
+        if not base.exists() or not base.is_dir():
+            continue
+        for file_path in sorted(base.rglob('*')):
+            if not file_path.is_file() or file_path.suffix.lower() not in _SOURCE_SUFFIXES:
+                continue
+            add(file_path)
+            if len(candidates) >= limit:
+                return candidates[:limit]
+    package_json = root / 'package.json'
+    if package_json.exists() and package_json.is_file():
+        add(package_json)
+    return candidates[:limit]
+
+
+def _select_preferred_mutation_target(targets: list[str]) -> str:
+    filtered = [item for item in list(targets or []) if not _is_low_signal_mutation_target(item)] or list(targets or [])
+    preferred_non_json = next(
+        (
+            item for item in filtered
+            if _is_source_candidate(item) and Path(str(item)).suffix.lower() != '.json'
+        ),
+        '',
+    )
+    if preferred_non_json:
+        return preferred_non_json
+    preferred_source = next((item for item in filtered if _is_source_candidate(item)), '')
+    return preferred_source or (filtered[0] if filtered else '')
+
+
 def _synthesized_execution_steps(targets: list[str], objective: str, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     normalized_targets = [str(item).strip() for item in list(targets or []) if str(item).strip()]
     if not normalized_targets:
         return []
     if not _objective_requires_write(objective, context):
         return [{"action": "inspect_file", "path": item} for item in normalized_targets[:3]]
-    inspect_targets = normalized_targets[:2]
-    preferred_target = next((item for item in normalized_targets if _is_source_candidate(item)), normalized_targets[0])
+    filtered_targets = [item for item in normalized_targets if not _is_low_signal_mutation_target(item)] or normalized_targets
+    preferred_target = _select_preferred_mutation_target(filtered_targets)
+    inspect_targets: list[str] = []
+    if _is_repair_objective(objective, context):
+        preferred_test = next((item for item in filtered_targets if _is_test_candidate(item)), '')
+        if preferred_test:
+            inspect_targets.append(preferred_test)
+        if preferred_target:
+            inspect_targets.append(preferred_target)
+        for candidate in filtered_targets:
+            if len(inspect_targets) >= 2:
+                break
+            if candidate not in inspect_targets:
+                inspect_targets.append(candidate)
+    else:
+        inspect_targets = filtered_targets[:2]
     steps = [{"action": "inspect_file", "path": item} for item in inspect_targets]
     steps.append({"action": "synthesize_edit", "path": preferred_target, "reason": "write-capable fallback for mutation objective"})
     return steps
@@ -102,6 +263,7 @@ def _synthesized_execution_steps(targets: list[str], objective: str, context: di
 
 def _synthesized_patch_variants(objective: str, path: str, content: str, editor_context: dict[str, Any] | None = None) -> list[dict[str, str]]:
     normalized_editor_context = normalize_editor_context(editor_context)
+    first_line = str(content.splitlines()[0] if content.splitlines() else '').strip()
     extra_context = {
         'Objective': objective,
         'Current file path': path,
@@ -136,15 +298,42 @@ def _synthesized_patch_variants(objective: str, path: str, content: str, editor_
                 heading='Strict tool-loop edit request',
             ),
         },
+        {
+            'label': 'verbatim-tool-loop-edit',
+            'prompt': build_coding_task_prompt(
+                f"Rewrite only {path}. Return the exact updated file text and nothing else.",
+                editor_context=normalized_editor_context,
+                approved_targets=[path],
+                extra_context={
+                    **extra_context,
+                    'Expected first line': first_line,
+                },
+                response_contract=(
+                    'Do not describe the fix.',
+                    'Do not return shell commands, diffs, markdown fences, or placeholders.',
+                    'Return only the full updated file contents for the approved target file.',
+                ),
+                heading='Verbatim tool-loop edit request',
+            ),
+        },
     ]
 
 
 def _unwrap_single_fenced_block(text: str) -> str:
     sanitized = str(text or '').strip()
-    fenced = re.match(r"^```[A-Za-z0-9_-]*\s*\n(?P<body>[\s\S]*?)\n```\s*$", sanitized)
+    fenced = re.match(r"^```[A-Za-z0-9_-]*[ \t]*\n?(?P<body>[\s\S]*?)\n?```\s*$", sanitized)
     if fenced:
         return str(fenced.group('body') or '').strip()
     return sanitized
+
+
+def _strip_model_control_tokens(text: str) -> str:
+    lines = [
+        line
+        for line in str(text or '').splitlines()
+        if not any(token in str(line or '') for token in ('<|im_start|>', '<|im_end|>', '<s>', '</s>'))
+    ]
+    return '\n'.join(lines).strip()
 
 
 def _extract_synthesized_content(path: str, patch: str) -> str:
@@ -200,6 +389,283 @@ def _extract_synthesized_content(path: str, patch: str) -> str:
     return sanitized
 
 
+def _translate_shell_append_response(path: str, current_content: str, patch: str) -> str:
+    sanitized = _strip_model_control_tokens(_unwrap_single_fenced_block(patch))
+    match = _SHELL_APPEND_COMMAND_RE.match(str(sanitized or '').strip())
+    if not match:
+        return ''
+
+    command_path = str(match.group('path') or '').strip().strip('"\'"`').replace('\\', '/')
+    target_path = str(path or '').strip().replace('\\', '/')
+    if command_path:
+        command_name = Path(command_path).name.lower()
+        target_name = Path(target_path).name.lower()
+        if command_path.lower() != target_path.lower() and command_name != target_name:
+            return ''
+
+    body = str(match.group('body') or '')
+    if len(body) >= 2 and body[0] == body[-1] and body[0] in {'"', "'"}:
+        body = body[1:-1]
+    body = body.replace('\\n', '\n')
+    existing = str(current_content or '')
+    if existing and not existing.endswith('\n'):
+        existing += '\n'
+    appended = body
+    if appended and not appended.endswith('\n'):
+        appended += '\n'
+    return existing + appended
+
+
+def _translate_shell_write_response(path: str, current_content: str, patch: str) -> str:
+    sanitized = _strip_model_control_tokens(_unwrap_single_fenced_block(patch))
+    lines = str(sanitized or '').splitlines()
+    if len(lines) < 3:
+        return ''
+
+    header = str(lines[0] or '').strip()
+    match = _SHELL_HEREDOC_WRITE_RE.match(header)
+    if not match:
+        return ''
+
+    command_path = str(match.group('path_a') or match.group('path_b') or '').strip().strip('"\'"`').replace('\\', '/')
+    target_path = str(path or '').strip().replace('\\', '/')
+    if command_path:
+        command_name = Path(command_path).name.lower()
+        target_name = Path(target_path).name.lower()
+        if command_path.lower() != target_path.lower() and command_name != target_name:
+            return ''
+
+    tag = str(match.group('tag_a') or match.group('tag_b') or '').strip()
+    if not tag or str(lines[-1] or '').strip() != tag:
+        return ''
+
+    body = '\n'.join(lines[1:-1])
+    operator = str(match.group('operator_a') or match.group('operator_b') or '>').strip()
+    if operator == '>>':
+        existing = str(current_content or '')
+        if existing and not existing.endswith('\n'):
+            existing += '\n'
+        if body and not body.endswith('\n'):
+            body += '\n'
+        return existing + body
+    return body
+
+
+def _looks_like_code_line(path: str, line: str) -> bool:
+    stripped = str(line or '').strip()
+    if not stripped:
+        return False
+    suffix = Path(str(path or '').strip()).suffix.lower()
+    if suffix in {'.json'}:
+        return stripped.startswith('{') or stripped.startswith('[') or stripped.startswith('"')
+    if suffix in {'.html'}:
+        return stripped.startswith('<')
+    return bool(_CODE_LIKE_LINE_RE.match(stripped))
+
+
+def _validation_failure_summary(validation_rows: list[dict[str, Any]]) -> str:
+    for row in list(validation_rows or []):
+        output = f"{str(row.get('stdout') or '')}\n{str(row.get('stderr') or '')}"
+        for line in output.splitlines():
+            stripped = str(line or '').strip()
+            if not stripped:
+                continue
+            if stripped.startswith('>') or stripped.startswith('✔') or stripped == '^':
+                continue
+            if stripped.lower().startswith('node.js v') or re.match(r'^at\s.+$', stripped, re.IGNORECASE):
+                continue
+            return stripped
+    return 'Validation failed.'
+
+
+def _strip_synthesized_response_preamble(path: str, patch: str) -> str:
+    sanitized = str(patch or '').strip()
+    if not sanitized or '\n' not in sanitized:
+        return sanitized
+
+    lines = sanitized.splitlines()
+    changed = False
+    while lines and _SYNTHESIZED_RESPONSE_PREAMBLE_RE.match(str(lines[0] or '').strip()):
+        changed = True
+        lines.pop(0)
+        while lines and not str(lines[0] or '').strip():
+            lines.pop(0)
+
+    saw_review_header = False
+    while lines:
+        current = str(lines[0] or '').strip()
+        if not current:
+            if changed or saw_review_header:
+                changed = True
+                lines.pop(0)
+                continue
+            break
+        if _SYNTHESIZED_REVIEW_HEADER_RE.match(current):
+            changed = True
+            saw_review_header = True
+            lines.pop(0)
+            continue
+        if saw_review_header and not _looks_like_code_line(path, current):
+            if _SYNTHESIZED_REVIEW_PROSE_RE.match(current) or current.endswith('.') or current.endswith(':'):
+                changed = True
+                lines.pop(0)
+                continue
+        break
+
+    if not lines:
+        return ''
+
+    target_path = str(path or '').strip().replace('\\', '/').lower()
+    target_name = Path(target_path).name.lower()
+    first_line = str(lines[0] or '').strip().strip('`')
+    normalized_first = first_line.replace('\\', '/').strip().strip(':').lower()
+    file_markers = {
+        target_path,
+        target_name,
+        f'file: {target_path}',
+        f'file: {target_name}',
+        f'path: {target_path}',
+        f'path: {target_name}',
+    }
+    if normalized_first in file_markers:
+        changed = True
+        lines.pop(0)
+        while lines and re.fullmatch(r'[-=]{3,}', str(lines[0] or '').strip()):
+            lines.pop(0)
+        while lines and not str(lines[0] or '').strip():
+            lines.pop(0)
+
+    return '\n'.join(lines).strip() if changed else sanitized
+
+
+def _strip_synthesized_instruction_lines(patch: str) -> str:
+    sanitized = str(patch or '').strip()
+    if not sanitized or '\n' not in sanitized:
+        return sanitized
+
+    lines = sanitized.splitlines()
+    changed = False
+    while lines:
+        current = str(lines[0] or '').strip()
+        if not current:
+            if changed:
+                lines.pop(0)
+                continue
+            break
+        if _SYNTHESIZED_INSTRUCTION_LINE_RE.match(current):
+            changed = True
+            lines.pop(0)
+            continue
+        break
+    return '\n'.join(lines).strip() if changed else sanitized
+
+
+def _translate_append_objective_response(objective: str, current_content: str, patch: str) -> str:
+    lowered_objective = str(objective or '').strip().lower()
+    if not any(token in lowered_objective for token in ('append', 'add a single line', 'add one line', 'append a line')):
+        return ''
+
+    sanitized = _strip_model_control_tokens(_unwrap_single_fenced_block(patch))
+    if not sanitized:
+        return ''
+    if any(token in sanitized for token in ('>>', '<<', 'apply_patch')):
+        return ''
+
+    candidate = sanitized.strip()
+    if not candidate:
+        return ''
+    if len(candidate.splitlines()) > 4:
+        return ''
+    if candidate in str(current_content or ''):
+        return ''
+
+    existing = str(current_content or '')
+    if existing and not existing.endswith('\n'):
+        existing += '\n'
+    if not candidate.endswith('\n'):
+        candidate += '\n'
+    return existing + candidate
+
+
+def _looks_like_shell_command_response(path: str, patch: str) -> bool:
+    sanitized = _strip_model_control_tokens(_unwrap_single_fenced_block(patch))
+    if not sanitized:
+        return False
+    if _translate_shell_append_response(path, '', sanitized):
+        return False
+    if _translate_shell_write_response(path, '', sanitized):
+        return False
+    first_line = str(sanitized.splitlines()[0] if sanitized.splitlines() else sanitized).strip().lower()
+    command_prefixes = (
+        'echo ',
+        'printf ',
+        'cat ',
+        'sed ',
+        'python ',
+        'node ',
+        'npm ',
+        'git ',
+        'apply_patch',
+        'powershell ',
+        'pwsh ',
+        'bash ',
+        'cmd ',
+    )
+    if first_line.startswith(command_prefixes):
+        return True
+    target_name = Path(str(path or '').strip()).name.lower()
+    return bool(target_name and target_name in sanitized.lower() and ('>>' in sanitized or '>' in sanitized))
+
+
+def _normalize_synthesized_content(objective: str, path: str, current_content: str, patch: str) -> str:
+    sanitized = _strip_model_control_tokens(_extract_synthesized_content(path, patch))
+    translated_append = _translate_shell_append_response(path, current_content, sanitized)
+    if translated_append:
+        return translated_append
+    translated_shell_write = _translate_shell_write_response(path, current_content, sanitized)
+    if translated_shell_write:
+        return translated_shell_write
+    stripped_preamble = _strip_synthesized_response_preamble(path, sanitized)
+    if stripped_preamble != sanitized:
+        sanitized = stripped_preamble
+    stripped_instruction_lines = _strip_synthesized_instruction_lines(sanitized)
+    if stripped_instruction_lines != sanitized:
+        sanitized = stripped_instruction_lines
+    inferred_append = _translate_append_objective_response(objective, current_content, sanitized)
+    if inferred_append:
+        return inferred_append
+    if _looks_like_shell_command_response(path, sanitized):
+        return ''
+    if '```' in sanitized:
+        return ''
+    return sanitized
+
+
+def _recover_candidate_content_from_selection(selection: dict[str, Any], objective: str, path: str, current_content: str) -> tuple[str, dict[str, Any]]:
+    for candidate in list(selection.get('candidates') or []):
+        raw_patch = str(candidate.get('patch') or '')
+        if not raw_patch.strip():
+            continue
+        normalized = _normalize_synthesized_content(objective, path, current_content, raw_patch)
+        if normalized.strip():
+            return normalized, {
+                'label': str(candidate.get('label') or ''),
+                'score': float(candidate.get('score') or 0),
+            }
+    return '', {}
+
+
+def _selection_provider_error(selection: dict[str, Any]) -> str:
+    for candidate in list(selection.get('candidates') or []):
+        for reason in list(candidate.get('reasons') or []):
+            text = str(reason or '').strip()
+            if not text:
+                continue
+            if text.lower().startswith('provider error:'):
+                return text.split(':', 1)[1].strip() or text
+    return ''
+
+
 def _select_synthesized_patch(provider: Any, objective: str, path: str, content: str, editor_context: dict[str, Any] | None = None) -> dict[str, Any]:
     if provider is None:
         return {'ok': False, 'error': 'no provider available for synthesized edit'}
@@ -209,12 +675,20 @@ def _select_synthesized_patch(provider: Any, objective: str, path: str, content:
         approved_targets=[path],
         target_path=path,
         active_file_path=str((normalize_editor_context(editor_context) or {}).get('active_file_path') or path),
+        include_patch_text=True,
     )
     best = dict(selection.get('best_candidate') or {})
     score = float(best.get('score') or 0)
     reasons = [str(item) for item in list(best.get('reasons') or []) if str(item)]
     patch = str(selection.get('best_patch') or '')
     if not patch.strip():
+        recovered_content, recovered_candidate = _recover_candidate_content_from_selection(selection, objective, path, content)
+        if recovered_content:
+            selection['recovered_candidate'] = recovered_candidate
+            return {'ok': True, 'content': recovered_content, 'selection': selection}
+        provider_error = _selection_provider_error(selection)
+        if provider_error:
+            return {'ok': False, 'error': provider_error, 'selection': selection}
         return {'ok': False, 'error': 'provider returned an empty patch', 'selection': selection}
     if score < _MIN_PATCH_SCORE:
         return {'ok': False, 'error': f'patch candidate below confidence threshold ({score:.2f})', 'selection': selection}
@@ -222,9 +696,18 @@ def _select_synthesized_patch(provider: Any, objective: str, path: str, content:
         return {'ok': False, 'error': 'patch candidate references unapproved file paths', 'selection': selection}
     if 'placeholder patch' in reasons:
         return {'ok': False, 'error': 'patch candidate is only a placeholder', 'selection': selection}
-    sanitized = _extract_synthesized_content(path, patch)
-    if '```' in sanitized:
-        return {'ok': False, 'error': 'patch candidate still contains markdown fences after sanitization', 'selection': selection}
+    sanitized = _normalize_synthesized_content(objective, path, content, patch)
+    if not sanitized.strip():
+        recovered_content, recovered_candidate = _recover_candidate_content_from_selection(selection, objective, path, content)
+        if recovered_content:
+            selection['recovered_candidate'] = recovered_candidate
+            return {'ok': True, 'content': recovered_content, 'selection': selection}
+        provider_error = _selection_provider_error(selection)
+        if provider_error:
+            return {'ok': False, 'error': provider_error, 'selection': selection}
+        if _looks_like_shell_command_response(path, patch):
+            return {'ok': False, 'error': 'patch candidate returned a shell command instead of file contents', 'selection': selection}
+        return {'ok': False, 'error': 'patch candidate did not normalize into file contents', 'selection': selection}
     return {'ok': True, 'content': sanitized, 'selection': selection}
 
 
@@ -268,15 +751,64 @@ def _tool_loop_execution_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in list(payload.get("execution") or []) if isinstance(item, dict)]
 
 
+def _tool_loop_result_summary(result: dict[str, Any]) -> str:
+    summary = str(result.get('summary') or '').strip()
+    if summary:
+        return summary
+    for item in reversed(list(result.get('trace') or [])):
+        text = str(dict(item).get('summary') or '').strip() if isinstance(item, dict) else ''
+        if text:
+            return text
+    return str(result.get('status') or '').strip()
+
+
+def _tool_loop_expects_mutation(context: dict[str, Any] | None = None) -> bool:
+    source = dict(context or {})
+    lane_id = str(source.get('lane_id') or source.get('laneId') or '').strip().lower()
+    task_mode = str(source.get('task_mode') or source.get('taskMode') or '').strip().lower()
+    if lane_id in {'code-main', 'repair-fast'}:
+        return True
+    if task_mode in {'coder', 'repair'}:
+        return True
+    for step in list(source.get('steps') or []):
+        if not isinstance(step, dict):
+            continue
+        action = str(step.get('action') or '').strip().lower()
+        if action in {'edit_file', 'smart_patch', 'synthesize_edit', 'modify_file'}:
+            return True
+    return False
+
+
+def _tool_loop_provider_preflight(provider: Any, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    if provider is None or not _tool_loop_expects_mutation(context):
+        return {'ok': True}
+    preflight = getattr(provider, 'preflight_check', None)
+    if not callable(preflight):
+        return {'ok': True}
+    try:
+        result = preflight()
+    except Exception as exc:
+        return {'ok': False, 'message': str(exc) or 'Provider preflight failed.'}
+    if isinstance(result, dict):
+        return {
+            'ok': bool(result.get('ok', False)),
+            'message': str(result.get('message') or '').strip(),
+        }
+    return {'ok': bool(result), 'message': ''}
+
+
 def _tool_loop_failure_kind(result: dict[str, Any]) -> str:
     if bool(result.get("pending_approvals")):
         return "risky-interrupt"
     if bool(result.get("ok")):
         return ""
+    text_parts = [str(result.get("summary") or ""), str(result.get("status") or "")]
+    haystack = " ".join(part.strip().lower() for part in text_parts if str(part).strip())
+    if any(token in haystack for token in ["ollama request failed", "provider preflight failed", "requires more system memory", "route is not ready"]):
+        return "route-not-ready"
     execution_rows = _tool_loop_execution_rows(result)
     if not execution_rows:
         return "empty-proposal"
-    text_parts = [str(result.get("summary") or ""), str(result.get("status") or "")]
     for item in execution_rows:
         step = dict(item.get("step") or {})
         step_result = dict(item.get("result") or {})
@@ -303,6 +835,10 @@ def _tool_loop_retry_policy(kind: str) -> dict[str, Any]:
         "invalid-change-set": {
             "action": "plan",
             "reason": "Tool loop produced an invalid bounded step set. Rebuild the plan before retrying.",
+        },
+        "route-not-ready": {
+            "action": "",
+            "reason": "The selected route is not ready on this machine. Switch to a live model or import a smaller local tag before retrying.",
         },
         "validation-failure": {
             "action": "repair",
@@ -340,7 +876,7 @@ def _tool_loop_failure_class(result: dict[str, Any], runtime_failure: dict[str, 
         code = _tool_loop_failure_kind(result)
         return build_failure_class(
             code=code,
-            summary=str(result.get("summary") or result.get("status") or "Tool loop failed."),
+            summary=_tool_loop_result_summary(result) or "Tool loop failed.",
             stage="tool-loop",
             retryable=code in {"empty-proposal", "invalid-change-set", "validation-failure"},
             blocking=False,
@@ -366,6 +902,10 @@ def _tool_loop_recovery_ladder(result: dict[str, Any], runtime_run: dict[str, An
         state = "failed"
         current_step = "bridge-plan-retry"
         next_step = "bridge-plan-retry"
+    elif failure_kind == "route-not-ready":
+        state = "failed"
+        current_step = "interrupt-or-rollback"
+        next_step = ""
     else:
         state = "failed"
         current_step = "repair-oriented-route"
@@ -412,7 +952,7 @@ def _tool_loop_interrupt_request(result: dict[str, Any]) -> dict[str, Any]:
             kind="runtime-block",
             summary=str(result.get("summary") or "Tool loop blocked."),
             active=True,
-            requested_action="retry-with-research" if failure_kind == "empty-proposal" else ("bridge-plan-retry" if failure_kind == "invalid-change-set" else "repair-loop"),
+            requested_action="retry-with-research" if failure_kind == "empty-proposal" else ("bridge-plan-retry" if failure_kind == "invalid-change-set" else ("open-trace" if failure_kind == "route-not-ready" else "repair-loop")),
             allowed_actions=["open-trace", "open-files", "retry-with-research", "bridge-plan-retry", "repair-loop", "rollback-last-pass"],
             request_count=1,
             metadata={"failure_kind": failure_kind},
@@ -604,6 +1144,16 @@ def _planner_handler(orchestrator, _agent, task, payload):
                     if isinstance(item, dict) and str(item.get("path") or "").strip()
                 ]
                 matches = ranked_matches or list((search_payload or {}).get("matches", []))
+                if _objective_requires_write(task.objective, context):
+                    non_low_signal_matches = [item for item in matches if not _is_low_signal_mutation_target(item)]
+                    if non_low_signal_matches:
+                        matches = non_low_signal_matches
+                    else:
+                        matches = _merge_target_candidates(
+                            _discover_repo_mutation_targets(context.get("project_root"), limit=6),
+                            matches,
+                            limit=6,
+                        )
                 plan_steps = _synthesized_execution_steps(matches[:3], task.objective, context)
 
     return {
@@ -632,6 +1182,7 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
     normalized_editor_context = normalize_editor_context(context.get('editor_context') or context.get('editorContext') or {})
     executed: list[dict[str, Any]] = []
     blocked = False
+    failed_result: dict[str, Any] | None = None
 
     for step in list(plan.get("steps") or []):
         action = str(step.get("action") or "").strip().lower()
@@ -640,7 +1191,7 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
         elif action in {"synthesize_edit", "modify_file"}:
             target_path = str(step.get('path') or '').strip()
             file_snapshot = orchestrator.execute_tool("implementer", "read_file", path=target_path, start_line=1, end_line=240)
-            if isinstance(file_snapshot, dict) and file_snapshot.get('ok') is False:
+            if isinstance(file_snapshot, dict) and file_snapshot.get('ok') is False and not _is_missing_file_read(file_snapshot):
                 result = file_snapshot
             else:
                 selected = _select_synthesized_patch(
@@ -696,10 +1247,22 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
         executed.append({"step": step, "result": result})
         if isinstance(result, dict) and result.get("pending_approval"):
             blocked = True
+            break
+        if isinstance(result, dict) and result.get('ok') is False:
+            failed_result = dict(result)
+            break
 
     return {
-        "status": "blocked" if blocked else "completed",
-        "summary": "Awaiting approval for controlled edits." if blocked else f"Executed {len(executed)} tool-loop step(s).",
+        "status": "blocked" if blocked else ("failed" if failed_result else "completed"),
+        "summary": (
+            "Awaiting approval for controlled edits."
+            if blocked
+            else (
+                str(failed_result.get('error') or failed_result.get('message') or 'Tool-loop execution failed.')
+                if failed_result
+                else f"Executed {len(executed)} tool-loop step(s)."
+            )
+        ),
         "payload": {
             **data,
             "execution": executed,
@@ -708,18 +1271,52 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
     }
 
 
-def _validator_handler(orchestrator, _agent, _task, payload):
+def _validator_handler(orchestrator, _agent, task, payload):
     data = dict(payload or {})
+    context = dict(task.context or {})
     git_status = orchestrator.execute_tool("validator", "git_status")
     pending = list(data.get("pending_approvals") or []) or orchestrator.pending_approvals()
+    runtime_context = extract_runtime_context(context)
+    failure_checks = list(dict(runtime_context.get('failure_output') or {}).get('checks') or [])
+    validation_command = ''
+    if failure_checks:
+        validation_command = str(dict(failure_checks[0]).get('command') or '').strip()
+    elif _is_repair_objective(task.objective, context):
+        project_root = Path(str(context.get('project_root') or '')).resolve() if str(context.get('project_root') or '').strip() else None
+        if project_root and (project_root / 'package.json').exists():
+            validation_command = 'npm test'
+    validation_result = None
+    if validation_command and not pending:
+        validation_result = orchestrator.execute_tool(
+            'validator',
+            'run_command',
+            command=validation_command,
+            cwd=str(context.get('project_root') or ''),
+            timeout=120,
+        )
+    validation_rows = []
+    if isinstance(validation_result, dict) and not validation_result.get('pending_approval'):
+        validation_rows.append(
+            {
+                'command': validation_command,
+                'ok': bool(validation_result.get('ok', False)),
+                'returncode': int(validation_result.get('returncode') or 0),
+                'stdout': str(validation_result.get('stdout') or ''),
+                'stderr': str(validation_result.get('stderr') or ''),
+            }
+        )
+    valid = not pending and (not validation_rows or all(bool(item.get('ok')) for item in validation_rows))
+    status = 'blocked' if pending else ('failed' if not valid else 'completed')
+    summary = 'Validation deferred until approvals are resolved.' if pending else ('Validation snapshot captured.' if valid else _validation_failure_summary(validation_rows))
     return {
-        "status": "blocked" if pending else "completed",
-        "summary": "Validation deferred until approvals are resolved." if pending else "Validation snapshot captured.",
+        "status": status,
+        "summary": summary,
         "payload": {
             **data,
             "validation": {
                 "git_status": git_status,
-                "valid": not pending,
+                "valid": valid,
+                "results": validation_rows,
             },
             "pending_approvals": pending,
         },
@@ -781,6 +1378,11 @@ def run_tool_loop(
     orchestrator = build_tool_loop_orchestrator(project_root, approval_gate=approval_gate)
     task_context = dict(context or {})
     task_context["provider"] = provider
+    runtime_task_metadata = {
+        'task_mode': str(task_context.get('task_mode') or task_context.get('taskMode') or '').strip().lower(),
+        'lane_id': str(task_context.get('lane_id') or task_context.get('laneId') or '').strip().lower(),
+        'lane_label': str(task_context.get('lane_label') or task_context.get('laneLabel') or '').strip(),
+    }
     runtime_task = build_runtime_task(
         ticket_id=str(ticket or ""),
         desc=str(objective or ""),
@@ -790,6 +1392,7 @@ def run_tool_loop(
         editor_context=task_context.get("editor_context") or task_context.get("editorContext") or {},
         host_boundary=task_context.get("host_boundary") or task_context.get("hostBoundary") or {},
         requested_capabilities={"tool_execution": True},
+        metadata=runtime_task_metadata,
     )
     runtime_run = build_runtime_run(task=runtime_task)
     orchestration_payload = {
@@ -818,12 +1421,33 @@ def run_tool_loop(
         ticket_id=str(ticket or ""),
         desc=str(objective or ""),
         editor_context=task_context.get("editor_context") or task_context.get("editorContext"),
+        validation=dict(task_context.get('validation') or {}),
+        repair=dict(task_context.get('repair') or {}),
+        artifact_paths=list(task_context.get('artifact_paths') or task_context.get('artifactPaths') or []),
         approval_state=orchestrator.approval_state(),
         permission_state=orchestrator.permission_state(),
         host_boundary=task_context.get("host_boundary") or task_context.get("hostBoundary") or {},
     )
+    preflight = _tool_loop_provider_preflight(provider, task_context)
     task = OrchestrationTask(objective=objective, ticket=ticket, context=task_context)
-    result = orchestrator.run(task, max_steps=max_steps)
+    if not preflight.get('ok', False):
+        result = {
+            'ok': False,
+            'status': 'failed',
+            'summary': str(preflight.get('message') or 'Provider preflight failed.'),
+            'trace': [
+                {
+                    'agent': 'provider-preflight',
+                    'status': 'failed',
+                    'summary': str(preflight.get('message') or 'Provider preflight failed.'),
+                }
+            ],
+            'payload': {'execution': [], 'pending_approvals': []},
+            'tool_audit_trail': [],
+            'tool_runtime_events': [],
+        }
+    else:
+        result = orchestrator.run(task, max_steps=max_steps)
     result["pending_approvals"] = orchestrator.pending_approvals()
     result["approval_state"] = orchestrator.approval_state()
     result["review_requests"] = orchestrator.review_requests()
@@ -834,6 +1458,9 @@ def run_tool_loop(
         ticket_id=str(ticket or ""),
         desc=str(objective or ""),
         editor_context=task_context.get("editor_context") or task_context.get("editorContext"),
+        validation=dict((result.get('payload', {}) or {}).get('validation') or task_context.get('validation') or {}),
+        repair=dict((result.get('payload', {}) or {}).get('repair') or task_context.get('repair') or {}),
+        artifact_paths=list(task_context.get('artifact_paths') or task_context.get('artifactPaths') or []),
         approval_state=result["approval_state"],
         permission_state=result["permission_state"],
         host_boundary=task_context.get("host_boundary") or task_context.get("hostBoundary") or {},
@@ -879,7 +1506,7 @@ def run_tool_loop(
             task_id=str(runtime_task.get("task_id") or ""),
             stage="tool-loop",
             kind=failure_kind or "tool-loop-failure",
-            message=str(result.get("summary") or f"tool loop ended with status {result.get('status')}"),
+            message=_tool_loop_result_summary(result) or f"tool loop ended with status {result.get('status')}",
             retryable=bool(retry_policy.get("action")),
             blocking=False,
             retry_policy=retry_policy,

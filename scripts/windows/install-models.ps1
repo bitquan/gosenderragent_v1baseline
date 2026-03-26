@@ -97,11 +97,26 @@ function Invoke-HfDownload {
 Write-Host "[gosenderr-pc] Qwen2.5 Coder 7B"
 Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'qwen2.5-coder:7b') -Label 'ollama pull qwen2.5-coder:7b'
 
+Write-Host "[gosenderr-pc] Qwen2.5 Coder 3B"
+Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'qwen2.5-coder:3b') -Label 'ollama pull qwen2.5-coder:3b'
+
 Write-Host "[gosenderr-pc] Qwen2.5 Coder 14B"
 Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'qwen2.5-coder:14b') -Label 'ollama pull qwen2.5-coder:14b'
 
+Write-Host "[gosenderr-pc] Granite Code 3B"
+Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'granite-code:3b') -Label 'ollama pull granite-code:3b'
+
+Write-Host "[gosenderr-pc] StarCoder2 3B"
+Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'starcoder2:3b') -Label 'ollama pull starcoder2:3b'
+
+Write-Host "[gosenderr-pc] CodeGemma 2B"
+Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'codegemma:2b') -Label 'ollama pull codegemma:2b'
+
+Write-Host "[gosenderr-pc] Phi-4 Mini 3.8B"
+Invoke-CheckedCommand -Command 'ollama' -Arguments @('pull', 'phi4-mini:3.8b') -Label 'ollama pull phi4-mini:3.8b'
+
 Write-Host "[gosenderr-pc] DeepSeek Coder V2 Lite"
-Invoke-HfDownload -RepoId 'QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF' -FileName 'DeepSeek-Coder-V2-Lite-Instruct.Q4_K_M.gguf'
+Invoke-HfDownload -RepoId 'QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF' -FileName 'DeepSeek-Coder-V2-Lite-Instruct.Q2_K.gguf'
 Write-Host "[gosenderr-pc] staged for import via Settings -> AI -> Import all stored models"
 
 Write-Host "[gosenderr-pc] Qwen3 14B"

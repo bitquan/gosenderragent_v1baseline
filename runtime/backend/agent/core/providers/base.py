@@ -52,6 +52,10 @@ class ModelProvider(ABC):
         patch_prompt = f"Propose a targeted code patch or repair guidance for the following issue:\n\n{prompt}"
         return self.generate(prompt=patch_prompt, **kwargs)
 
+    def preflight_check(self, **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return {"ok": True}
+
 
 class NullProvider(ModelProvider):
     def name(self) -> str:
@@ -63,3 +67,7 @@ class NullProvider(ModelProvider):
     def generate(self, *, prompt: str | None = None, messages: list[ProviderMessage] | None = None) -> str:
         del prompt, messages
         return ""
+
+    def preflight_check(self, **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return {"ok": False, "message": "No provider is available for this route."}

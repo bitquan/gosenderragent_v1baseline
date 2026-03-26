@@ -5,6 +5,11 @@ const { buildOperatorExecutionSnapshot } = require('../shared-runtime/runtime');
 
 test('buildOperatorExecutionSnapshot carries runtime timeline and provider accountability', () => {
   const snapshot = buildOperatorExecutionSnapshot({
+    runtimeContext: {
+      validation_scope: {
+        commands: ['npm run test:ui-shell'],
+      },
+    },
     runtimeResult: {
       runtime_timeline: [
         { stage: 'planning', event: 'route-selected', summary: 'planner routed', provider: 'openai', model: 'gpt-4.1-mini' },
@@ -17,5 +22,6 @@ test('buildOperatorExecutionSnapshot carries runtime timeline and provider accou
     },
   });
   assert.equal(snapshot.runtimeTimeline.length, 2);
+  assert.deepEqual(snapshot.validationCommands, ['npm run test:ui-shell']);
   assert.match(String(snapshot.providerAccountability.summary || ''), /planner:openai/);
 });

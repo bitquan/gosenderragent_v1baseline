@@ -1,6 +1,14 @@
 'use strict';
 
 const { buildLocalModelInventory } = require('./training-tuning');
+const {
+  CAPABILITY_ROUTE_LANES,
+  MODEL_EXECUTION_ROLE_DEFAULTS,
+  WRAPPED_PROFILE_ROLE_DEFAULTS,
+  resolveLaneExecutionRoleId,
+  resolveLaneRouteTaskMode,
+  resolveLaneWrappedProfileRole,
+} = require('./route-schema');
 
 function mean(values = []) {
   const numeric = values.map((item) => Number(item || 0)).filter((item) => Number.isFinite(item));
@@ -10,15 +18,13 @@ function mean(values = []) {
   return numeric.reduce((sum, item) => sum + item, 0) / numeric.length;
 }
 
-const AI_CAPABILITY_LANES = Object.freeze([
-  { id: 'chat-fast', label: 'Chat fast', summary: 'Short conversational replies and quick repo guidance.' },
-  { id: 'plan-reasoning', label: 'Plan reasoning', summary: 'Task scoping, acceptance checks, and bounded implementation plans.' },
-  { id: 'code-main', label: 'Code main', summary: 'Primary coding lane for implementation and refactors.' },
-  { id: 'repair-fast', label: 'Repair fast', summary: 'Focused debug and repair loops after a failing run.' },
-  { id: 'review-verify', label: 'Review verify', summary: 'Diff review, validation, and approval-aware analysis.' },
-  { id: 'research-docs', label: 'Research docs', summary: 'Documentation scouting and option comparison in safe lab trials.' },
-  { id: 'ops-summary', label: 'Ops summary', summary: 'Status snapshots, business-facing summaries, and operational handoffs.' },
-]);
+const AI_CAPABILITY_LANES = Object.freeze(
+  CAPABILITY_ROUTE_LANES.map((lane) => ({
+    id: lane.id,
+    label: lane.label,
+    summary: lane.summary,
+  })),
+);
 
 const AI_PROFILE_PRESETS = Object.freeze([
   {
@@ -55,6 +61,7 @@ const AI_PROFILE_PRESETS = Object.freeze([
 
 const GS_DEV1_TASK_MODES = Object.freeze([
   { id: 'planner', label: 'Planner', summary: 'Scope work, shape acceptance, and prepare bounded implementation plans.' },
+  { id: 'repair', label: 'Repair', summary: 'Run focused repair loops with the smallest safe fix and bounded retest scope.' },
   { id: 'coder', label: 'Coder', summary: 'Implement bounded code changes using the engine\'s existing implementer behavior.' },
   { id: 'validator', label: 'Validator', summary: 'Review diffs, run checks, and decide whether repair or release should follow.' },
   { id: 'summarizer', label: 'Summarizer', summary: 'Prepare summaries, reports, and release-facing output without widening execution scope.' },
@@ -75,65 +82,7 @@ const GS_DEV1_TRUST_REQUIREMENTS_DEFAULTS = Object.freeze({
   trustSummaryFamily: 'existing',
 });
 
-const WRAPPED_MODEL_ROLE_DEFAULTS = Object.freeze({
-  workspace: {
-    id: 'workspace',
-    label: 'Workspace coding model',
-    summary: 'Primary repo-work profile for thread-driven coding, edits, and repair loops.',
-  },
-  engine: {
-    id: 'engine',
-    label: 'GSE-1 engine model',
-    summary: 'Engine-only profile for planning, review, docs, summaries, and engine-facing operator work.',
-  },
-});
-
-const MODEL_EXECUTION_ROLE_DEFAULTS = Object.freeze({
-  orchestrator: {
-    id: 'orchestrator',
-    label: 'Front-door chat / orchestrator',
-    summary: 'Front-door chat, planning, docs scouting, and operator-facing summaries.',
-    laneIds: ['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary'],
-    primaryProfileRole: 'engine',
-    primaryLaneId: 'plan-reasoning',
-  },
-  worker: {
-    id: 'worker',
-    label: 'Worker',
-    summary: 'Implementation and repair loops for bounded coding work.',
-    laneIds: ['code-main', 'repair-fast'],
-    primaryProfileRole: 'workspace',
-    primaryLaneId: 'code-main',
-  },
-  reviewer: {
-    id: 'reviewer',
-    label: 'Reviewer / approval reasoning',
-    summary: 'Diff review, validation, and approval-aware reasoning.',
-    laneIds: ['review-verify'],
-    primaryProfileRole: 'engine',
-    primaryLaneId: 'review-verify',
-  },
-});
-
-const CAPABILITY_LANE_PROFILE_ROLE_MAP = Object.freeze({
-  'chat-fast': 'engine',
-  'code-main': 'workspace',
-  'repair-fast': 'workspace',
-  'plan-reasoning': 'engine',
-  'review-verify': 'engine',
-  'research-docs': 'engine',
-  'ops-summary': 'engine',
-});
-
-const CAPABILITY_LANE_MODEL_ROLE_MAP = Object.freeze({
-  'chat-fast': 'orchestrator',
-  'plan-reasoning': 'orchestrator',
-  'research-docs': 'orchestrator',
-  'ops-summary': 'orchestrator',
-  'code-main': 'worker',
-  'repair-fast': 'worker',
-  'review-verify': 'reviewer',
-});
+const WRAPPED_MODEL_ROLE_DEFAULTS = WRAPPED_PROFILE_ROLE_DEFAULTS;
 
 const LOCAL_FIRST_BLOCK_PACKS = Object.freeze([
   { taskMode: 'planner', laneId: 'plan-reasoning', label: 'Planner' },
@@ -148,7 +97,7 @@ function isLocalProvider(value) {
 
 function usesLocalPrimaryTaskMode(taskMode) {
   const normalized = normalizeTaskModeId(taskMode) || String(taskMode || '').trim().toLowerCase();
-  return ['planner', 'coder', 'validator'].includes(normalized);
+  return ['planner', 'repair', 'coder', 'validator'].includes(normalized);
 }
 
 function normalizeWrappedProfileId(value) {
@@ -162,33 +111,15 @@ function normalizeWrappedProfileRole(value) {
 }
 
 function capabilityLaneTaskMode(laneId) {
-  const normalized = String(laneId || '').trim().toLowerCase();
-  if (normalized === 'chat-fast') {
-    return 'planner';
-  }
-  if (normalized === 'plan-reasoning') {
-    return 'planner';
-  }
-  if (normalized === 'review-verify') {
-    return 'validator';
-  }
-  if (normalized === 'ops-summary') {
-    return 'summarizer';
-  }
-  if (normalized === 'research-docs') {
-    return 'planner';
-  }
-  return 'coder';
+  return resolveLaneRouteTaskMode(laneId);
 }
 
 function capabilityLaneProfileRole(laneId) {
-  const normalized = String(laneId || '').trim().toLowerCase();
-  return CAPABILITY_LANE_PROFILE_ROLE_MAP[normalized] || 'workspace';
+  return resolveLaneWrappedProfileRole(laneId);
 }
 
 function capabilityLaneModelRole(laneId) {
-  const normalized = String(laneId || '').trim().toLowerCase();
-  return CAPABILITY_LANE_MODEL_ROLE_MAP[normalized] || 'worker';
+  return resolveLaneExecutionRoleId(laneId);
 }
 
 function normalizeTaskModeId(value) {
@@ -246,6 +177,16 @@ function buildDefaultTaskModeRoute(taskMode, options = {}) {
     return {
       taskMode: 'coder',
       runtimeRole: 'implementer',
+      provider: currentProvider,
+      model: localModel,
+      fallbackModel: benchmarkModel,
+      fallbackProvider: inferProviderForModel(benchmarkModel, currentProvider),
+    };
+  }
+  if (taskMode === 'repair') {
+    return {
+      taskMode: 'repair',
+      runtimeRole: 'repair',
       provider: currentProvider,
       model: localModel,
       fallbackModel: benchmarkModel,
@@ -387,44 +328,83 @@ function buildWrappedProfiles(settings = {}, benchmarkSummary = [], providers = 
   const localModel = String(settings.trainingOllamaModel || (isLocalProvider(currentProvider) ? baseModel : '')).trim();
   const preferLocalPrimary = routingPolicy !== 'best-available' && !!localModel;
   const benchmarkModel = String(benchmarkSummary[0]?.model || baseModel).trim() || baseModel;
+  const configuredTaskModeRoutes = settings.taskModeRoutes && typeof settings.taskModeRoutes === 'object'
+    ? settings.taskModeRoutes
+    : {};
+  const workspaceBaseProvider = String(
+    settings.workspaceBaseProvider
+    || settings.baseProvider
+    || (preferLocalPrimary ? localProvider : currentProvider),
+  ).trim().toLowerCase() || (preferLocalPrimary ? localProvider : currentProvider);
+  const workspaceBaseModel = String(
+    settings.workspaceBaseModel
+    || settings.baseModel
+    || (preferLocalPrimary ? localModel : baseModel),
+  ).trim() || (preferLocalPrimary ? localModel : baseModel);
+  const workspaceProviderSource = String(
+    settings.workspaceProviderSource
+    || settings.workspaceBaseProvider
+    || settings.providerSource
+    || workspaceBaseProvider,
+  ).trim().toLowerCase() || workspaceBaseProvider;
   const defaultWorkspaceProfile = normalizeWrappedProfile({
     id: 'gs-dev-1-default',
     displayName: 'GS-Dev-1 Default',
     benchmarkTags: ['default', 'workspace'],
     role: 'workspace',
+    baseProvider: workspaceBaseProvider,
+    baseModel: workspaceBaseModel,
+    providerSource: workspaceProviderSource,
+    taskModeRoutes: configuredTaskModeRoutes,
   }, {
     family: 'gs-dev-1',
-    baseProvider: preferLocalPrimary ? localProvider : currentProvider,
-    baseModel: preferLocalPrimary ? localModel : baseModel,
-    providerSource: preferLocalPrimary ? localProvider : currentProvider,
+    baseProvider: workspaceBaseProvider,
+    baseModel: workspaceBaseModel,
+    providerSource: workspaceProviderSource,
     localProvider,
-    localModel: localModel || baseModel,
+    localModel: workspaceBaseModel || localModel || baseModel,
     benchmarkModel,
     remoteProvider,
     remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || 'gpt-5-mini').trim(),
-    modelLabel: String(settings.model || baseModel).trim(),
+    modelLabel: String(settings.model || workspaceBaseModel || baseModel).trim(),
   });
-  const defaultEngineProvider = preferLocalPrimary
-    ? localProvider
-    : (remoteAvailable ? remoteProvider : inferProviderForModel(benchmarkModel, currentProvider));
-  const defaultEngineModel = preferLocalPrimary
-    ? localModel
-    : (remoteAvailable
-    ? String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || benchmarkModel).trim() || benchmarkModel
-    : benchmarkModel);
+  const defaultEngineProvider = String(
+    settings.engineBaseProvider
+    || settings.engineProviderSource
+    || (preferLocalPrimary
+      ? localProvider
+      : (remoteAvailable ? remoteProvider : inferProviderForModel(benchmarkModel, currentProvider))),
+  ).trim().toLowerCase() || (preferLocalPrimary ? localProvider : inferProviderForModel(benchmarkModel, currentProvider));
+  const defaultEngineModel = String(
+    settings.engineBaseModel
+    || (preferLocalPrimary
+      ? localModel
+      : (remoteAvailable
+        ? String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || benchmarkModel).trim() || benchmarkModel
+        : benchmarkModel)),
+  ).trim() || benchmarkModel;
+  const engineProviderSource = String(
+    settings.engineProviderSource
+    || settings.engineBaseProvider
+    || defaultEngineProvider,
+  ).trim().toLowerCase() || defaultEngineProvider;
   const defaultEngineProfile = normalizeWrappedProfile({
     id: 'gse-1-engine',
     displayName: 'GSE-1 Engine',
     summary: 'Engine-only wrapped profile for planning, review, docs research, ops summaries, and engine-facing control work.',
     benchmarkTags: ['engine', 'gse-1'],
     role: 'engine',
+    baseProvider: defaultEngineProvider,
+    baseModel: defaultEngineModel,
+    providerSource: engineProviderSource,
+    taskModeRoutes: configuredTaskModeRoutes,
   }, {
     family: 'gse-1',
     baseProvider: defaultEngineProvider,
     baseModel: defaultEngineModel,
-    providerSource: defaultEngineProvider,
+    providerSource: engineProviderSource,
     localProvider,
-    localModel: localModel || defaultEngineModel,
+    localModel: defaultEngineModel || localModel,
     benchmarkModel,
     remoteProvider,
     remoteModel: String(settings.aiRemoteModel || remotePreset.models?.[0]?.id || defaultEngineModel).trim(),
@@ -484,7 +464,7 @@ const AI_ROUTING_POLICIES = Object.freeze([
   {
     id: 'custom',
     label: 'Custom',
-    summary: 'Use lane overrides where they exist and inherit the current workspace defaults everywhere else.',
+    summary: 'Use route overrides where they exist and keep the active profile defaults everywhere else.',
   },
 ]);
 
@@ -866,8 +846,94 @@ function buildLocalBenchmarkPack(pack = {}, capabilityLanes = [], benchmarkRuns 
   };
 }
 
+function buildLocalRouteCoverage(capabilityLanes = [], availableModels = [], packs = []) {
+  const lanes = Array.isArray(capabilityLanes) ? capabilityLanes : [];
+  const expectedPacks = Array.isArray(packs) && packs.length > 0
+    ? packs
+    : lanes
+      .filter((lane) => isLocalProvider(String(lane?.providerSource || lane?.provider || '').trim().toLowerCase()))
+      .map((lane) => ({
+        laneId: String(lane?.id || '').trim(),
+        taskMode: String(lane?.routeTaskMode || '').trim().toLowerCase(),
+        label: String(lane?.label || lane?.id || 'Local route').trim(),
+      }));
+  const readyOllamaModels = new Set(
+    (Array.isArray(availableModels) ? availableModels : [])
+      .filter((item) => String(item?.provider || '').trim().toLowerCase() === 'ollama' && item?.ready === true)
+      .map((item) => String(item?.model || '').trim())
+      .filter(Boolean),
+  );
+  const registeredOllamaModels = new Set(
+    (Array.isArray(availableModels) ? availableModels : [])
+      .filter((item) => (
+        String(item?.provider || '').trim().toLowerCase() === 'ollama'
+        && ((String(item?.source || '').trim().toLowerCase() === 'ollama' && item?.ready !== true)
+          || String(item?.source || '').trim().toLowerCase() === 'ollama-store'
+          || String(item?.note || '').trim().toLowerCase() === 'registered in ollama')
+      ))
+      .map((item) => String(item?.model || '').trim())
+      .filter(Boolean),
+  );
+  const entries = expectedPacks.map((pack) => {
+    const lane = lanes.find((item) => String(item?.id || '').trim().toLowerCase() === String(pack?.laneId || '').trim().toLowerCase()) || null;
+    const configuredProvider = String(lane?.providerSource || lane?.provider || '').trim().toLowerCase();
+    const model = String(lane?.preferredModel || '').trim();
+    const provider = inferProviderForModel(model, configuredProvider || 'ollama');
+    const local = isLocalProvider(provider);
+    const liveReady = local && !!model && readyOllamaModels.has(model);
+    return {
+      laneId: String(pack?.laneId || lane?.id || '').trim(),
+      taskMode: String(pack?.taskMode || lane?.routeTaskMode || '').trim().toLowerCase(),
+      label: String(pack?.label || lane?.label || lane?.id || 'Local route').trim(),
+      provider,
+      model,
+      local,
+      liveReady,
+    };
+  });
+  const routeLocal = entries.length > 0 && entries.every((entry) => entry.local === true);
+  const requiredModels = Array.from(new Set(entries.filter((entry) => entry.local && entry.model).map((entry) => entry.model)));
+  const missingLiveModels = Array.from(new Set(entries.filter((entry) => entry.local && entry.model && entry.liveReady !== true).map((entry) => entry.model)));
+  const registeredButNotLiveModels = missingLiveModels.filter((model) => registeredOllamaModels.has(model));
+  const status = entries.length === 0
+    ? 'locked'
+    : routeLocal && missingLiveModels.length === 0
+      ? 'verified'
+      : routeLocal || missingLiveModels.length > 0
+        ? 'next'
+        : 'locked';
+  const summary = status === 'verified'
+    ? 'The routed local coding tags are live in Ollama for every required lane.'
+    : status === 'next'
+      ? `Local routing exists, but ${missingLiveModels.length > 0 ? (() => {
+        if (registeredButNotLiveModels.length === missingLiveModels.length) {
+          return `${registeredButNotLiveModels.join(', ')} ${registeredButNotLiveModels.length === 1 ? 'is' : 'are'} registered in Ollama and not live in the running service yet`;
+        }
+        if (registeredButNotLiveModels.length > 0) {
+          const otherMissingModels = missingLiveModels.filter((model) => !registeredOllamaModels.has(model));
+          return `${registeredButNotLiveModels.join(', ')} ${registeredButNotLiveModels.length === 1 ? 'is' : 'are'} registered in Ollama and not live in the running service yet, and ${otherMissingModels.join(', ')} ${otherMissingModels.length === 1 ? 'still needs' : 'still need'} live local tags`;
+        }
+        return `${missingLiveModels.join(', ')} ${missingLiveModels.length === 1 ? 'is' : 'are'} not live in Ollama yet`;
+      })() : 'some required lanes still need live local tags'}.`
+      : 'The required planner, coder, and validator routes are not yet pinned to local tags.';
+  const nextAction = missingLiveModels.length > 0
+    ? `Import or activate the missing live Ollama tag${missingLiveModels.length === 1 ? '' : 's'}: ${missingLiveModels.join(', ')}.`
+    : 'Keep planner, coder, and validator pinned to local routes before widening the coding block.';
+  return {
+    status,
+    summary,
+    nextAction,
+    routeLocal,
+    requiredModels,
+    missingLiveModels,
+    readyModels: requiredModels.filter((model) => readyOllamaModels.has(model)),
+    entries,
+  };
+}
+
 function buildLocalCodingBlockProof(options = {}) {
   const capabilityLanes = Array.isArray(options.capabilityLanes) ? options.capabilityLanes : [];
+  const availableModels = Array.isArray(options.availableModels) ? options.availableModels : [];
   const benchmarkRuns = Array.isArray(options.benchmarkRuns) ? options.benchmarkRuns : [];
   const acceptance = options.acceptance && typeof options.acceptance === 'object' ? options.acceptance : {};
   const acceptanceControl = acceptance?.controlSummary && typeof acceptance.controlSummary === 'object'
@@ -879,16 +945,8 @@ function buildLocalCodingBlockProof(options = {}) {
     || acceptance?.overallStatus
     || ''
   ).trim().toLowerCase();
-  const routePacks = LOCAL_FIRST_BLOCK_PACKS.map((pack) => {
-    const lane = capabilityLanes.find((item) => String(item?.id || '').trim().toLowerCase() === pack.laneId) || null;
-    const provider = String(lane?.providerSource || lane?.provider || '').trim().toLowerCase();
-    return {
-      ...pack,
-      provider,
-      local: isLocalProvider(provider),
-    };
-  });
-  const routeLocal = routePacks.every((pack) => pack.local === true);
+  const routeCoverage = buildLocalRouteCoverage(capabilityLanes, availableModels, LOCAL_FIRST_BLOCK_PACKS);
+  const routeLocal = routeCoverage.routeLocal === true;
   const benchmarkPacks = LOCAL_FIRST_BLOCK_PACKS.map((pack) => buildLocalBenchmarkPack(pack, capabilityLanes, benchmarkRuns));
   const verifiedTaskModes = benchmarkPacks.filter((pack) => pack.status === 'verified').map((pack) => pack.taskMode);
   const missingTaskModes = benchmarkPacks.filter((pack) => pack.status !== 'verified').map((pack) => pack.taskMode);
@@ -902,17 +960,19 @@ function buildLocalCodingBlockProof(options = {}) {
     : (acceptance?.exists === true || !!acceptanceStatus)
       ? 'next'
       : 'locked';
-  const status = routeLocal && benchmarkStatus === 'verified' && acceptanceGateStatus === 'verified'
+  const status = routeCoverage.status === 'verified' && benchmarkStatus === 'verified' && acceptanceGateStatus === 'verified'
     ? 'verified'
-    : routeLocal && (benchmarkStatus !== 'locked' || acceptanceGateStatus !== 'locked')
+    : routeCoverage.status !== 'locked' && (benchmarkStatus !== 'locked' || acceptanceGateStatus !== 'locked')
       ? 'next'
       : 'locked';
   const summary = status === 'verified'
     ? 'Planner, coder, and validator all have passing local benchmark packs and a safe acceptance baseline.'
     : status === 'next'
-      ? `Local routing is in place, but proof is still incomplete${missingTaskModes.length ? ` for ${missingTaskModes.join(', ')}` : ''}.`
+      ? `${routeCoverage.status !== 'verified' ? `${routeCoverage.summary} ` : ''}Local proof is still incomplete${missingTaskModes.length ? ` for ${missingTaskModes.join(', ')}` : ''}.`.trim()
       : 'The local coding block still needs route, benchmark, and acceptance proof before widening.';
-  const nextAction = benchmarkStatus !== 'verified'
+  const nextAction = routeCoverage.status !== 'verified'
+    ? routeCoverage.nextAction
+    : benchmarkStatus !== 'verified'
     ? `Record passing local benchmark packs for ${missingTaskModes.join(', ')} before widening the coding block.`
     : acceptanceGateStatus !== 'verified'
       ? String(acceptanceControl.nextSafeAction || acceptanceControl.nextDaySummary || 'Run acceptance with smoke coverage before widening the local coding block.')
@@ -923,6 +983,7 @@ function buildLocalCodingBlockProof(options = {}) {
     nextAction,
     canWidenAutonomy: status === 'verified',
     routeLocal,
+    route: routeCoverage,
     benchmark: {
       status: benchmarkStatus,
       verifiedTaskModes,
@@ -986,6 +1047,7 @@ function resolveCurrentProvider(runtimeMode = 'ollama', providers = [], settings
 function buildAvailableModels(settings = {}, tuningStatus = {}) {
   const telemetry = tuningStatus?.telemetry || {};
   const options = Array.isArray(telemetry?.models?.availableOptions) ? telemetry.models.availableOptions : [];
+  const registered = Array.isArray(telemetry?.models?.registered) ? telemetry.models.registered : [];
   const available = [];
   const seen = new Set();
 
@@ -999,9 +1061,25 @@ function buildAvailableModels(settings = {}, tuningStatus = {}) {
       model,
       label: String(option?.label || model).trim() || model,
       provider: inferProviderForModel(model, String(option?.source || '').trim().toLowerCase() === 'local' ? 'local' : 'ollama'),
-      ready: option?.ready !== false,
+      ready: option?.ready === true,
       note: String(option?.note || '').trim(),
       source: String(option?.source || '').trim() || 'ollama',
+    });
+  }
+
+  for (const option of registered) {
+    const model = String(option?.value || option?.label || '').trim();
+    if (!model || seen.has(model)) {
+      continue;
+    }
+    seen.add(model);
+    available.push({
+      model,
+      label: String(option?.label || model).trim() || model,
+      provider: inferProviderForModel(model, 'ollama'),
+      ready: false,
+      note: 'registered in Ollama',
+      source: 'ollama-store',
     });
   }
 
@@ -1337,9 +1415,10 @@ function summarizeExecutionRoleProvisioning(roleLanes = [], provisioning = {}) {
   const state = failed.length > 0 ? 'fail' : warned.length > 0 ? 'warn' : matched.length > 0 ? 'ready' : 'unknown';
   const local = matched.some((item) => item.local === true);
   const localReady = matched.some((item) => item.localReady === true);
+  const storeRegistered = matched.some((item) => item.storeRegistered === true);
   return {
     provisioningState: state,
-    localReadiness: local ? (localReady ? 'ready' : state === 'unknown' ? 'fail' : state) : 'not-local',
+    localReadiness: local ? (localReady ? 'live' : (storeRegistered ? 'registered' : state === 'unknown' ? 'missing' : 'staged')) : 'not-local',
     localReady,
     provisioningSummary: matched[0]?.summary || '',
   };
@@ -1466,8 +1545,13 @@ function providerStatusForRole(roleId, profile = {}, providers = [], availableMo
   const provider = providers.find((item) => String(item?.id || '').trim().toLowerCase() === providerId) || null;
   const readyOllamaModels = new Set(
     (Array.isArray(availableModels) ? availableModels : [])
-      .filter((item) => String(item?.provider || '').trim().toLowerCase() === 'ollama' && item?.ready !== false)
+      .filter((item) => String(item?.provider || '').trim().toLowerCase() === 'ollama' && item?.ready === true)
       .map((item) => String(item?.model || '').trim())
+      .filter(Boolean),
+  );
+  const registeredOllamaModels = new Set(
+    (Array.isArray(telemetry?.models?.registered) ? telemetry.models.registered : [])
+      .map((item) => String(item?.value || '').trim())
       .filter(Boolean),
   );
   const ollamaRunning = telemetry?.ollama?.running === true || telemetry?.ollama?.reachable === true;
@@ -1475,7 +1559,7 @@ function providerStatusForRole(roleId, profile = {}, providers = [], availableMo
 
   if (providerId === 'ollama') {
     const ready = model
-      ? (readyOllamaModels.has(model) || (readyOllamaModels.size === 0 && ollamaModelCount > 0))
+      ? readyOllamaModels.has(model)
       : ollamaModelCount > 0;
     if (ready && ollamaRunning) {
       return {
@@ -1489,7 +1573,24 @@ function providerStatusForRole(roleId, profile = {}, providers = [], availableMo
         state: 'ready',
         local: true,
         localReady: true,
+        storeRegistered: registeredOllamaModels.has(model),
         summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role is provisioned on Ollama${model ? ` with ${model}` : ''}.`,
+      };
+    }
+    if (model && registeredOllamaModels.has(model)) {
+      return {
+        role: roleId,
+        wrappedProfileRole,
+        wrappedProfileId,
+        wrappedProfileLabel,
+        provider: providerId,
+        providerSource: providerId,
+        model,
+        state: 'warn',
+        local: true,
+        localReady: false,
+        storeRegistered: true,
+        summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role wants ${model}, but that tag is registered in Ollama and not live in the running service yet.`,
       };
     }
     if (ollamaRunning && ollamaModelCount > 0) {
@@ -1504,7 +1605,8 @@ function providerStatusForRole(roleId, profile = {}, providers = [], availableMo
         state: 'warn',
         local: true,
         localReady: false,
-        summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role wants ${model || 'an Ollama model'}, but the selected model is not ready yet.`,
+        storeRegistered: false,
+        summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role wants ${model || 'an Ollama model'}, but the selected model is not live in Ollama yet.`,
       };
     }
     return {
@@ -1518,7 +1620,8 @@ function providerStatusForRole(roleId, profile = {}, providers = [], availableMo
       state: 'fail',
       local: true,
       localReady: false,
-      summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role is routed to Ollama, but no ready Ollama model is available yet.`,
+      storeRegistered: false,
+      summary: `${roleId === 'engine' ? 'Engine' : 'Workspace'} role is routed to Ollama, but no live Ollama model is available yet.`,
     };
   }
 
@@ -1574,7 +1677,7 @@ function buildModelProvisioningStatus(options = {}) {
     ? failedRoles[0].summary
     : warnedRoles.length > 0
       ? warnedRoles[0].summary
-      : 'Workspace and engine model roles are provisioned for the current routing plan.';
+      : 'Workspace coding and engine control roles are provisioned for the current route plan.';
   let recommendedAction = 'Keep the next slice bounded and reuse the current model routing.';
   if (failedRoles.some((item) => item.provider === 'ollama')) {
     recommendedAction = `Import or select a ready Ollama model${selectedModel ? ` (${selectedModel})` : ''} before asking the engine for local coding work.`;
@@ -1640,7 +1743,7 @@ function buildAiStatus(options = {}) {
   const derivedModelLabel = ['ollama', 'local'].includes(currentProvider)
     ? (availableModels.find((item) => item.model === currentModel)?.label || currentModel)
     : (remoteModelCatalog.find((item) => item.model === currentModel)?.label || currentModel);
-  const provisioning = buildModelProvisioningStatus({
+  const baseProvisioning = buildModelProvisioningStatus({
     settings,
     providers,
     availableModels,
@@ -1651,13 +1754,29 @@ function buildAiStatus(options = {}) {
     engineProfile: engineWrappedProfile,
   });
   const capabilityLanes = buildLaneAssignments(settings, benchmarkSummary, providers, tuningStatus, wrappedProfiles);
+  const routeCoverage = buildLocalRouteCoverage(capabilityLanes, availableModels);
+  const provisioning = routeCoverage.status !== 'verified' && routeCoverage.missingLiveModels.length > 0 && baseProvisioning.status !== 'fail'
+    ? {
+      ...baseProvisioning,
+      status: 'warn',
+      state: 'warn',
+      summary: routeCoverage.summary,
+      recommendedAction: routeCoverage.nextAction,
+      warnings: [...(Array.isArray(baseProvisioning.warnings) ? baseProvisioning.warnings : []), routeCoverage.summary],
+      routeCoverage,
+    }
+    : {
+      ...baseProvisioning,
+      routeCoverage,
+    };
   const modelRoles = buildExplicitModelRoles(capabilityLanes, wrappedProfiles, provisioning);
   const localCodingProof = buildLocalCodingBlockProof({
     capabilityLanes,
+    availableModels,
     benchmarkRuns,
     acceptance,
   });
-  const localModelInventory = buildLocalModelInventory({
+  const baseLocalModelInventory = buildLocalModelInventory({
     workspaceRoot,
     settings,
     telemetry,
@@ -1665,6 +1784,10 @@ function buildAiStatus(options = {}) {
     foundryStatus: options.modelFoundry,
     benchmarkSummary,
   });
+  const localModelInventory = {
+    ...baseLocalModelInventory,
+    routeCoverage,
+  };
   const activeLocalInventoryEntry = localModelInventory.entries.find((entry) => (
     entry.kind === 'wrapped-profile'
     && String(entry.wrappedProfileId || '').trim() === String(activeWrappedProfile?.id || '').trim()
@@ -1715,6 +1838,7 @@ function buildAiStatus(options = {}) {
       workerVariantId: String(activeLocalInventoryEntry?.workerVariantId || '').trim(),
       workerVariantType: String(activeLocalInventoryEntry?.workerVariantType || '').trim(),
       promotionPolicy: String(localModelInventory.promotionPolicy || '').trim(),
+      routeCoverageStatus: String(routeCoverage.status || '').trim().toLowerCase(),
     },
     availableModels,
     modelCatalog,
@@ -1739,6 +1863,7 @@ function buildAiStatus(options = {}) {
       benchmarkReady: localCodingProof.benchmark.status === 'verified',
       benchmarkLeader: benchmarkSummary[0] || null,
       localCodingProof,
+      routeCoverage,
       datasetExportEligible: activeWrappedProfile?.datasetExport?.eligible === true,
       promotionReady: activeWrappedProfile?.promotion?.rollbackReady === true,
     },

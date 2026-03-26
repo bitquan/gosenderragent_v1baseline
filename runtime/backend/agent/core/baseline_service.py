@@ -18,7 +18,7 @@ _CONFTEST_RE = re.compile(r"conftest\.py|ConftestImportFailure|ImportError while
 _PATH_RE = re.compile(r"((?:backend|frontend|docs)/[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|md|json|ya?ml))(?::(\d+))?")
 _PLACEHOLDER_RE = re.compile(r"generated for BAT<|placeholder|NotImplementedError|stub", re.IGNORECASE)
 _NON_RUNTIME_ARTIFACT_RE = re.compile(
-    r"(?:^assistant_|^engine_|_status_suggestion\.json$|_critique\.json$|(?:^|_)plan\.json$|_bundle\.json$|_execution\.json$|_report\.json$|_summary\.json$)",
+    r"(?:^assistant_|^engine_|_status_suggestion\.json$|_critique\.json$|(?:^|_)plan\.json$|_bundle\.json$|_report\.json$|_summary\.json$)",
     re.IGNORECASE,
 )
 
@@ -182,6 +182,48 @@ def _hotspot_summary(hotspot: dict[str, Any] | None) -> str:
 
 def _run_generated_at(run: dict[str, Any]) -> datetime | None:
     return _parse_iso(run.get("generated_at") or run.get("timestamp"))
+
+
+def _run_recorded_at(run: dict[str, Any], *, fallback: datetime | None = None) -> datetime | None:
+    return (
+        _parse_iso(
+            run.get("endedAt")
+            or run.get("completedAt")
+            or run.get("updatedAt")
+            or run.get("generated_at")
+            or run.get("timestamp")
+            or run.get("startedAt")
+        )
+        or fallback
+    )
+
+
+def _expand_runtime_state_runs(payload: dict[str, Any], *, artifact_name: str, fallback: datetime | None = None) -> list[tuple[datetime, dict[str, Any]]]:
+    expanded: list[tuple[datetime, dict[str, Any]]] = []
+    for index, item in enumerate(payload.get("runs") or []):
+        if not isinstance(item, dict):
+            continue
+        run = dict(item)
+        recorded_at = _run_recorded_at(run, fallback=fallback)
+        if recorded_at is None:
+            continue
+        run.setdefault("generated_at", recorded_at.isoformat())
+        run.setdefault("_artifact_name", artifact_name)
+        run.setdefault("_artifact_source", "runtime_state")
+        run.setdefault("_runtime_state_index", index)
+        expanded.append((recorded_at, run))
+    return expanded
+
+
+def _run_identity(run: dict[str, Any], *, artifact_name: str, recorded_at: datetime) -> tuple[str, ...]:
+    run_id = str(run.get("runId") or run.get("id") or "").strip()
+    if run_id:
+        return ("run", run_id)
+    ticket = str(run.get("ticket") or "").strip()
+    task = str(run.get("task") or run.get("desc") or "").strip()
+    if ticket or task:
+        return ("task", ticket, task, recorded_at.isoformat())
+    return ("artifact", artifact_name, recorded_at.isoformat())
 
 
 def _artifact_terminal_state(run: dict[str, Any]) -> str:
@@ -527,6 +569,7 @@ def load_recent_runs(project_root: Path, *, lookback_hours: int = 24, limit: int
         assistant_dev_runs_dir(project_root),
     ]
     seen: set[Path] = set()
+    seen_runs: set[tuple[str, ...]] = set()
 
     for root in roots:
         if not root.exists():
@@ -543,18 +586,36 @@ def load_recent_runs(project_root: Path, *, lookback_hours: int = 24, limit: int
                 continue
             if not isinstance(payload, dict):
                 continue
+            fallback_generated_at: datetime | None = None
+            try:
+                fallback_generated_at = datetime.fromtimestamp(artifact.stat().st_mtime, tz=timezone.utc)
+            except Exception:
+                fallback_generated_at = None
+            if artifact.name.lower() == "runtime_state.json" and isinstance(payload.get("runs"), list):
+                for generated_at, run in _expand_runtime_state_runs(payload, artifact_name=artifact.name, fallback=fallback_generated_at):
+                    if generated_at < cutoff:
+                        continue
+                    if not is_baseline_relevant_run(run, artifact_name=artifact.name):
+                        continue
+                    run_key = _run_identity(run, artifact_name=artifact.name, recorded_at=generated_at)
+                    if run_key in seen_runs:
+                        continue
+                    seen_runs.add(run_key)
+                    candidates.append((generated_at, run))
+                continue
             if not is_baseline_relevant_run(payload, artifact_name=artifact.name):
                 continue
             generated_at = _parse_iso(payload.get("generated_at") or payload.get("timestamp"))
             if generated_at is None:
-                try:
-                    generated_at = datetime.fromtimestamp(artifact.stat().st_mtime, tz=timezone.utc)
-                except Exception:
-                    generated_at = None
+                generated_at = fallback_generated_at
             if generated_at is None or generated_at < cutoff:
                 continue
             payload.setdefault("generated_at", generated_at.isoformat())
             payload.setdefault("_artifact_name", artifact.name)
+            run_key = _run_identity(payload, artifact_name=artifact.name, recorded_at=generated_at)
+            if run_key in seen_runs:
+                continue
+            seen_runs.add(run_key)
             candidates.append((generated_at, payload))
 
     candidates.sort(key=lambda item: item[0], reverse=True)

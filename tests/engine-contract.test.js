@@ -45,10 +45,73 @@ test('engine contract parses slash directives and routes modes safely', () => {
 });
 
 test('engine contract keeps engine and workspace roles aligned with lanes', () => {
+  assert.equal(resolveExecutionModelRole({ laneId: 'chat-fast' }), 'engine');
   assert.equal(resolveExecutionModelRole({ laneId: 'plan-reasoning' }), 'engine');
   assert.equal(resolveExecutionModelRole({ laneId: 'review-verify' }), 'engine');
   assert.equal(resolveExecutionModelRole({ laneId: 'code-main' }), 'workspace');
   assert.equal(resolveExecutionModelRole({ laneId: 'repair-fast' }), 'workspace');
+  assert.equal(resolveTaskLoopLane('chat-fast').taskMode, 'chat');
+});
+
+test('engine contract keeps chat-fast conversational while routing it through the planner model path', () => {
+  const selection = resolveModelProfileSelection({
+    workspaceBaseModel: 'qwen2.5-coder:14b',
+    workspaceBaseProvider: 'ollama',
+    workspaceProviderSource: 'ollama',
+    engineBaseModel: 'gpt-4.1-mini',
+    engineBaseProvider: 'openai',
+    engineProviderSource: 'openai',
+    taskModeRoutes: {
+      planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+    },
+  }, {
+    laneId: 'chat-fast',
+    taskMode: 'chat',
+    action: 'chat',
+  });
+  const summary = buildTerminalRoutingSummary({
+    chatMode: 'ask',
+    message: 'can you help me think through the next safe step?',
+  });
+
+  assert.equal(resolveTaskLoopLane('chat-fast').action, 'chat');
+  assert.equal(selection.modelRole, 'engine');
+  assert.equal(selection.active.baseProvider, 'ollama');
+  assert.equal(selection.active.baseModel, 'qwen2.5-coder:7b');
+  assert.equal(summary.suggestedTaskMode, 'chat');
+  assert.equal(summary.routeTaskMode, 'planner');
+});
+
+test('engine contract prefers a dedicated repair route and falls back to coder when repair is not pinned', () => {
+  const withRepairRoute = resolveModelProfileSelection({
+    workspaceBaseModel: 'qwen2.5-coder:14b',
+    workspaceBaseProvider: 'ollama',
+    workspaceProviderSource: 'ollama',
+    taskModeRoutes: {
+      repair: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+    },
+  }, {
+    laneId: 'repair-fast',
+    taskMode: 'repair',
+    action: 'repair',
+  });
+  const fallbackToCoder = resolveModelProfileSelection({
+    workspaceBaseModel: 'qwen2.5-coder:14b',
+    workspaceBaseProvider: 'ollama',
+    workspaceProviderSource: 'ollama',
+    taskModeRoutes: {
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+    },
+  }, {
+    laneId: 'repair-fast',
+    taskMode: 'repair',
+    action: 'repair',
+  });
+
+  assert.equal(withRepairRoute.active.baseModel, 'qwen2.5-coder:7b');
+  assert.equal(fallbackToCoder.active.baseModel, 'qwen2.5-coder:14b');
 });
 
 test('engine contract resolves model profile selection without inventing a second routing truth', () => {
@@ -70,6 +133,7 @@ test('engine contract resolves model profile selection without inventing a secon
     engineProviderSource: 'openai',
     taskModeRoutes: {
       planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      repair: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
       coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
       validator: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
       summarizer: { provider: 'openai', model: 'gpt-4.1-mini' },
@@ -96,6 +160,7 @@ test('buildTerminalRoutingSummary exposes one canonical mode/lane/action summary
   assert.equal(summary.modeLabel, 'Auto');
   assert.equal(summary.effectiveModeLabel, 'Agent');
   assert.equal(summary.suggestedLaneId, 'repair-fast');
+  assert.equal(summary.routeTaskMode, 'repair');
   assert.equal(summary.action, resolveTaskLoopLane('repair-fast').action);
   assert.match(summary.modeInstruction, /Act like a strong coding teammate/i);
 });

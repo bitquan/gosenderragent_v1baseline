@@ -3,7 +3,7 @@
 const { normalizeTicket } = require('../shared-runtime/runtime');
 
 const DEFAULT_HELP_TEXT =
-  'Try: "Plan the next safe coding task", "Review the current repo and tell me what needs fixing first", "Set up the coding model and verify the engine is ready", "/plan 176", "/implement planned", "/repair", "/autopilot", "/approve", "/health", "/app update check", "/train", "/learn", "/status", or "/cancel <runId>".';
+  'Try: "Plan the next safe coding task", "Review the current repo and tell me what needs fixing first", "Set up the workspace coding model, engine control model, and verify the route plan is ready", "/plan 176", "/implement planned", "/repair", "/autopilot", "/approve", "/health", "/app update check", "/train", "/learn", "/status", or "/cancel <runId>".';
 
 const DEFAULT_FALLBACK_TEXT =
   'I can turn English requests into scoped coding work, review diffs, manage approvals, run the engine, and report workspace health. Example: "Plan the next safe coding task."';

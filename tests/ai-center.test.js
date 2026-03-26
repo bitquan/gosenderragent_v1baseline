@@ -33,6 +33,12 @@ test('ai center summarizes profiles, providers, and benchmark leaders', () => {
           reachable: true,
           modelCount: 3,
         },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama', ready: true },
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+          ],
+        },
         cpuUsagePercent: 21,
         memory: {
           usedPercent: 48,
@@ -112,6 +118,7 @@ test('ai center summarizes profiles, providers, and benchmark leaders', () => {
   assert.equal(planLane.preferredModel, 'qwen2.5-coder:7b');
   assert.equal(reviewLane.provider, 'ollama');
   assert.equal(reviewLane.preferredModel, 'qwen2.5-coder:7b');
+  assert.equal(chatLane.profileRole, 'engine');
   assert.equal(chatLane.modelRoleId, 'orchestrator');
   assert.equal(codeLane.modelRoleId, 'worker');
   assert.equal(planLane.modelRoleId, 'orchestrator');
@@ -150,6 +157,11 @@ test('ai center keeps synthesized default wrapped profiles local-first when remo
     tuningStatus: {
       telemetry: {
         ollama: { running: true, reachable: true, modelCount: 1 },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama', ready: true },
+          ],
+        },
         memory: { usedPercent: 34 },
         cpuUsagePercent: 14,
         thermal: { state: 'nominal' },
@@ -202,6 +214,12 @@ test('ai center marks the local coding block verified only after local planner c
     tuningStatus: {
       telemetry: {
         ollama: { running: true, reachable: true, modelCount: 2 },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama', ready: true },
+          ],
+        },
         memory: { usedPercent: 42 },
         cpuUsagePercent: 22,
         thermal: { state: 'nominal' },
@@ -271,6 +289,12 @@ test('ai center keeps the local coding block in next state when local benchmark 
     tuningStatus: {
       telemetry: {
         ollama: { running: true, reachable: true, modelCount: 2 },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama', ready: true },
+          ],
+        },
         memory: { usedPercent: 42 },
         cpuUsagePercent: 22,
         thermal: { state: 'nominal' },
@@ -304,6 +328,200 @@ test('ai center keeps the local coding block in next state when local benchmark 
   assert.deepEqual(status.localCodingProof.benchmark.missingTaskModes, ['validator']);
   assert.equal(status.localCodingProof.acceptance.status, 'next');
   assert.equal(status.localCodingProof.canWidenAutonomy, false);
+});
+
+test('ai center keeps the local coding block in next state when a routed local tag is registered but not live in Ollama', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'ollama',
+      trainingOllamaModel: 'qwen2.5-coder:14b',
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+      aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+      aiEngineWrappedProfileId: 'gse-1-engine',
+      aiWrappedProfiles: [
+        {
+          id: 'gs-dev-1-default',
+          displayName: 'GS-Dev-1 Default',
+          role: 'workspace',
+          baseModel: 'qwen2.5-coder:14b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+        {
+          id: 'gse-1-engine',
+          displayName: 'GSE-1 Engine',
+          role: 'engine',
+          baseModel: 'qwen2.5-coder:7b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+      ],
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 1, selectedModel: 'qwen2.5-coder:14b', selectedModelReady: true },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+          ],
+          registered: [
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama-store', ready: true },
+          ],
+        },
+        memory: { usedPercent: 42 },
+        cpuUsagePercent: 22,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+    benchmarkRuns: [
+      { id: 'bench-plan', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'planner', status: 'pass', ok: true, completedAt: '2026-03-25T10:00:00Z' },
+      { id: 'bench-code', model: 'qwen2.5-coder:14b', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama', taskMode: 'coder', status: 'pass', ok: true, completedAt: '2026-03-25T10:05:00Z' },
+      { id: 'bench-validate', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'validator', status: 'pass', ok: true, completedAt: '2026-03-25T10:10:00Z' },
+    ],
+    acceptance: {
+      exists: true,
+      report: {
+        overallStatus: 'pass',
+        summary: 'Acceptance passed.',
+      },
+      controlSummary: {
+        acceptanceStatus: 'pass',
+        safeForNextDay: true,
+        nextDaySummary: 'Acceptance is healthy.',
+        nextSafeAction: 'Keep the next slice bounded.',
+      },
+    },
+  });
+
+  assert.equal(status.localCodingProof.status, 'next');
+  assert.equal(status.localCodingProof.route.status, 'next');
+  assert.deepEqual(status.localCodingProof.route.missingLiveModels, ['qwen2.5-coder:7b']);
+  assert.equal(status.provisioning.status, 'warn');
+  assert.match(status.provisioning.summary, /registered in Ollama.*not live/i);
+});
+
+test('ai center honors configured coder and repair task-mode routes in the lane view', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'ollama',
+      model: 'qwen2.5-coder:14b',
+      trainingOllamaModel: 'qwen2.5-coder:7b',
+      baseModel: 'qwen2.5-coder:14b',
+      workspaceBaseModel: 'qwen2.5-coder:14b',
+      workspaceBaseProvider: 'ollama',
+      workspaceProviderSource: 'ollama',
+      engineBaseModel: 'qwen2.5-coder:7b',
+      engineBaseProvider: 'ollama',
+      engineProviderSource: 'ollama',
+      taskModeRoutes: {
+        planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+        repair: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+        coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+        validator: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+        summarizer: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      },
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 2, selectedModel: 'qwen2.5-coder:7b', selectedModelReady: true },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama', ready: true },
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+          ],
+        },
+        memory: { usedPercent: 41 },
+        cpuUsagePercent: 20,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+  });
+
+  const codeLane = status.capabilityLanes.find((lane) => lane.id === 'code-main');
+  const repairLane = status.capabilityLanes.find((lane) => lane.id === 'repair-fast');
+  const workerRole = status.modelRoles.find((role) => role.id === 'worker');
+
+  assert.equal(codeLane.routeTaskMode, 'coder');
+  assert.equal(codeLane.preferredModel, 'qwen2.5-coder:14b');
+  assert.equal(repairLane.routeTaskMode, 'repair');
+  assert.equal(repairLane.preferredModel, 'qwen2.5-coder:7b');
+  assert.deepEqual(workerRole.taskModes.sort(), ['coder', 'repair']);
+  assert.deepEqual(status.provisioning.routeCoverage.requiredModels.sort(), ['qwen2.5-coder:14b', 'qwen2.5-coder:7b']);
+});
+
+test('ai center requires an explicit ready flag before counting a routed Ollama tag as live', () => {
+  const status = buildAiStatus({
+    settings: {
+      runtime: 'ollama',
+      trainingOllamaModel: 'qwen2.5-coder:14b',
+      aiProfile: 'hybrid-default',
+      aiRoutingPolicy: 'hybrid-default',
+      aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+      aiEngineWrappedProfileId: 'gse-1-engine',
+      aiWrappedProfiles: [
+        {
+          id: 'gs-dev-1-default',
+          displayName: 'GS-Dev-1 Default',
+          role: 'workspace',
+          baseModel: 'qwen2.5-coder:14b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+        {
+          id: 'gse-1-engine',
+          displayName: 'GSE-1 Engine',
+          role: 'engine',
+          baseModel: 'qwen2.5-coder:7b',
+          baseProvider: 'ollama',
+          providerSource: 'ollama',
+        },
+      ],
+    },
+    tuningStatus: {
+      telemetry: {
+        ollama: { running: true, reachable: true, modelCount: 2, selectedModel: 'qwen2.5-coder:14b', selectedModelReady: true },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama' },
+          ],
+        },
+        memory: { usedPercent: 39 },
+        cpuUsagePercent: 19,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    },
+    benchmarkRuns: [
+      { id: 'bench-plan', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'planner', status: 'pass', ok: true, completedAt: '2026-03-25T10:00:00Z' },
+      { id: 'bench-code', model: 'qwen2.5-coder:14b', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama', taskMode: 'coder', status: 'pass', ok: true, completedAt: '2026-03-25T10:05:00Z' },
+      { id: 'bench-validate', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'validator', status: 'pass', ok: true, completedAt: '2026-03-25T10:10:00Z' },
+    ],
+    acceptance: {
+      exists: true,
+      report: {
+        overallStatus: 'pass',
+        summary: 'Acceptance passed.',
+      },
+      controlSummary: {
+        acceptanceStatus: 'pass',
+        safeForNextDay: true,
+        nextDaySummary: 'Acceptance is healthy.',
+        nextSafeAction: 'Keep the next slice bounded.',
+      },
+    },
+  });
+
+  assert.equal(status.localCodingProof.route.status, 'next');
+  assert.deepEqual(status.localCodingProof.route.readyModels, ['qwen2.5-coder:14b']);
+  assert.deepEqual(status.localCodingProof.route.missingLiveModels, ['qwen2.5-coder:7b']);
+  assert.equal(status.provisioning.status, 'warn');
+  assert.match(status.provisioning.summary, /qwen2.5-coder:7b.*registered in Ollama.*not live/i);
 });
 
 test('ai center applies manual lane overrides without losing benchmark context', () => {

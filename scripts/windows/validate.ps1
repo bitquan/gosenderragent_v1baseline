@@ -21,6 +21,6 @@ function Invoke-Step {
 
 Invoke-Step -Label "npm test" -Action { npm test }
 Invoke-Step -Label "npm run test:planner-ranking" -Action { npm run test:planner-ranking }
+Invoke-Step -Label "npm run proof:route-quality" -Action { npm run proof:route-quality }
 Invoke-Step -Label "npm run typecheck" -Action { npm run typecheck }
 Invoke-Step -Label "npm run smoke" -Action { npm run smoke }
-Invoke-Step -Label "npm run engine:acceptance" -Action { npm run engine:acceptance }

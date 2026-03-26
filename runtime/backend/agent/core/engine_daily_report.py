@@ -4,6 +4,7 @@ from collections import Counter
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
 from backend.agent.core.artifact_service import summarize_experiment_dataset
@@ -17,6 +18,21 @@ from backend.agent.core.engine_baseline_summary import (
 from backend.agent.core.storage_paths import assistant_experiment_dataset_path, assistant_runs_dir, assistant_training_output_path
 
 
+_BOARD_ITEM_RE = re.compile(r"^\s*-\s+BAT<(?P<ticket>[^>]+)>\s+(?P<status>[A-Z-]+):\s+(?P<desc>.+)$")
+_BOARD_BULLET_RE = re.compile(r"^\s*-\s+(?P<text>.+)$")
+_MISSING_CAPABILITY_TICKETS = {
+    "AUTONOMY-BASE-001",
+    "AUTONOMY-BASE-002",
+    "MODEL-PARITY-001",
+    "PERF-ENGINE-001",
+    "MODEL-BASE-007",
+    "UIUX-CLEANUP-003",
+    "QUALITY-ROUTE-002",
+    "OPS-006",
+    "AUDIT-001",
+}
+
+
 def _safe_rate(numerator: int | float, denominator: int | float) -> float:
     return float(numerator) / float(denominator) if denominator else 0.0
 
@@ -28,6 +44,343 @@ def _qwen_guardrails() -> list[str]:
         "Run targeted validation first before broader verification.",
         "Escalate to review after repeated low-confidence or repair-heavy attempts.",
     ]
+
+
+def _normalize_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _category_for_maintenance_item(text: str) -> str:
+    lowered = _normalize_text(text).lower()
+    if not lowered:
+        return "implement"
+    if any(token in lowered for token in ("remove", "retire", "archive", "delete", "stale doc", "stale docs", "duplicate")):
+        return "remove"
+    if any(token in lowered for token in ("upgrade", "update", "promote", "rollback", "release", "package", "import")):
+        return "upgrade"
+    if any(token in lowered for token in ("fix", "broken", "failure", "queue", "blocker", "unify", "align", "honest", "gating")):
+        return "fix"
+    if any(token in lowered for token in ("test", "proof", "validate", "validation", "acceptance", "rerun", "coverage")):
+        return "test"
+    if any(token in lowered for token in ("tune", "latency", "performance", "reduce", "shrink", "rescope", "parity", "vocabulary", "wording")):
+        return "tune"
+    return "implement"
+
+
+def _read_board_state(project_root: Path) -> dict[str, Any]:
+    board_path = project_root / "docs" / "BAT_FEATURE_BOARD.md"
+    state: dict[str, Any] = {
+        "working": [],
+        "broken": [],
+        "todo_items": [],
+        "done_items": [],
+    }
+    if not board_path.exists():
+        return state
+
+    section = ""
+    audit_bucket = ""
+    seen_tickets: set[str] = set()
+    for raw_line in board_path.read_text(encoding="utf-8").splitlines():
+        stripped = str(raw_line or "").strip()
+        if stripped.startswith("## "):
+            section = stripped
+            audit_bucket = ""
+            continue
+
+        if section == "## 3. Current Audit Snapshot":
+            if stripped == "What is working:":
+                audit_bucket = "working"
+                continue
+            if stripped == "What is still broken:":
+                audit_bucket = "broken"
+                continue
+            bullet_match = _BOARD_BULLET_RE.match(stripped)
+            if audit_bucket and bullet_match:
+                text = _normalize_text(bullet_match.group("text"))
+                if text:
+                    state[audit_bucket].append(text)
+            continue
+
+        if section == "## 9. Active Board":
+            item_match = _BOARD_ITEM_RE.match(stripped)
+            if not item_match:
+                continue
+            ticket = _normalize_text(item_match.group("ticket"))
+            if not ticket or ticket in seen_tickets:
+                continue
+            seen_tickets.add(ticket)
+            status = _normalize_text(item_match.group("status")).upper() or "TODO"
+            desc = _normalize_text(item_match.group("desc"))
+            item = {
+                "ticket": ticket,
+                "status": status,
+                "desc": desc,
+                "summary": desc,
+            }
+            if status == "DONE":
+                state["done_items"].append(item)
+            else:
+                state["todo_items"].append(item)
+
+    return state
+
+
+def _maintenance_item(
+    label: str,
+    *,
+    category: str,
+    source: str,
+    status: str,
+    ticket: str = "",
+    details: str = "",
+) -> dict[str, str]:
+    return {
+        "label": _normalize_text(label),
+        "category": _normalize_text(category) or "implement",
+        "source": _normalize_text(source) or "daily-report",
+        "status": _normalize_text(status) or "open",
+        "ticket": _normalize_text(ticket),
+        "details": _normalize_text(details),
+    }
+
+
+def _append_unique_item(items: list[dict[str, str]], seen: set[tuple[str, str, str]], item: dict[str, str]) -> None:
+    key = (
+        _normalize_text(item.get("status")).lower(),
+        _normalize_text(item.get("ticket")).lower(),
+        _normalize_text(item.get("label")).lower(),
+    )
+    if key in seen or not key[2]:
+        return
+    seen.add(key)
+    items.append(item)
+
+
+def _build_maintenance_checklist(
+    project_root: Path,
+    *,
+    baseline_summary: dict[str, Any],
+    daily_focus: dict[str, Any],
+    blocker_rows: list[dict[str, Any]],
+    retry_rows: list[dict[str, Any]],
+    training_action_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    board_state = _read_board_state(project_root)
+    baseline = dict(baseline_summary.get("baseline") or {})
+    runtime = dict(baseline_summary.get("runtime") or {})
+    daily_quota_proof = dict(baseline_summary.get("daily_quota_proof") or {})
+    fingerprints = [dict(item) for item in list(baseline_summary.get("common_failure_fingerprints") or []) if isinstance(item, dict)]
+
+    completed_today: list[dict[str, str]] = []
+    open_today: list[dict[str, str]] = []
+    new_problems_today: list[dict[str, str]] = []
+    missing_today: list[dict[str, str]] = []
+    notes: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    open_board_items = [dict(item) for item in list(board_state.get("todo_items") or []) if isinstance(item, dict)]
+    missing_capability_items = [
+        item
+        for item in open_board_items
+        if str(item.get("ticket") or "") in _MISSING_CAPABILITY_TICKETS
+    ]
+
+    completed_today.append(
+        _maintenance_item(
+            "Reviewed runtime baseline state.",
+            category="audit",
+            source="daily-report",
+            status="completed",
+            details=f"{baseline.get('state', 'unknown')} baseline; blocked={bool(baseline.get('blocked', False))}; {baseline.get('reason', 'n/a')}",
+        )
+    )
+    completed_today.append(
+        _maintenance_item(
+            "Reviewed review, repair, and validation pressure.",
+            category="audit",
+            source="daily-report",
+            status="completed",
+            details=(
+                f"{runtime.get('run_count', 0)} runs; "
+                f"{runtime.get('review_request_count', 0)} review-held; "
+                f"{runtime.get('repair_attempt_count', 0)} executed repairs; "
+                f"{dict(daily_quota_proof.get('validation') or {}).get('pass_count', 0)} pass / "
+                f"{dict(daily_quota_proof.get('validation') or {}).get('fail_count', 0)} fail today"
+            ),
+        )
+    )
+    completed_today.append(
+        _maintenance_item(
+            "Reviewed board backlog and current audit snapshot.",
+            category="audit",
+            source="board",
+            status="completed",
+            details=f"{len(open_board_items)} active TODO BAT items; {len(list(board_state.get('broken') or []))} current broken audit bullets.",
+        )
+    )
+    completed_today.append(
+        _maintenance_item(
+            "Reviewed missing engine capability gaps for faster returns.",
+            category="audit",
+            source="board",
+            status="completed",
+            details=f"{len(missing_capability_items)} priority capability gaps still open.",
+        )
+    )
+
+    for item in open_board_items[:8]:
+        desc = str(item.get("desc") or "")
+        ticket = str(item.get("ticket") or "")
+        _append_unique_item(
+            open_today,
+            seen,
+            _maintenance_item(
+                desc,
+                category=_category_for_maintenance_item(desc),
+                source="board",
+                status="open",
+                ticket=f"BAT<{ticket}>" if ticket else "",
+            ),
+        )
+    for text in list(board_state.get("broken") or [])[:6]:
+        _append_unique_item(
+            open_today,
+            seen,
+            _maintenance_item(
+                text,
+                category=_category_for_maintenance_item(text),
+                source="board-audit",
+                status="open",
+            ),
+        )
+
+    for row in fingerprints[:4]:
+        label = _normalize_text(row.get("label"))
+        count = int(row.get("count") or 0)
+        if not label:
+            continue
+        _append_unique_item(
+            new_problems_today,
+            seen,
+            _maintenance_item(
+                f"Observed recent failure fingerprint: {label}",
+                category=_category_for_maintenance_item(label),
+                source="runtime-fingerprint",
+                status="new",
+                details=f"{count} recent hit(s)",
+            ),
+        )
+    for row in blocker_rows[:4]:
+        label = _normalize_text(row.get("label"))
+        count = int(row.get("count") or 0)
+        if not label:
+            continue
+        _append_unique_item(
+            new_problems_today,
+            seen,
+            _maintenance_item(
+                f"Observed blocker trend: {label}",
+                category=_category_for_maintenance_item(label),
+                source="experiment-blocker",
+                status="new",
+                details=f"{count} recent hit(s)",
+            ),
+        )
+    if not bool(runtime.get("has_true_execution_runs", False)):
+        _append_unique_item(
+            new_problems_today,
+            seen,
+            _maintenance_item(
+                "No true execution runs were recorded in the selected audit window.",
+                category="test",
+                source="runtime-window",
+                status="new",
+            ),
+        )
+
+    for item in missing_capability_items[:6]:
+        desc = str(item.get("desc") or "")
+        ticket = str(item.get("ticket") or "")
+        _append_unique_item(
+            missing_today,
+            seen,
+            _maintenance_item(
+                desc,
+                category=_category_for_maintenance_item(desc),
+                source="board-capability-gap",
+                status="missing",
+                ticket=f"BAT<{ticket}>" if ticket else "",
+            ),
+        )
+
+    for action in list(daily_focus.get("operator_actions") or [])[:4]:
+        text = _normalize_text(action)
+        if text:
+            notes.append(text)
+    if retry_rows:
+        notes.append(
+            f"Retry pressure still leans to {retry_rows[0].get('action', 'repair')} ({int(retry_rows[0].get('count') or 0)} recent experiment rows)."
+        )
+    if training_action_rows:
+        notes.append(
+            f"Most common training next action is {training_action_rows[0].get('label', 'inspect artifacts')} ({int(training_action_rows[0].get('count') or 0)} rows)."
+        )
+    if list(board_state.get("broken") or []):
+        notes.append(f"Board still flags: {list(board_state.get('broken') or [])[0]}")
+
+    audit_log: list[dict[str, str]] = []
+    for bucket_name, bucket in (
+        ("verified", completed_today),
+        ("open", open_today),
+        ("new", new_problems_today),
+        ("missing", missing_today),
+    ):
+        for item in bucket[:8]:
+            audit_log.append(
+                {
+                    "kind": bucket_name,
+                    "category": str(item.get("category") or ""),
+                    "ticket": str(item.get("ticket") or ""),
+                    "label": str(item.get("label") or ""),
+                    "source": str(item.get("source") or ""),
+                    "details": str(item.get("details") or ""),
+                }
+            )
+
+    deduped_notes: list[str] = []
+    seen_notes: set[str] = set()
+    for note in notes:
+        key = _normalize_text(note).lower()
+        if not key or key in seen_notes:
+            continue
+        seen_notes.add(key)
+        deduped_notes.append(_normalize_text(note))
+
+    return {
+        "completed_today": completed_today,
+        "open_today": open_today,
+        "new_problems_today": new_problems_today,
+        "missing_today": missing_today,
+        "audit_notes": deduped_notes[:6],
+        "audit_log": audit_log[:24],
+    }
+
+
+def _format_checklist_item(item: dict[str, Any], *, default_status: str = "open") -> str:
+    status = _normalize_text(item.get("status") or default_status).lower() or default_status
+    category = _normalize_text(item.get("category") or "note").lower() or "note"
+    ticket = _normalize_text(item.get("ticket"))
+    source = _normalize_text(item.get("source"))
+    label = _normalize_text(item.get("label"))
+    details = _normalize_text(item.get("details"))
+    tags = [status, category]
+    if ticket:
+        tags.append(ticket)
+    if source:
+        tags.append(source)
+    detail_suffix = f" ({details})" if details else ""
+    return f"- [{' | '.join(tags)}] {label}{detail_suffix}"
 
 
 def _focus_payload(
@@ -166,6 +519,15 @@ def build_engine_daily_report(
         }
     )
 
+    maintenance_checklist = _build_maintenance_checklist(
+        project_root,
+        baseline_summary=baseline_summary,
+        daily_focus=focus,
+        blocker_rows=blocker_rows,
+        retry_rows=retry_rows,
+        training_action_rows=training_action_rows,
+    )
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "project_root": str(project_root),
@@ -181,8 +543,14 @@ def build_engine_daily_report(
         "training": training,
         "daily_quota_proof": dict(baseline_summary.get("daily_quota_proof") or {}),
         "daily_focus": focus,
+        "maintenance_checklist": maintenance_checklist,
         "top_blockers": blocker_rows[:6],
         "retry_actions": retry_rows[:5],
+        "common_failure_fingerprints": [
+            dict(item)
+            for item in list(baseline_summary.get("common_failure_fingerprints") or [])
+            if isinstance(item, dict)
+        ][:6],
         "common_recommended_actions": [
             dict(item)
             for item in list(baseline_summary.get("common_recommended_actions") or [])
@@ -198,10 +566,18 @@ def render_engine_daily_report(report: dict[str, Any]) -> str:
     training = dict(report.get("training") or {})
     daily_quota_proof = dict(report.get("daily_quota_proof") or {})
     daily_focus = dict(report.get("daily_focus") or {})
+    maintenance = dict(report.get("maintenance_checklist") or {})
     blockers = [dict(item) for item in list(report.get("top_blockers") or []) if isinstance(item, dict)]
     retry_actions = [dict(item) for item in list(report.get("retry_actions") or []) if isinstance(item, dict)]
+    fingerprints = [dict(item) for item in list(report.get("common_failure_fingerprints") or []) if isinstance(item, dict)]
     actions = [dict(item) for item in list(report.get("common_recommended_actions") or []) if isinstance(item, dict)]
     training_actions = [dict(item) for item in list(training.get("next_action_rows") or []) if isinstance(item, dict)]
+    completed_today = [dict(item) for item in list(maintenance.get("completed_today") or []) if isinstance(item, dict)]
+    open_today = [dict(item) for item in list(maintenance.get("open_today") or []) if isinstance(item, dict)]
+    new_problems_today = [dict(item) for item in list(maintenance.get("new_problems_today") or []) if isinstance(item, dict)]
+    missing_today = [dict(item) for item in list(maintenance.get("missing_today") or []) if isinstance(item, dict)]
+    audit_notes = [str(item) for item in list(maintenance.get("audit_notes") or []) if str(item).strip()]
+    audit_log = [dict(item) for item in list(maintenance.get("audit_log") or []) if isinstance(item, dict)]
 
     def _percent(value: Any) -> str:
         return f"{float(value or 0.0) * 100:.1f}%"
@@ -218,6 +594,48 @@ def render_engine_daily_report(report: dict[str, Any]) -> str:
         f"- Suggested workstream: {daily_focus.get('suggested_workstream', 'continue-safe-engine-slices')}",
         f"- Reason: {daily_focus.get('reason', 'n/a')}",
         "",
+        "## Maintenance Checklist",
+        "",
+        "### Completed Today",
+        "",
+    ]
+    if completed_today:
+        lines.extend(_format_checklist_item(item, default_status="completed") for item in completed_today)
+    else:
+        lines.append("- [completed | audit] No completed audit checks recorded yet.")
+
+    lines.extend(["", "### Open Today", ""])
+    if open_today:
+        lines.extend(_format_checklist_item(item, default_status="open") for item in open_today)
+    else:
+        lines.append("- [open | audit] No open maintenance actions were generated.")
+
+    lines.extend(["", "### New Problems Today", ""])
+    if new_problems_today:
+        lines.extend(_format_checklist_item(item, default_status="new") for item in new_problems_today)
+    else:
+        lines.append("- [new | audit] No new problems were detected in the selected window.")
+
+    lines.extend(["", "### Missing For Faster Returns", ""])
+    if missing_today:
+        lines.extend(_format_checklist_item(item, default_status="missing") for item in missing_today)
+    else:
+        lines.append("- [missing | audit] No missing capability gaps were flagged.")
+
+    lines.extend(["", "### Audit Notes", ""])
+    if audit_notes:
+        lines.extend(f"- {item}" for item in audit_notes)
+    else:
+        lines.append("- No extra audit notes were generated.")
+
+    lines.extend(["", "### Audit Log", ""])
+    if audit_log:
+        lines.extend(_format_checklist_item(item, default_status=str(item.get("kind") or "audit")) for item in audit_log)
+    else:
+        lines.append("- [audit] No audit log entries were recorded.")
+
+    lines.extend([
+        "",
         "## Daily Quota Proof",
         "",
         f"- Focus task: {dict(daily_quota_proof.get('focus_task') or {}).get('title', '') or 'none recorded'}",
@@ -229,7 +647,7 @@ def render_engine_daily_report(report: dict[str, Any]) -> str:
         "",
         "### Operator Actions",
         "",
-    ]
+    ])
     operator_actions = [str(item) for item in list(daily_focus.get("operator_actions") or []) if str(item).strip()]
     if operator_actions:
         lines.extend(f"- {item}" for item in operator_actions)
@@ -287,6 +705,12 @@ def render_engine_daily_report(report: dict[str, Any]) -> str:
     lines.extend(["", "## Top Blockers", ""])
     if blockers:
         lines.extend(f"- {item.get('label', '')}: {item.get('count', 0)}" for item in blockers)
+    else:
+        lines.append("- none observed in the selected window")
+
+    lines.extend(["", "## Common Failure Fingerprints", ""])
+    if fingerprints:
+        lines.extend(f"- {item.get('label', '')}: {item.get('count', 0)}" for item in fingerprints)
     else:
         lines.append("- none observed in the selected window")
 

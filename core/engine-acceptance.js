@@ -22,12 +22,45 @@ const { collectTrainingTelemetry, readTrainingTuningSettings } = require('./trai
 const { nowIso, randomId } = require('./utils');
 const { readAssistantConfig } = require('../host/assistant-config');
 
+const LOCAL_PROVIDER_SOURCES = new Set(['huggingface-local', 'lmstudio', 'local', 'ollama']);
+
 function tailSummary(stdout = '', stderr = '') {
   const lines = `${String(stdout || '')}\n${String(stderr || '')}`
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   return lines.length > 0 ? lines[lines.length - 1] : '';
+}
+
+function summarizeFailureOutput(stdout = '', stderr = '') {
+  const lines = `${String(stdout || '')}\n${String(stderr || '')}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return '';
+  }
+  const preferred = lines.find((line) => /^(error|typeerror|referenceerror|syntaxerror|assertionerror|rangeerror)\b/i.test(line));
+  if (preferred) {
+    return preferred;
+  }
+  const explicit = lines.find((line) => /(failed:|missing required snippet|cannot find module|renderer guard failed|syntax check failed)/i.test(line));
+  if (explicit) {
+    return explicit;
+  }
+  for (const line of lines) {
+    if (/^Node\.js v\d/i.test(line)) {
+      continue;
+    }
+    if (/^at\s.+$/i.test(line)) {
+      continue;
+    }
+    if (line === '^') {
+      continue;
+    }
+    return line;
+  }
+  return lines[lines.length - 1];
 }
 
 function resolveCommandBinary(command) {
@@ -65,7 +98,9 @@ function runCommand(command, args, options = {}) {
     durationMs,
     stdout: String(result.stdout || ''),
     stderr: String(result.stderr || ''),
-    summary: tailSummary(result.stdout, result.stderr),
+    summary: result.status === 0
+      ? tailSummary(result.stdout, result.stderr)
+      : summarizeFailureOutput(result.stdout, result.stderr),
   };
 }
 
@@ -554,6 +589,72 @@ function runRepoBuilderProofBundle(workspaceRoot, assistantConfig = {}) {
   };
 }
 
+function buildParityModel(role, assistantConfig = {}) {
+  if (role === 'remote') {
+    return {
+      role: 'engine',
+      modelProfileId: String(assistantConfig.engineModelProfileId || assistantConfig.modelProfileId || '').trim(),
+      modelDisplayName: String(assistantConfig.engineModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
+      baseModel: String(assistantConfig.engineBaseModel || assistantConfig.baseModel || '').trim(),
+      providerSource: String(assistantConfig.engineProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
+    };
+  }
+  return {
+    role: 'workspace',
+    modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
+    modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
+    baseModel: String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
+    providerSource: String(assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
+  };
+}
+
+function runLocalRemoteParityPack(workspaceRoot, assistantConfig = {}, proofs = {}) {
+  const localModel = buildParityModel('local', assistantConfig);
+  const remoteModel = buildParityModel('remote', assistantConfig);
+  const localReady = !!localModel.modelProfileId && !!localModel.baseModel && LOCAL_PROVIDER_SOURCES.has(localModel.providerSource);
+  const remoteReady = !!remoteModel.modelProfileId && !!remoteModel.baseModel;
+  const definitions = [
+    { id: 'plan', label: 'Plan', proof: proofs.autonomyProof },
+    { id: 'edit', label: 'Edit', proof: proofs.builderProof },
+    { id: 'repair', label: 'Repair', proof: proofs.selfImprovementProof },
+    { id: 'validate', label: 'Validate', proof: proofs.autonomyProof },
+    { id: 'review', label: 'Review', proof: proofs.autonomyProof },
+  ];
+  const entries = definitions.map((definition) => {
+    const proof = definition.proof && typeof definition.proof === 'object' ? definition.proof : {};
+    const proofStatus = String(proof.status || '').trim().toLowerCase();
+    const ready = localReady && remoteReady && proofStatus === 'pass';
+    return {
+      id: definition.id,
+      label: definition.label,
+      status: ready ? 'pass' : (localReady && remoteReady ? 'warn' : 'fail'),
+      proofStatus,
+      local: localModel,
+      remote: remoteModel,
+      summary: ready
+        ? `${definition.label} parity is recorded with the local workspace stack matched against the remote helper path.`
+        : `${definition.label} parity still needs both clean route coverage and passing proof before widening the local default path.`,
+    };
+  });
+  const readyCount = entries.filter((entry) => entry.status === 'pass').length;
+  const capabilityCount = entries.length;
+  return {
+    status: readyCount >= capabilityCount ? 'pass' : readyCount > 0 ? 'warn' : 'fail',
+    label: readyCount >= capabilityCount ? 'PROVEN' : readyCount > 0 ? 'PARTIAL' : 'BLOCKED',
+    capabilityCount,
+    readyCount,
+    widenReady: readyCount >= capabilityCount,
+    workspaceRoot,
+    summary: readyCount >= capabilityCount
+      ? `Local-vs-remote parity is PROVEN across ${readyCount}/${capabilityCount} core coding capabilities.`
+      : `Local-vs-remote parity is ${readyCount}/${capabilityCount} across plan, edit, repair, validate, and review.`,
+    nextAction: readyCount >= capabilityCount
+      ? 'Keep the local stack aligned with the remote helper path as the daily coding loop changes.'
+      : 'Finish the missing parity checks before widening the local default path.',
+    entries,
+  };
+}
+
 function benchmarkSummaryForCheck(check) {
   return String(check.summary || '').trim()
     || (normalizeCheckStatus(check) === 'pass' ? 'Acceptance check passed.' : 'Acceptance check failed.');
@@ -760,6 +861,11 @@ async function runEngineAcceptanceSuite(workspaceRoot, options = {}) {
       summary: 'Repo-scoped builder proof was skipped because the acceptance baseline is not clean yet.',
       actions: [],
     };
+  const modelParity = runLocalRemoteParityPack(workspaceRoot, assistantConfig, {
+    autonomyProof,
+    selfImprovementProof,
+    builderProof,
+  });
 
   const settings = readTrainingTuningSettings(workspaceRoot);
   const training = await collectTrainingTelemetry({
@@ -795,6 +901,7 @@ async function runEngineAcceptanceSuite(workspaceRoot, options = {}) {
     autonomyProof,
     selfImprovementProof,
     builderProof,
+    modelParity,
     autonomyLadder,
     overallStatus: summary.overallStatus,
     counts: summary.counts,
@@ -817,6 +924,7 @@ module.exports = {
   buildAcceptanceControlSummary,
   readLatestAcceptanceReport,
   runEngineAcceptanceSuite,
+  summarizeFailureOutput,
   summarizeAcceptanceReport,
   writeAcceptanceReport,
 };

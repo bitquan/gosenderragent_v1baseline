@@ -492,6 +492,60 @@ function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
   };
 }
 
+function buildModelParitySignals(acceptance = {}) {
+  const control = acceptance?.controlSummary && typeof acceptance.controlSummary === 'object'
+    ? acceptance.controlSummary
+    : {};
+  const pack = control.modelParity && typeof control.modelParity === 'object'
+    ? control.modelParity
+    : (acceptance?.modelParity && typeof acceptance.modelParity === 'object'
+      ? acceptance.modelParity
+      : (acceptance?.report?.modelParity && typeof acceptance.report.modelParity === 'object' ? acceptance.report.modelParity : {}));
+  const status = normalizeStatus(pack.status || '');
+  const capabilityCount = Math.max(0, Number(pack.capabilityCount || 0));
+  const readyCount = Math.max(0, Number(pack.readyCount || 0));
+  if (status === 'pass' || pack.widenReady === true) {
+    return {
+      exists: true,
+      status: 'pass',
+      label: 'PROVEN',
+      proven: true,
+      blocked: false,
+      partial: false,
+      capabilityCount,
+      readyCount,
+      summary: shortText(pack.summary || 'Local-vs-remote model parity is proven for the bounded coding loop.'),
+      nextAction: shortText(pack.nextAction || 'Keep the local stack aligned with the remote helper path as the bounded loop changes.'),
+    };
+  }
+  if (capabilityCount > 0 || readyCount > 0 || status === 'warn' || status === 'fail') {
+    return {
+      exists: true,
+      status: status || 'warn',
+      label: readyCount > 0 ? 'PARTIAL' : 'BLOCKED',
+      proven: false,
+      blocked: status === 'fail',
+      partial: readyCount > 0,
+      capabilityCount,
+      readyCount,
+      summary: shortText(pack.summary || 'Local-vs-remote model parity still needs proof before the local stack can widen.'),
+      nextAction: shortText(pack.nextAction || 'Finish the missing local-vs-remote parity checks before widening the local default path.'),
+    };
+  }
+  return {
+    exists: false,
+    status: 'idle',
+    label: 'NOT READY',
+    proven: false,
+    blocked: false,
+    partial: false,
+    capabilityCount: 0,
+    readyCount: 0,
+    summary: 'No local-vs-remote model parity pack is recorded yet.',
+    nextAction: 'Capture one clean local-vs-remote parity pack before widening the local default path.',
+  };
+}
+
 function buildSelfHostExpansion(signals = {}, activePhase = null) {
   const allowedInPhase = String(activePhase?.id || '').trim() === 'phase-1-safe-engine-core';
   const selfHostExpansionProgress = signals.selfHostExpansionProgress && typeof signals.selfHostExpansionProgress === 'object'
@@ -828,6 +882,7 @@ function collectSignals(snapshot = {}) {
     Array.isArray(acceptanceBuilderProof.actions) ? acceptanceBuilderProof.actions.length : 0,
   );
   const companionParity = buildCompanionParitySignals(vscodeSetup, extensionHealth);
+  const modelParity = buildModelParitySignals(acceptance);
 
   return {
     managerSummary: clipText(manager.summaryText || '', 180),
@@ -847,6 +902,8 @@ function collectSignals(snapshot = {}) {
     selfImprovementProofProven: selfImprovementProof.proven === true,
     companionParity,
     companionParityProven: companionParity.proven === true,
+    modelParity,
+    modelParityProven: modelParity.proven === true,
     boundedTaskCount,
     promotionGateStatus: normalizeStatus(promotionGate.status),
     promotionGateSummary: clipText(promotionGate.summary || '', 180),
@@ -1599,6 +1656,7 @@ function buildMvpReadiness(snapshot = {}) {
     selfHostProof: signals.selfHostProof,
     selfImprovementProof: signals.selfImprovementProof,
     companionParity: signals.companionParity,
+    modelParity: signals.modelParity,
     selfHostExpansion,
     selfHostExpansionProgress: signals.selfHostExpansionProgress,
     phaseCloseout,

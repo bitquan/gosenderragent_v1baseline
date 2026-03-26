@@ -203,6 +203,34 @@ test('collectTrainingTelemetry surfaces selected model readiness and caution sum
   assert.equal(telemetry.trustSummary.fallbackPlan.ecoMode, true);
 });
 
+test('buildTrainingModelSelectorOptions keeps store-registered tags out of the live-ready set until Ollama reports them live', () => {
+  const selector = buildTrainingModelSelectorOptions({
+    trainingOllamaModel: 'qwen2.5-coder:7b',
+  }, []);
+
+  const current = selector.options.find((item) => item.value === 'qwen2.5-coder:7b');
+
+  assert.equal(Array.isArray(selector.liveModels), true);
+  assert.equal(selector.liveModelCount, 0);
+  assert.equal(current?.ready, false);
+});
+
+test('training catalog includes the low-memory pullable backup candidates for this Windows box', () => {
+  const { RECOMMENDED_LOCAL_MODELS, WORKER_FAMILY_OPTIONS } = require('../core/training-tuning');
+  const models = Array.isArray(RECOMMENDED_LOCAL_MODELS) ? RECOMMENDED_LOCAL_MODELS : [];
+  const families = new Set((Array.isArray(WORKER_FAMILY_OPTIONS) ? WORKER_FAMILY_OPTIONS : []).map((item) => String(item.id || '')));
+
+  assert.ok(models.some((item) => item.ollamaModel === 'qwen2.5-coder:3b' && item.ollamaPullModel === 'qwen2.5-coder:3b'));
+  assert.ok(models.some((item) => item.ollamaModel === 'granite-code:3b' && item.ollamaPullModel === 'granite-code:3b'));
+  assert.ok(models.some((item) => item.ollamaModel === 'starcoder2:3b' && item.ollamaPullModel === 'starcoder2:3b'));
+  assert.ok(models.some((item) => item.ollamaModel === 'codegemma:2b' && item.ollamaPullModel === 'codegemma:2b'));
+  assert.ok(models.some((item) => item.ollamaModel === 'phi4-mini:3.8b' && item.ollamaPullModel === 'phi4-mini:3.8b'));
+  assert.equal(families.has('granite-code'), true);
+  assert.equal(families.has('starcoder2'), true);
+  assert.equal(families.has('codegemma'), true);
+  assert.equal(families.has('phi4-mini'), true);
+});
+
 test('buildLocalModelInventory connects wrapped profiles and foundry candidates through one readiness path', () => {
   const inventory = buildLocalModelInventory({
     settings: {
@@ -284,11 +312,56 @@ test('buildLocalModelInventory connects wrapped profiles and foundry candidates 
   const engineEntry = inventory.entries.find((entry) => entry.wrappedProfileId === 'gse-1-engine');
   const workspaceEntry = inventory.entries.find((entry) => entry.wrappedProfileId === 'gs-dev-1-default' && entry.kind === 'wrapped-profile');
   const candidateEntry = inventory.entries.find((entry) => entry.kind === 'foundry-candidate');
-  assert.equal(engineEntry.localReadiness, 'ready');
-  assert.equal(workspaceEntry.installState, 'installed');
+  assert.equal(engineEntry.localReadiness, 'live');
+  assert.equal(workspaceEntry.installState, 'live');
   assert.equal(workspaceEntry.foundryCandidate.id, 'candidate-local-qwen');
   assert.equal(workspaceEntry.benchmarkIdentity.id, 'bench-local-qwen');
-  assert.equal(candidateEntry.localReadiness, 'ready');
+  assert.equal(candidateEntry.localReadiness, 'live');
+});
+
+test('buildLocalModelInventory distinguishes store-only registrations from live runtime readiness', () => {
+  const inventory = buildLocalModelInventory({
+    settings: {
+      trainingOllamaModel: 'qwen2.5-coder:7b',
+    },
+    telemetry: {
+      trustSummary: {
+        status: 'caution',
+        summary: 'Selected tag is not live yet.',
+      },
+      models: {
+        storageRoot: 'E:\\models',
+        storageReachable: true,
+        registeredRoot: 'E:\\ollama-home\\models',
+        registeredReachable: true,
+        liveModels: [],
+        liveModelCount: 0,
+        registered: [
+          { value: 'qwen2.5-coder:7b', source: 'ollama-store', ready: true },
+        ],
+        discovered: [],
+        availableOptions: [
+          { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama-store', ready: false },
+        ],
+      },
+    },
+    wrappedProfiles: [
+      {
+        id: 'gse-1-engine',
+        displayName: 'GSE-1 Engine',
+        role: 'engine',
+        family: 'gse-1',
+        baseModel: 'qwen2.5-coder:7b',
+        providerSource: 'ollama',
+      },
+    ],
+  });
+
+  assert.equal(inventory.status, 'warn');
+  assert.equal(inventory.storeOnlyCount, 1);
+  assert.equal(inventory.readyCount, 0);
+  assert.equal(inventory.entries[0].installState, 'registered');
+  assert.equal(inventory.entries[0].localReady, false);
 });
 
 test('buildLocalModelInventory discovers adapter exports and checkpoint merges from workspace artifact roots', () => {
@@ -456,6 +529,7 @@ test('buildTrainingModelSelectorOptions merges configured Ollama manifests with 
   try {
     fs.mkdirSync(modelsRoot, { recursive: true });
     fs.mkdirSync(path.join(manifestsRoot, 'qwen2.5-coder'), { recursive: true });
+    fs.writeFileSync(path.join(modelsRoot, 'DeepSeek-Coder-V2-Lite-Instruct.Q2_K.gguf'), 'gguf', 'utf8');
     fs.writeFileSync(path.join(modelsRoot, 'DeepSeek-Coder-V2-Lite-Instruct.Q4_K_M.gguf'), 'gguf', 'utf8');
     fs.writeFileSync(path.join(manifestsRoot, 'qwen2.5-coder', '14b'), '{}\n', 'utf8');
 
@@ -464,7 +538,8 @@ test('buildTrainingModelSelectorOptions merges configured Ollama manifests with 
       trainingOllamaModel: 'qwen2.5-coder:14b',
     }, []);
 
-    assert.ok(selector.options.some((item) => item.value === 'qwen2.5-coder:14b' && item.ready === true));
+    assert.ok(selector.options.some((item) => item.value === 'qwen2.5-coder:14b' && item.ready === false));
+    assert.ok(selector.options.some((item) => item.value === 'deepseek-coder-v2-lite-instruct:q2-k' && item.ready === false));
     assert.ok(selector.options.some((item) => item.value === 'deepseek-coder-v2-lite-instruct:q4-k-m' && item.ready === false));
     assert.equal(selector.registered[0].value, 'qwen2.5-coder:14b');
   } finally {

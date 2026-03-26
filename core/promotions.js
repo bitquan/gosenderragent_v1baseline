@@ -7,8 +7,9 @@ const path = require('path');
 const { buildAcceptanceControlSummary, readLatestAcceptanceReport, summarizeAcceptanceReport } = require('./acceptance-report');
 const { getConfiguredAssistantPromotionsRoot } = require('./assistant-paths');
 const { buildBenchmarkIdentity, listBenchmarkRuns } = require('./benchmarks');
-const { resolveExecutionModelRole, resolveModelProfileSelection } = require('./engine-contract');
+const { resolveExecutionModelRole, resolveModelProfileSelection, resolveTaskLoopLane } = require('./engine-contract');
 const { listFoundryCandidates } = require('./model-foundry');
+const { resolveRouteTaskMode } = require('./route-schema');
 const { ensureDirectory, isWithin, nowIso, randomId, readJsonFile, writeJsonFileAtomic } = require('./utils');
 const { configPathForWorkspace, readAssistantConfig, writeAssistantModelSettings } = require('../host/assistant-config');
 
@@ -376,27 +377,7 @@ function normalizeStringArray(values) {
 }
 
 function resolvePromotionRouteKey({ taskMode = '', laneId = '' } = {}) {
-  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
-  if (['chat-fast', 'plan-reasoning', 'research-docs'].includes(normalizedLaneId)) {
-    return 'planner';
-  }
-  if (normalizedLaneId === 'review-verify') {
-    return 'validator';
-  }
-  if (normalizedLaneId === 'ops-summary') {
-    return 'summarizer';
-  }
-  if (['code-main', 'repair-fast'].includes(normalizedLaneId)) {
-    return 'coder';
-  }
-  const normalizedTaskMode = String(taskMode || '').trim().toLowerCase();
-  if (normalizedTaskMode === 'repair') {
-    return 'coder';
-  }
-  if (normalizedTaskMode === 'research' || normalizedTaskMode === 'chat') {
-    return 'planner';
-  }
-  return ['planner', 'coder', 'validator', 'summarizer'].includes(normalizedTaskMode) ? normalizedTaskMode : 'coder';
+  return resolveRouteTaskMode({ laneId, taskMode });
 }
 
 function normalizeProviderSource(value) {
@@ -648,6 +629,9 @@ function buildRouteBundleActivationSettings(currentConfig = {}, routeBundlePromo
     if (routeKey === 'planner') {
       settings.plannerProvider = providerSource;
       settings.plannerModel = baseModel;
+    } else if (routeKey === 'repair') {
+      settings.repairProvider = providerSource;
+      settings.repairModel = baseModel;
     } else if (routeKey === 'coder') {
       settings.coderProvider = providerSource;
       settings.coderModel = baseModel;
@@ -680,10 +664,11 @@ function verifyRouteBundlePromotion(targetWorkspaceRoot, routeBundlePromotion = 
   const missingLanes = [];
 
   for (const laneId of targetLanes) {
+    const lane = resolveTaskLoopLane(laneId);
     const selection = resolveModelProfileSelection(config, {
       laneId,
       taskMode: routeBundlePromotion.taskMode,
-      action: laneId === 'review-verify' ? 'run' : 'implement',
+      action: lane.action,
     });
     const activeModel = String(selection?.active?.baseModel || '').trim();
     const activeProvider = normalizeProviderSource(selection?.active?.providerSource || selection?.active?.baseProvider || '');

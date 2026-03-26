@@ -33,6 +33,8 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
       engineProviderSource: 'ollama',
       plannerProvider: 'ollama',
       plannerModel: 'qwen2.5-coder:7b',
+      repairProvider: 'ollama',
+      repairModel: 'qwen2.5-coder:7b',
       coderProvider: 'ollama',
       coderModel: 'qwen2.5-coder:14b',
       validatorProvider: 'ollama',
@@ -51,6 +53,7 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
     assert.equal(config.dailySafeAutonomousTarget, 5);
     assert.equal(config.dailySelfImprovementTarget, 5);
     assert.equal(config.taskModeRoutes.planner.model, 'qwen2.5-coder:7b');
+    assert.equal(config.taskModeRoutes.repair.model, 'qwen2.5-coder:7b');
     assert.equal(config.taskModeRoutes.coder.provider, 'ollama');
     assert.equal(config.taskModeRoutes.summarizer.model, 'gpt-4.1-mini');
 
@@ -58,6 +61,7 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
     assert.match(raw, /assistant_model_profile_id: gs-dev-1-default/);
     assert.match(raw, /assistant_workspace_model_profile_id: gs-dev-1-default/);
     assert.match(raw, /assistant_engine_model_profile_id: gse-1-engine/);
+    assert.match(raw, /assistant_task_mode_repair_model: qwen2\.5-coder:7b/);
     assert.match(raw, /assistant_task_mode_coder_model: qwen2\.5-coder:14b/);
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });

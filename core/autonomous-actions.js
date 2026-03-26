@@ -46,6 +46,15 @@ function shortText(value, maxLength = 180) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}...` : text;
 }
 
+function slugify(value, fallback = 'item') {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || fallback;
+}
+
 function normalizeRuns(runtimeState = {}) {
   if (Array.isArray(runtimeState?.latest) && runtimeState.latest.length > 0) {
     return runtimeState.latest;
@@ -686,6 +695,96 @@ function buildTaskAutonomyAssessment(task = {}, modelRoles = {}) {
   };
 }
 
+function buildAutonomyRescopeTask(task = {}, assessment = {}, options = {}) {
+  const ceiling = clampLevel(
+    options.autonomyDifficultyCeiling
+    || assessment.modelLevel
+    || task?.metadata?.autonomyDifficultyCeiling
+    || task?.metadata?.autonomy_difficulty_ceiling
+    || 1,
+  );
+  const taskLabel = shortText(task?.objective || task?.task || task?.title || 'the current task', 120);
+  const blockedBy = String(options.blockedBy || 'model-fit').trim().toLowerCase() || 'model-fit';
+  const blockedReason = shortText(
+    options.blockedReason
+    || assessment.blockingReason
+    || assessment.recommendedAction
+    || 'Rescope this task before retrying.',
+    220,
+  );
+  const requestedModelRole = String(
+    assessment.requestedModelRole
+    || task?.modelRole
+    || task?.metadata?.requestedModelRole
+    || task?.metadata?.requested_model_role
+    || '',
+  ).trim().toLowerCase();
+  const taskMode = String(
+    task?.taskMode
+    || task?.task_mode
+    || task?.metadata?.taskMode
+    || task?.metadata?.task_mode
+    || '',
+  ).trim().toLowerCase();
+  const routeLaneId = String(
+    task?.laneId
+    || task?.metadata?.lane_id
+    || task?.metadata?.routeLaneId
+    || '',
+  ).trim().toLowerCase();
+  const limitedPaths = Array.isArray(task?.sliceTargetPaths)
+    ? task.sliceTargetPaths.map((item) => normalizePathLike(item)).filter(Boolean).slice(0, Math.max(1, Math.min(2, ceiling)))
+    : [];
+  const signatureSeed = [
+    taskLabel,
+    blockedBy,
+    requestedModelRole,
+    taskMode,
+    ...limitedPaths,
+  ].filter(Boolean).join('-');
+  return {
+    title: `Rescope ${taskLabel}`,
+    objective: [
+      `Rescope "${taskLabel}" into one lab-safe slice that stays at difficulty ${ceiling}/5 or lower.`,
+      limitedPaths.length > 0
+        ? `Keep the retry focused on ${limitedPaths.join(', ')}.`
+        : 'Keep the retry limited to one or two files.',
+      'Run the smallest relevant validation before widening again.',
+    ].join(' '),
+    status: 'needs-rescope',
+    ring: 'lab',
+    sliceTargetPaths: limitedPaths,
+    slices: [
+      {
+        id: 'scope',
+        title: 'Pin the smallest failing scope',
+        summary: 'Limit the retry to one bounded change and the smallest useful validation command.',
+      },
+      {
+        id: 'implement',
+        title: 'Retry in a clone lab',
+        summary: 'Keep the follow-up inside a lab so repo protection and approvals do not distort the proof.',
+      },
+      {
+        id: 'validate',
+        title: 'Re-run focused validation',
+        summary: 'Record whether the smaller slice is now clean before widening the next pass.',
+      },
+    ],
+    metadata: {
+      autoRescoped: true,
+      followupSignature: `autonomy-rescope:${slugify(signatureSeed, 'task')}`,
+      lastBlockedBy: blockedBy,
+      lastBlockedReason: blockedReason,
+      requestedModelRole,
+      routeLaneId,
+      taskMode,
+      autonomyDifficultyCeiling: ceiling,
+      sourceTaskTitle: taskLabel,
+    },
+  };
+}
+
 function runTimestamp(run = {}) {
   const raw = String(run?.endedAt || run?.startedAt || '').trim();
   const value = raw ? Date.parse(raw) : NaN;
@@ -914,6 +1013,7 @@ module.exports = {
   ACTION_SAMPLE_LIMIT,
   DAILY_SAFE_ACTION_TARGET,
   buildAutonomousActionSummary,
+  buildAutonomyRescopeTask,
   buildActionEntry,
   buildTaskAutonomyAssessment,
   inferModelLevel,

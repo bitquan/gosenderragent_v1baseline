@@ -16,6 +16,20 @@ const DEFAULT_MODEL_STORAGE_ROOT = path.join(os.homedir(), 'large-storage', 'mod
 
 const RECOMMENDED_LOCAL_MODELS = Object.freeze([
   Object.freeze({
+    id: 'qwen-coder-3b',
+    label: 'Qwen2.5 Coder 3B',
+    workerFamily: 'qwen',
+    variantType: 'backup',
+    ollamaModel: 'qwen2.5-coder:3b',
+    ollamaPullModel: 'qwen2.5-coder:3b',
+    sizeLabel: '1.9 GB',
+    makeTarget: 'model-pull-qwen-coder-3b',
+    sourcePortal: 'ollama',
+    sourceLabel: 'Ollama Library',
+    sourceUrl: 'https://ollama.com/library/qwen2.5-coder',
+    recommendedTargets: ['auto', 'balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+  Object.freeze({
     id: 'qwen-coder-7b-q4km',
     label: 'Qwen2.5 Coder 7B',
     workerFamily: 'qwen',
@@ -48,8 +62,23 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     recommendedTargets: ['auto', 'creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
+    id: 'deepseek-coder-v2-lite-q2k',
+    label: 'DeepSeek Coder V2 Lite Q2_K',
+    workerFamily: 'deepseek-coder',
+    variantType: 'backup',
+    ollamaModel: 'deepseek-coder-v2-lite-instruct:q2-k',
+    fileName: 'DeepSeek-Coder-V2-Lite-Instruct.Q2_K.gguf',
+    sizeLabel: '6.0 GB',
+    makeTarget: 'model-download-deepseek-coder-v2-lite-q2',
+    sourcePortal: 'huggingface',
+    sourceLabel: 'Hugging Face',
+    repoId: 'QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
+    sourceUrl: 'https://huggingface.co/QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
+    recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+  Object.freeze({
     id: 'deepseek-coder-v2-lite-q4km',
-    label: 'DeepSeek Coder V2 Lite',
+    label: 'DeepSeek Coder V2 Lite Q4_K_M',
     workerFamily: 'deepseek-coder',
     variantType: 'backup',
     ollamaModel: 'deepseek-coder-v2-lite-instruct:q4-k-m',
@@ -77,12 +106,72 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceUrl: 'https://huggingface.co/Qwen/Qwen3-14B-GGUF',
     recommendedTargets: ['creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
+  Object.freeze({
+    id: 'granite-code-3b',
+    label: 'Granite Code 3B',
+    workerFamily: 'granite-code',
+    variantType: 'backup',
+    ollamaModel: 'granite-code:3b',
+    ollamaPullModel: 'granite-code:3b',
+    sizeLabel: '2.0 GB',
+    makeTarget: 'model-pull-granite-code-3b',
+    sourcePortal: 'ollama',
+    sourceLabel: 'Ollama Library',
+    sourceUrl: 'https://ollama.com/library/granite-code',
+    recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+  Object.freeze({
+    id: 'starcoder2-3b',
+    label: 'StarCoder2 3B',
+    workerFamily: 'starcoder2',
+    variantType: 'backup',
+    ollamaModel: 'starcoder2:3b',
+    ollamaPullModel: 'starcoder2:3b',
+    sizeLabel: '1.7 GB',
+    makeTarget: 'model-pull-starcoder2-3b',
+    sourcePortal: 'ollama',
+    sourceLabel: 'Ollama Library',
+    sourceUrl: 'https://ollama.com/library/starcoder2',
+    recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+  Object.freeze({
+    id: 'codegemma-2b',
+    label: 'CodeGemma 2B',
+    workerFamily: 'codegemma',
+    variantType: 'backup',
+    ollamaModel: 'codegemma:2b',
+    ollamaPullModel: 'codegemma:2b',
+    sizeLabel: '1.6 GB',
+    makeTarget: 'model-pull-codegemma-2b',
+    sourcePortal: 'ollama',
+    sourceLabel: 'Ollama Library',
+    sourceUrl: 'https://ollama.com/library/codegemma',
+    recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
+  Object.freeze({
+    id: 'phi4-mini-3.8b',
+    label: 'Phi-4 Mini 3.8B',
+    workerFamily: 'phi4-mini',
+    variantType: 'backup',
+    ollamaModel: 'phi4-mini:3.8b',
+    ollamaPullModel: 'phi4-mini:3.8b',
+    sizeLabel: '2.5 GB',
+    makeTarget: 'model-pull-phi4-mini-3.8b',
+    sourcePortal: 'ollama',
+    sourceLabel: 'Ollama Library',
+    sourceUrl: 'https://ollama.com/library/phi4-mini',
+    recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
+  }),
 ]);
 
 const WORKER_FAMILY_OPTIONS = Object.freeze([
   Object.freeze({ id: 'qwen', label: 'Qwen', summary: 'Primary tunable local worker family for coding and repair.' }),
   Object.freeze({ id: 'deepseek-coder', label: 'DeepSeek Coder', summary: 'Backup coding family for comparison and fallback.' }),
   Object.freeze({ id: 'qwen3', label: 'Qwen3', summary: 'Local reasoning fallback when the primary worker is unavailable.' }),
+  Object.freeze({ id: 'granite-code', label: 'Granite Code', summary: 'Compact IBM code family for low-memory backup experiments.' }),
+  Object.freeze({ id: 'starcoder2', label: 'StarCoder2', summary: 'Small open code model family for low-footprint fallback comparisons.' }),
+  Object.freeze({ id: 'codegemma', label: 'CodeGemma', summary: 'Lightweight Google code family for constrained local repair trials.' }),
+  Object.freeze({ id: 'phi4-mini', label: 'Phi-4 Mini', summary: 'Very small general-purpose fallback for constrained local repair and reasoning.' }),
 ]);
 
 const PROMOTION_POLICY_OPTIONS = Object.freeze([
@@ -712,7 +801,7 @@ function discoverConfiguredOllamaModels(settings = {}) {
         label: tag === 'latest' ? baseModel : value,
         source: 'ollama-store',
         ready: true,
-        note: 'registered in Ollama store',
+        note: 'registered in Ollama',
       };
     })
     .filter(Boolean)
@@ -775,25 +864,23 @@ function buildTrainingModelSelectorOptions(settings = {}, ollamaModels = []) {
   const normalized = normalizeTrainingTuningSettings(settings);
   const discovered = discoverStoredModels(normalized);
   const configuredOllama = discoverConfiguredOllamaModels(normalized);
-  const readyModels = new Set([
-    ...(Array.isArray(ollamaModels) ? ollamaModels : []),
-    ...configuredOllama.models.map((item) => item.value),
-  ].map((item) => String(item || '').trim()).filter(Boolean));
+  const liveModels = new Set(
+    (Array.isArray(ollamaModels) ? ollamaModels : []).map((item) => String(item || '').trim()).filter(Boolean),
+  );
   const options = [];
   const seen = new Set();
 
-  const readyOptions = [
+  const liveOptions = [
     ...(Array.isArray(ollamaModels) ? ollamaModels : []).map((modelName) => ({
       value: String(modelName || '').trim(),
       label: String(modelName || '').trim(),
       source: 'ollama',
       ready: true,
-      note: 'ready in Ollama',
+      note: 'live in Ollama',
     })),
-    ...configuredOllama.models,
   ];
 
-  for (const entry of readyOptions) {
+  for (const entry of liveOptions) {
     const value = String(entry?.value || '').trim();
     if (!value || seen.has(value)) {
       continue;
@@ -805,7 +892,23 @@ function buildTrainingModelSelectorOptions(settings = {}, ollamaModels = []) {
       source: String(entry?.source || 'ollama').trim() || 'ollama',
       supported: true,
       ready: entry?.ready !== false,
-      note: String(entry?.note || 'ready in Ollama').trim() || 'ready in Ollama',
+      note: String(entry?.note || 'live in Ollama').trim() || 'live in Ollama',
+    });
+  }
+
+  for (const entry of configuredOllama.models) {
+    const value = String(entry?.value || '').trim();
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    options.push({
+      value,
+      label: String(entry?.label || value).trim() || value,
+      source: String(entry?.source || 'ollama-store').trim() || 'ollama-store',
+      supported: true,
+      ready: false,
+      note: 'registered in Ollama - not live in the running service yet',
     });
   }
 
@@ -815,7 +918,7 @@ function buildTrainingModelSelectorOptions(settings = {}, ollamaModels = []) {
       continue;
     }
     seen.add(optionValue);
-    const ready = readyModels.has(String(item.importTag || item.ollamaModel || '').trim());
+    const ready = liveModels.has(String(item.importTag || item.ollamaModel || '').trim());
     options.push({
       value: optionValue,
       label: item.label,
@@ -825,7 +928,7 @@ function buildTrainingModelSelectorOptions(settings = {}, ollamaModels = []) {
       fileName: item.fileName,
       sizeLabel: item.sizeLabel,
       importTag: item.importTag,
-      note: ready ? 'ready in Ollama' : 'stored on SSD • import needed',
+      note: ready ? 'live in Ollama' : 'staged on SSD - import needed',
     });
   }
 
@@ -846,11 +949,13 @@ function buildTrainingModelSelectorOptions(settings = {}, ollamaModels = []) {
     storageReachable: discovered.exists,
     configuredOllamaRoot: configuredOllama.manifestsRoot,
     configuredOllamaReachable: configuredOllama.exists,
+    liveModels: Array.from(liveModels),
+    liveModelCount: liveModels.size,
     registered: configuredOllama.models,
     discovered: discovered.models.map((item) => ({
       ...item,
-      ready: readyModels.has(String(item.importTag || item.ollamaModel || '').trim()),
-      importNeeded: !readyModels.has(String(item.importTag || item.ollamaModel || '').trim()),
+      ready: liveModels.has(String(item.importTag || item.ollamaModel || '').trim()),
+      importNeeded: !liveModels.has(String(item.importTag || item.ollamaModel || '').trim()),
     })),
     options,
   };
@@ -1493,17 +1598,17 @@ function buildTrainingTrustSummary(snapshot = {}, fallbackSettings = {}) {
       'caution',
       'medium',
       TRAINING_TRUST_REASON_CODES.SELECTED_MODEL_NOT_READY,
-      `The selected model (${selectedModel}) is not ready in Ollama yet.`,
+      `The selected model (${selectedModel}) is not live in Ollama yet.`,
       'Import the stored GGUF into Ollama or switch to a model that is already ready.',
     );
     ensureFallbackPlan({
       id: 'selected-model-not-ready-fallback',
       label: 'Switch to a ready local model first',
-      summary: 'Use a ready local model or import the selected GGUF into Ollama before the next heavier training pass.',
+      summary: 'Use a live local model or import the selected GGUF into Ollama before the next heavier training pass.',
       recommendedProfile: activeRuns >= 1 || schedulerRunning ? 'low' : 'medium',
       ecoMode: true,
       notes: [
-        'Prefer the lighter ready local model for short validation or targeted learning until the selected model is available.',
+        'Prefer the lighter live local model for short validation or targeted learning until the selected model is available.',
         'Import the stored GGUF into Ollama before retrying the selected route.',
       ],
     });
@@ -1586,6 +1691,8 @@ function resolveSelectorSnapshot(settings = {}, telemetry = {}) {
       storageReachable: telemetryModels.storageReachable === true,
       configuredOllamaRoot: String(telemetryModels.registeredRoot || '').trim(),
       configuredOllamaReachable: telemetryModels.registeredReachable === true,
+      liveModels: toArray(telemetryModels.liveModels).map((item) => String(item || '').trim()).filter(Boolean),
+      liveModelCount: Number(telemetryModels.liveModelCount || 0),
       registered: toArray(telemetryModels.registered),
       discovered: toArray(telemetryModels.discovered),
       options: toArray(telemetryModels.availableOptions),
@@ -1844,12 +1951,14 @@ function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSu
   const providerSource = normalizeProviderSource(payload.providerSource || payload.baseProvider);
   const selectorMatch = findSelectorMatch(selector, baseModel);
   const localVisible = isLocalProviderSource(providerSource) || !!selectorMatch.option || !!selectorMatch.discovered || !!selectorMatch.registered;
-  const localReady = selectorMatch.option?.ready === true || selectorMatch.registered?.ready === true;
+  const storeRegistered = !!selectorMatch.registered;
+  const liveRuntimeReady = selectorMatch.option?.ready === true;
+  const localReady = liveRuntimeReady;
   const installState = !localVisible
     ? ''
     : localReady
-      ? 'installed'
-      : (selectorMatch.discovered ? 'import-needed' : 'unknown');
+      ? 'live'
+      : (storeRegistered ? 'registered' : (selectorMatch.discovered ? 'staged' : 'unknown'));
   const benchmarkIdentity = payload.benchmarkIdentity && typeof payload.benchmarkIdentity === 'object'
     ? payload.benchmarkIdentity
     : findBenchmarkIdentity({
@@ -1888,8 +1997,10 @@ function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSu
     baseModel,
     providerSource,
     ollamaModelName,
-    localReadiness: !localVisible ? 'not-local' : (localReady ? 'ready' : 'not-ready'),
+    localReadiness: !localVisible ? 'not-local' : (localReady ? 'live' : (storeRegistered ? 'registered' : (selectorMatch.discovered ? 'staged' : 'missing'))),
     localReady,
+    liveRuntimeReady,
+    registeredInStore: storeRegistered,
     installState,
     importState: installState,
     tuningStatus: String(tuningTrust?.status || '').trim().toLowerCase(),
@@ -1923,21 +2034,28 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
   const items = toArray(entries);
   const localEntries = items.filter((item) => item.localReadiness !== 'not-local');
   const readyCount = localEntries.filter((item) => item.localReady).length;
-  const importNeededCount = localEntries.filter((item) => item.installState === 'import-needed').length;
+  const storeOnlyCount = localEntries.filter((item) => item.registeredInStore === true && item.localReady !== true).length;
+  const stagedCount = localEntries.filter((item) => item.installState === 'staged').length;
   const candidateCount = items.filter((item) => item.kind === 'foundry-candidate').length;
   const exportCount = items.filter((item) => item.kind === 'training-export').length;
   const mergeCount = items.filter((item) => item.kind === 'checkpoint-merge').length;
   let status = 'ready';
   if (localEntries.length === 0) {
     status = 'idle';
-  } else if (readyCount === 0 || importNeededCount > 0) {
+  } else if (readyCount === 0 || storeOnlyCount > 0 || stagedCount > 0) {
     status = 'warn';
   }
   const parts = [];
   if (localEntries.length > 0) {
-    parts.push(`${readyCount}/${localEntries.length} local inventory entr${localEntries.length === 1 ? 'y is' : 'ies are'} ready`);
+    parts.push(`${readyCount}/${localEntries.length} local inventory entr${localEntries.length === 1 ? 'y is' : 'ies are'} live`);
   } else {
     parts.push('No local inventory entries are connected yet');
+  }
+  if (storeOnlyCount > 0) {
+    parts.push(`${storeOnlyCount} registered in Ollama only`);
+  }
+  if (stagedCount > 0) {
+    parts.push(`${stagedCount} still staged on SSD`);
   }
   if (candidateCount > 0) {
     parts.push(`${candidateCount} foundry candidate link${candidateCount === 1 ? '' : 's'}`);
@@ -1954,6 +2072,7 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
   return {
     status,
     readyCount,
+    storeOnlyCount,
     localCount: localEntries.length,
     candidateCount,
     summary: parts.join(' | '),
@@ -2003,6 +2122,7 @@ function buildLocalModelInventory(options = {}) {
     status: summary.status,
     summary: summary.summary,
     readyCount: summary.readyCount,
+    storeOnlyCount: summary.storeOnlyCount,
     localCount: summary.localCount,
     candidateCount: summary.candidateCount,
     tuningStatus: String(tuningTrust?.status || '').trim().toLowerCase(),
@@ -2093,6 +2213,8 @@ async function collectTrainingTelemetry(options = {}) {
     storageReachable: !!selector.storageReachable,
     registeredRoot: selector.configuredOllamaRoot || '',
     registeredReachable: !!selector.configuredOllamaReachable,
+    liveModels: selector.liveModels || [],
+    liveModelCount: Number(selector.liveModelCount || 0),
     catalog: RECOMMENDED_LOCAL_MODELS,
     registered: selector.registered || [],
     discovered: selector.discovered,

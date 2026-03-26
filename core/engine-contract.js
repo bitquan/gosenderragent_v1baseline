@@ -1,5 +1,12 @@
 'use strict';
 
+const {
+  CAPABILITY_ROUTE_LANES,
+  normalizeCapabilityLaneId,
+  resolveRouteTaskMode,
+  resolveWrappedProfileRole,
+} = require('./route-schema');
+
 const CHAT_MODE_CONFIG = Object.freeze({
   auto: {
     id: 'auto',
@@ -48,15 +55,14 @@ const CHAT_MODE_CONFIG = Object.freeze({
   },
 });
 
-const TASK_LOOP_LANE_MAP = Object.freeze({
-  'chat-fast': { laneId: 'chat-fast', laneLabel: 'Chat fast', taskMode: 'chat', action: 'chat' },
-  'plan-reasoning': { laneId: 'plan-reasoning', laneLabel: 'Plan reasoning', taskMode: 'planner', action: 'plan' },
-  'code-main': { laneId: 'code-main', laneLabel: 'Code main', taskMode: 'coder', action: 'implement' },
-  'repair-fast': { laneId: 'repair-fast', laneLabel: 'Repair fast', taskMode: 'repair', action: 'repair' },
-  'review-verify': { laneId: 'review-verify', laneLabel: 'Review verify', taskMode: 'validator', action: 'run' },
-  'research-docs': { laneId: 'research-docs', laneLabel: 'Research docs', taskMode: 'research', action: 'research' },
-  'ops-summary': { laneId: 'ops-summary', laneLabel: 'Ops summary', taskMode: 'summarizer', action: 'summarize' },
-});
+const TASK_LOOP_LANE_MAP = Object.freeze(
+  Object.fromEntries(CAPABILITY_ROUTE_LANES.map((lane) => [lane.id, {
+    laneId: lane.id,
+    laneLabel: lane.label,
+    taskMode: lane.loopTaskMode,
+    action: lane.action,
+  }])),
+);
 
 function clipText(value, maxLength = 180) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -88,8 +94,7 @@ function parseChatModeDirective(value) {
 }
 
 function normalizeTaskLoopLane(laneId) {
-  const normalized = String(laneId || '').trim().toLowerCase();
-  return TASK_LOOP_LANE_MAP[normalized] ? normalized : 'code-main';
+  return normalizeCapabilityLaneId(laneId) || 'code-main';
 }
 
 function resolveTaskLoopLane(laneId) {
@@ -151,46 +156,25 @@ function resolveTaskLoopAction(mode) {
 }
 
 function resolveExecutionModelRole({ taskMode = '', action = '', laneId = '' } = {}) {
-  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
-  if (['code-main', 'repair-fast'].includes(normalizedLaneId)) {
-    return 'workspace';
-  }
-  if (['chat-fast', 'plan-reasoning', 'review-verify', 'research-docs', 'ops-summary'].includes(normalizedLaneId)) {
-    return 'engine';
-  }
   const normalizedTaskMode = normalizeTaskLoopMode(taskMode || taskModeFromAction(action));
-  return ['planner', 'validator', 'summarizer', 'research'].includes(normalizedTaskMode) ? 'engine' : 'workspace';
+  return resolveWrappedProfileRole({
+    laneId,
+    taskMode: normalizedTaskMode,
+  });
 }
 
 function resolveTaskModeRouteKey({ taskMode = '', laneId = '' } = {}) {
-  const normalizedLaneId = String(laneId || '').trim().toLowerCase();
-  if (['chat-fast', 'plan-reasoning', 'research-docs'].includes(normalizedLaneId)) {
-    return 'planner';
-  }
-  if (normalizedLaneId === 'review-verify') {
-    return 'validator';
-  }
-  if (normalizedLaneId === 'ops-summary') {
-    return 'summarizer';
-  }
-  if (['code-main', 'repair-fast'].includes(normalizedLaneId)) {
-    return 'coder';
-  }
-  const normalizedTaskMode = normalizeTaskLoopMode(taskMode || '');
-  if (normalizedTaskMode === 'repair') {
-    return 'coder';
-  }
-  if (normalizedTaskMode === 'research' || normalizedTaskMode === 'chat') {
-    return 'planner';
-  }
-  return ['planner', 'coder', 'validator', 'summarizer'].includes(normalizedTaskMode) ? normalizedTaskMode : 'coder';
+  return resolveRouteTaskMode({
+    laneId,
+    taskMode: normalizeTaskLoopMode(taskMode || ''),
+  });
 }
 
 function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', action = '', laneId = '' } = {}) {
   const modelRole = resolveExecutionModelRole({ taskMode, action, laneId });
   const routeKey = resolveTaskModeRouteKey({ taskMode, laneId });
   const routeConfig = assistantConfig.taskModeRoutes && typeof assistantConfig.taskModeRoutes === 'object'
-    ? assistantConfig.taskModeRoutes[routeKey] || {}
+    ? (assistantConfig.taskModeRoutes[routeKey] || (routeKey === 'repair' ? assistantConfig.taskModeRoutes.coder : {}) || {})
     : {};
   const workspace = {
     modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
@@ -300,10 +284,15 @@ function inferChatModeRouting(chatMode, message = '') {
 function buildTerminalRoutingSummary({ chatMode = 'ask', message = '' } = {}) {
   const route = inferChatModeRouting(chatMode, message);
   const lane = resolveTaskLoopLane(route.suggestedLaneId);
+  const routeTaskMode = resolveTaskModeRouteKey({
+    laneId: route.suggestedLaneId,
+    taskMode: route.suggestedTaskMode,
+  });
   const modeConfig = getChatModeConfig(chatMode);
   const effectiveConfig = getChatModeConfig(route.effectiveChatMode || chatMode);
   return {
     ...route,
+    routeTaskMode,
     modeLabel: modeConfig.label,
     modeMeta: modeConfig.meta,
     modeInstruction: modeConfig.instruction,
@@ -332,6 +321,7 @@ module.exports = {
   resolveChatModeValue,
   resolveExecutionModelRole,
   resolveModelProfileSelection,
+  resolveTaskModeRouteKey,
   resolveTaskLoopAction,
   resolveTaskLoopLane,
   taskModeFromAction,

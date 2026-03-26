@@ -33,7 +33,7 @@ Top navigation:
 2. Go to `Settings -> Workspace`.
 3. Pick the workspace you actually want to work in.
 4. Go to `Settings -> AI`.
-5. Confirm the coding model, provider, and bridge/runtime are correct.
+5. Confirm the workspace coding model, engine control model, provider, and route plan are correct.
 6. Go to `Settings -> Extensions`.
 7. Confirm the VS Code companion is installed and healthy.
 

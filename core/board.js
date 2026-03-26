@@ -1223,6 +1223,12 @@ function parseEngineDailyReport(workspaceRoot, dashboard = {}) {
   const dailyFocus = payload?.daily_focus && typeof payload.daily_focus === 'object'
     ? payload.daily_focus
     : (payload?.dailyFocus && typeof payload.dailyFocus === 'object' ? payload.dailyFocus : {});
+  const maintenanceChecklist = payload?.maintenance_checklist && typeof payload.maintenance_checklist === 'object'
+    ? payload.maintenance_checklist
+    : (payload?.maintenanceChecklist && typeof payload.maintenanceChecklist === 'object' ? payload.maintenanceChecklist : {});
+  const openChecklist = normalizeLooseList(maintenanceChecklist.open_today || maintenanceChecklist.openToday);
+  const newProblems = normalizeLooseList(maintenanceChecklist.new_problems_today || maintenanceChecklist.newProblemsToday);
+  const missingCapabilities = normalizeLooseList(maintenanceChecklist.missing_today || maintenanceChecklist.missingToday);
   const runsAnalyzed = Number(runtime.run_count || dashboard.recent_count || 0);
   const successRate = normalizeRatePercent(runtime.success_rate, Number(dashboard.pass_rate || 0));
   const blockedRate = runsAnalyzed > 0
@@ -1259,12 +1265,15 @@ function parseEngineDailyReport(workspaceRoot, dashboard = {}) {
     blockedRate,
     reviewRequiredRate,
     averageRepairAttempts,
+    openChecklistCount: openChecklist.length,
+    newProblemCount: newProblems.length,
+    missingCapabilityCount: missingCapabilities.length,
     topIssues,
     recommendedActions,
     topIssuesText: summarizeCountRows(topIssues),
     recommendedActionsText: summarizeCountRows(recommendedActions),
     summary: runsAnalyzed > 0
-      ? `${suggestedWorkstream || 'Daily review'} • ${runsAnalyzed} runs • ${successRate}% success • ${reviewRequiredRate}% review required • avg repairs ${averageRepairAttempts}`
+      ? `${suggestedWorkstream || 'Daily review'} • ${runsAnalyzed} runs • ${successRate}% success • ${reviewRequiredRate}% review required • avg repairs ${averageRepairAttempts}${openChecklist.length > 0 ? ` • ${openChecklist.length} open audit item${openChecklist.length === 1 ? '' : 's'}` : ''}${missingCapabilities.length > 0 ? ` • ${missingCapabilities.length} missing capability gap${missingCapabilities.length === 1 ? '' : 's'}` : ''}`
       : 'No daily engine report yet.',
     jsonPath: toRelativeWorkspacePath(workspaceRoot, jsonPath),
     markdownPath: toRelativeWorkspacePath(workspaceRoot, markdownPath),

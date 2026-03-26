@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const {
+  archiveAppBundle,
   getDesktopAppRollbackRoot,
   installMacAppBundle,
   listArchivedAppBackups,
@@ -20,6 +21,11 @@ function writeWorkspaceConfig(workspaceRoot, promotionsRoot) {
 function makeFakeApp(appPath, marker = 'app') {
   fs.mkdirSync(path.join(appPath, 'Contents', 'MacOS'), { recursive: true });
   fs.writeFileSync(path.join(appPath, 'Contents', 'MacOS', marker), marker, 'utf8');
+}
+
+function makeFakeWinApp(appPath, marker = 'app') {
+  fs.mkdirSync(appPath, { recursive: true });
+  fs.writeFileSync(path.join(appPath, 'GoSenderr Desktop Agent.exe'), marker, 'utf8');
 }
 
 test('legacy application backups are migrated into the rollback archive root', () => {
@@ -59,6 +65,31 @@ test('installMacAppBundle archives the existing live app into the rollback archi
   assert.equal(fs.existsSync(result.installedPath), true);
   assert.equal(archived.length, 1);
   assert.match(String(archived[0].reason || ''), /pre-install-replaced-live-app/);
+});
+
+test('archiveAppBundle archives a win32 desktop directory into the rollback archive root', () => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-win-archive-workspace-'));
+  const promotionsRoot = path.join(workspaceRoot, 'assistant_promotions');
+  const installsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-win-installs-'));
+  writeWorkspaceConfig(workspaceRoot, promotionsRoot);
+
+  const liveAppPath = path.join(installsDir, 'GoSenderr Desktop Agent-win32-x64');
+  makeFakeWinApp(liveAppPath, 'win-live');
+
+  const result = archiveAppBundle(workspaceRoot, liveAppPath, {
+    platform: 'win32',
+    reason: 'pre-install-replaced-live-app',
+    appName: 'GoSenderr Desktop Agent-win32-x64',
+  });
+  const rollbackRoot = getDesktopAppRollbackRoot(workspaceRoot, 'win32');
+  const archived = listArchivedAppBackups(workspaceRoot, 'win32');
+
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(liveAppPath), false);
+  assert.equal(fs.existsSync(rollbackRoot), true);
+  assert.equal(archived.length, 1);
+  assert.equal(archived[0].platform, 'win32');
+  assert.match(String(archived[0].archivedAppPath || ''), /GoSenderr Desktop Agent-win32-x64/i);
 });
 
 test('listArchivedAppBackups returns an empty list when no promotions root is configured yet', () => {

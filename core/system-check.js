@@ -3,7 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const { MODEL_EXECUTION_ROLE_DEFAULTS } = require('./ai-center');
+const {
+  CAPABILITY_ROUTE_LANES,
+  MODEL_EXECUTION_ROLE_DEFAULTS,
+  resolveLaneExecutionRoleId,
+  resolveLaneRouteTaskMode,
+  resolveLaneWrappedProfileRole,
+} = require('./route-schema');
 const { buildBenchmarkIdentity, listBenchmarkRuns } = require('./benchmarks');
 const {
   buildAutonomousActionSummary,
@@ -19,7 +25,7 @@ const { buildIntegrationStudioStatus } = require('./integration-studio');
 const { listPromotionState } = require('./promotions');
 const { buildDailyTaskSummary, readHub } = require('./task-hub');
 const { listArchivedAppBackups } = require('./app-backup-archive');
-const { checkForUpdates } = require('./updater');
+const { checkForUpdates, summarizeUpdateRecoveryState } = require('./updater');
 const { buildVsCodeSetupStatus } = require('./vscode-setup');
 const { buildVsCodeExtensionHealth } = require('./vscode-extension-health');
 const {
@@ -42,26 +48,6 @@ const SYSTEM_CHECK_AREAS = Object.freeze([
   'self-improvement',
   'acceptance',
 ]);
-
-const LANE_ROLE_DEFAULTS = Object.freeze({
-  'chat-fast': 'workspace',
-  'code-main': 'workspace',
-  'repair-fast': 'workspace',
-  'plan-reasoning': 'engine',
-  'review-verify': 'engine',
-  'research-docs': 'engine',
-  'ops-summary': 'engine',
-});
-
-const LANE_MODEL_ROLE_DEFAULTS = Object.freeze({
-  'chat-fast': 'orchestrator',
-  'plan-reasoning': 'orchestrator',
-  'research-docs': 'orchestrator',
-  'ops-summary': 'orchestrator',
-  'code-main': 'worker',
-  'repair-fast': 'worker',
-  'review-verify': 'reviewer',
-});
 
 const SELF_IMPROVEMENT_SAFE_STATUSES = new Set(['succeeded', 'review']);
 
@@ -140,11 +126,16 @@ function buildAppRollbackStatus(workspaceRoot) {
     backupCount: backups.length,
     latestBackupId: String(backups[0]?.id || '').trim(),
     latestBackupPlatform: String(backups[0]?.platform || '').trim().toLowerCase(),
+    rollbackReady: backups.length > 0,
+    summary: backups.length > 0
+      ? `Archived desktop rollback ${String(backups[0]?.id || '').trim()} is ready for ${String(backups[0]?.platform || '').trim().toLowerCase() || 'the current platform'}.`
+      : 'No archived desktop app rollback is recorded yet.',
   };
 }
 
 function buildWorkspaceUpdateStatus(workspaceRoot) {
   const update = checkForUpdates(workspaceRoot);
+  const recovery = summarizeUpdateRecoveryState(workspaceRoot);
   const branch = String(update?.branch || '').trim();
   const upstream = String(update?.upstream || '').trim();
   let state = 'unavailable';
@@ -160,6 +151,7 @@ function buildWorkspaceUpdateStatus(workspaceRoot) {
   return {
     ...update,
     state,
+    recovery,
     workspace: {
       state,
       ok: update?.ok === true,
@@ -169,6 +161,8 @@ function buildWorkspaceUpdateStatus(workspaceRoot) {
       reason: String(update?.reason || '').trim(),
       ahead: Number(update?.ahead || 0),
       behind: Number(update?.behind || 0),
+      recovery,
+      message: String(update?.reason || '').trim() || recovery.summary,
     },
   };
 }
@@ -720,7 +714,7 @@ function buildModelRoleSummary(assistantConfig = {}, aiStatus = null, tuningSett
   const engineLabel = String(
     aiStatus?.dualModel?.engineProfile?.displayName
     || assistantConfig.engineModelDisplayName
-    || 'GSE-1 engine model',
+    || 'Engine control model',
   ).trim();
   const workspaceBaseModel = String(
     aiStatus?.dualModel?.workspaceProfile?.baseModel
@@ -789,8 +783,8 @@ function buildModelRoleSummary(assistantConfig = {}, aiStatus = null, tuningSett
     ? aiStatus.capabilityLanes.map((lane) => ({
       laneId: String(lane?.id || '').trim(),
       laneLabel: String(lane?.label || '').trim(),
-      role: String(lane?.profileRole || '').trim().toLowerCase() || (LANE_ROLE_DEFAULTS[String(lane?.id || '').trim()] || 'workspace'),
-      modelRoleId: String(lane?.modelRoleId || '').trim().toLowerCase() || (LANE_MODEL_ROLE_DEFAULTS[String(lane?.id || '').trim()] || 'worker'),
+      role: String(lane?.profileRole || '').trim().toLowerCase() || resolveLaneWrappedProfileRole(String(lane?.id || '').trim()),
+      modelRoleId: String(lane?.modelRoleId || '').trim().toLowerCase() || resolveLaneExecutionRoleId(String(lane?.id || '').trim()),
       modelRoleLabel: String(lane?.modelRoleLabel || MODEL_EXECUTION_ROLE_DEFAULTS[String(lane?.modelRoleId || '').trim().toLowerCase()]?.label || '').trim(),
       taskMode: String(lane?.routeTaskMode || '').trim().toLowerCase(),
       profileId: String(lane?.profileId || '').trim(),
@@ -801,24 +795,18 @@ function buildModelRoleSummary(assistantConfig = {}, aiStatus = null, tuningSett
       fallbackModel: String(lane?.fallbackModel || '').trim(),
       fallbackProvider: String(lane?.fallbackProvider || '').trim().toLowerCase(),
     }))
-    : Object.entries(LANE_ROLE_DEFAULTS).map(([laneId, role]) => ({
-      laneId,
-      laneLabel: laneId,
-      role,
-      modelRoleId: LANE_MODEL_ROLE_DEFAULTS[laneId] || 'worker',
-      modelRoleLabel: MODEL_EXECUTION_ROLE_DEFAULTS[LANE_MODEL_ROLE_DEFAULTS[laneId] || 'worker']?.label || 'Worker',
-      taskMode: laneId === 'plan-reasoning' || laneId === 'research-docs'
-        ? 'planner'
-        : laneId === 'review-verify'
-          ? 'validator'
-          : laneId === 'ops-summary'
-            ? 'summarizer'
-            : 'coder',
-      profileId: role === 'engine' ? engineProfileId : workspaceProfileId,
-      profileLabel: role === 'engine' ? engineLabel : workspaceLabel,
-      preferredModel: role === 'engine' ? engineBaseModel : workspaceBaseModel,
-      provider: role === 'engine' ? engineBaseProvider : workspaceBaseProvider,
-      providerSource: role === 'engine' ? engineProviderSource : workspaceProviderSource,
+    : CAPABILITY_ROUTE_LANES.map((lane) => ({
+      laneId: lane.id,
+      laneLabel: lane.label,
+      role: resolveLaneWrappedProfileRole(lane.id),
+      modelRoleId: resolveLaneExecutionRoleId(lane.id),
+      modelRoleLabel: MODEL_EXECUTION_ROLE_DEFAULTS[resolveLaneExecutionRoleId(lane.id)]?.label || 'Worker',
+      taskMode: resolveLaneRouteTaskMode(lane.id),
+      profileId: resolveLaneWrappedProfileRole(lane.id) === 'engine' ? engineProfileId : workspaceProfileId,
+      profileLabel: resolveLaneWrappedProfileRole(lane.id) === 'engine' ? engineLabel : workspaceLabel,
+      preferredModel: resolveLaneWrappedProfileRole(lane.id) === 'engine' ? engineBaseModel : workspaceBaseModel,
+      provider: resolveLaneWrappedProfileRole(lane.id) === 'engine' ? engineBaseProvider : workspaceBaseProvider,
+      providerSource: resolveLaneWrappedProfileRole(lane.id) === 'engine' ? engineProviderSource : workspaceProviderSource,
       fallbackModel: '',
       fallbackProvider: '',
     }));
@@ -856,7 +844,7 @@ function buildModelRoleSummary(assistantConfig = {}, aiStatus = null, tuningSett
     });
   return {
     status: workspaceProfileId && engineProfileId ? 'ready' : 'partial',
-    summary: `Workspace model: ${workspaceLabel || workspaceProfileId || 'unset'} | GSE-1: ${engineLabel || engineProfileId || 'unset'} | roles: front-door chat / orchestrator, worker, reviewer.`,
+    summary: `Workspace coding model: ${workspaceLabel || workspaceProfileId || 'unset'} | Engine control model: ${engineLabel || engineProfileId || 'unset'} | roles: front-door chat / orchestrator, worker, reviewer.`,
     workspace,
     engine,
     roles: explicitRoles,
@@ -1114,6 +1102,9 @@ function buildModelProvisioningArea(assistantConfig = {}, aiStatus = null, tunin
     ? aiStatus.provisioning
     : {};
   if (provisioning.summary) {
+    const routeCoverage = provisioning.routeCoverage && typeof provisioning.routeCoverage === 'object'
+      ? provisioning.routeCoverage
+      : {};
     return {
       status: String(provisioning.status || provisioning.state || 'unknown').trim().toLowerCase(),
       summary: shortText(provisioning.summary || 'Model provisioning status is available.'),
@@ -1123,6 +1114,12 @@ function buildModelProvisioningArea(assistantConfig = {}, aiStatus = null, tunin
       roles: Array.isArray(provisioning.roles) ? provisioning.roles.slice(0, 2) : [],
       blockers: Array.isArray(provisioning.blockers) ? provisioning.blockers.slice(0, 4) : [],
       warnings: Array.isArray(provisioning.warnings) ? provisioning.warnings.slice(0, 4) : [],
+      routeCoverage: {
+        status: String(routeCoverage.status || '').trim().toLowerCase(),
+        requiredModels: Array.isArray(routeCoverage.requiredModels) ? routeCoverage.requiredModels.slice(0, 8) : [],
+        readyModels: Array.isArray(routeCoverage.readyModels) ? routeCoverage.readyModels.slice(0, 8) : [],
+        missingLiveModels: Array.isArray(routeCoverage.missingLiveModels) ? routeCoverage.missingLiveModels.slice(0, 8) : [],
+      },
       ollama: provisioning.ollama && typeof provisioning.ollama === 'object' ? provisioning.ollama : {},
     };
   }
@@ -1150,9 +1147,14 @@ function buildModelProvisioningArea(assistantConfig = {}, aiStatus = null, tunin
   const workspaceModel = String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim();
   const engineModel = String(assistantConfig.engineBaseModel || assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim();
   const remoteKeyPresent = !!process.env.OPENAI_API_KEY;
-  const readyOllama = ollama.selectedModelReady === true || Number(ollama.modelCount || 0) > 0;
+  const liveOllamaModels = new Set(
+    (Array.isArray(ollama.models) ? ollama.models : []).map((item) => String(item || '').trim()).filter(Boolean),
+  );
   const describeRole = (role, provider, model) => {
     if (provider === 'ollama') {
+      const readyOllama = model
+        ? (liveOllamaModels.has(model) || (ollama.selectedModelReady === true && String(ollama.selectedModel || '').trim() === model))
+        : Number(ollama.modelCount || 0) > 0;
       return {
         role,
         provider,
@@ -1195,7 +1197,7 @@ function buildModelProvisioningArea(assistantConfig = {}, aiStatus = null, tunin
     ? failedRoles[0].summary
     : warnedRoles.length > 0
       ? warnedRoles[0].summary
-      : 'Workspace and engine model roles look provisioned from the current CLI-visible state.';
+      : 'Workspace coding and engine control roles look provisioned from the current CLI-visible state.';
   const recommendedAction = failedRoles.some((item) => item.provider === 'ollama')
     ? `Import or select a ready Ollama model${workspaceModel ? ` (${workspaceModel})` : ''} before asking the engine for local coding work.`
     : failedRoles.some((item) => item.provider === 'local')
@@ -1217,6 +1219,7 @@ function buildModelProvisioningArea(assistantConfig = {}, aiStatus = null, tunin
       modelCount: Number(ollama.modelCount || 0),
       selectedModel: String(ollama.selectedModel || workspaceModel || '').trim(),
       selectedModelReady: ollama.selectedModelReady === true,
+      models: Array.isArray(ollama.models) ? ollama.models.slice(0, 16) : [],
     },
   };
 }
@@ -1239,7 +1242,10 @@ function mergeModelExecutionRoleProvisioning(modelRoleSummary = {}, modelProvisi
     const provisioningState = String(role?.provisioningState || '').trim().toLowerCase()
       || (failed.length > 0 ? 'fail' : warned.length > 0 ? 'warn' : matchedProvisioning.length > 0 ? 'ready' : '');
     const localReady = role?.localReady === true || matchedProvisioning.some((item) => item.localReady === true);
-    const localVisible = role?.localReadiness || (matchedProvisioning.some((item) => item.local === true) ? (localReady ? 'ready' : provisioningState || 'fail') : 'not-local');
+    const storeRegistered = matchedProvisioning.some((item) => item.storeRegistered === true);
+    const localVisible = role?.localReadiness || (matchedProvisioning.some((item) => item.local === true)
+      ? (localReady ? 'live' : (storeRegistered ? 'registered' : 'staged'))
+      : 'not-local');
     return {
       ...role,
       provisioningState,
@@ -1368,6 +1374,9 @@ function buildAcceptanceArea(acceptance = {}) {
     builderProof: acceptanceControl.builderProof && typeof acceptanceControl.builderProof === 'object'
       ? acceptanceControl.builderProof
       : {},
+    modelParity: acceptanceControl.modelParity && typeof acceptanceControl.modelParity === 'object'
+      ? acceptanceControl.modelParity
+      : {},
     nextDayStatus: String(acceptanceControl.nextDayStatus || '').trim(),
     nextDayLabel: String(acceptanceControl.nextDayLabel || '').trim(),
     nextDaySummary: shortText(acceptanceControl.nextDaySummary || ''),
@@ -1448,6 +1457,11 @@ function buildRoadmapArea(readiness = {}, autonomy = {}, selfImprovement = {}, l
     ? readiness.selfImprovementProof
     : (selfImprovement.proof && typeof selfImprovement.proof === 'object' ? selfImprovement.proof : {});
   const companionParity = readiness.companionParity && typeof readiness.companionParity === 'object' ? readiness.companionParity : {};
+  const modelParity = acceptanceArea?.modelParity && typeof acceptanceArea.modelParity === 'object' && Object.keys(acceptanceArea.modelParity).length > 0
+    ? acceptanceArea.modelParity
+    : (acceptanceArea?.controlSummary?.modelParity && typeof acceptanceArea.controlSummary.modelParity === 'object' && Object.keys(acceptanceArea.controlSummary.modelParity).length > 0
+      ? acceptanceArea.controlSummary.modelParity
+      : (readiness.modelParity && typeof readiness.modelParity === 'object' ? readiness.modelParity : {}));
   const autonomyProof = acceptanceArea?.autonomyProof && typeof acceptanceArea.autonomyProof === 'object'
     ? acceptanceArea.autonomyProof
     : {};
@@ -1609,6 +1623,13 @@ function buildRoadmapArea(readiness = {}, autonomy = {}, selfImprovement = {}, l
       label: String(companionParity.label || '').trim(),
       summary: shortText(companionParity.summary || ''),
       nextAction: shortText(companionParity.nextAction || ''),
+    },
+    modelParity: {
+      label: String(modelParity.label || '').trim(),
+      summary: shortText(modelParity.summary || ''),
+      nextAction: shortText(modelParity.nextAction || ''),
+      capabilityCount: Number(modelParity.capabilityCount || 0),
+      readyCount: Number(modelParity.readyCount || 0),
     },
     autonomyProof: {
       status: String(autonomyProof.status || '').trim().toLowerCase(),
@@ -1904,7 +1925,10 @@ function buildSystemCheck(options = {}) {
     promotion: {
       status: String(promotions?.promotionGate?.status || 'blocked').trim().toLowerCase(),
       summary: shortText(
-        promotions?.promotionGate?.summary
+        [
+          promotions?.promotionGate?.summary,
+          promotions?.latestBackupId ? `Rollback backup ${String(promotions.latestBackupId || '').trim()} is ready.` : '',
+        ].filter(Boolean).join(' ')
         || acceptance?.report?.summary
         || 'Promotion gate status is available.',
       ),
@@ -2101,6 +2125,16 @@ function renderSystemCheck(report, options = {}) {
       if (payload?.companionParity?.nextAction) {
         blocks.push(renderTextBlock('Companion next step', payload.companionParity.nextAction, { compact }));
       }
+      if (payload?.modelParity?.summary) {
+        blocks.push(renderTextBlock(
+          'Model parity',
+          `${String(payload.modelParity.label || 'unknown').toUpperCase()} | ${payload.modelParity.summary}`,
+          { compact },
+        ));
+      }
+      if (payload?.modelParity?.nextAction) {
+        blocks.push(renderTextBlock('Model parity next step', payload.modelParity.nextAction, { compact }));
+      }
       if (payload?.phaseCloseout?.summary) {
         blocks.push(renderTextBlock(
           'Phase closeout',
@@ -2137,8 +2171,8 @@ function renderSystemCheck(report, options = {}) {
       blocks.push(renderTextBlock('Model', payload.latestRun.modelDisplayName || payload.latestRun.modelProfileId || 'n/a', { compact }));
     }
     if (areaId === 'models') {
-      blocks.push(renderTextBlock('Workspace model', payload?.workspace?.modelDisplayName || payload?.workspace?.modelProfileId || 'unset', { compact }));
-      blocks.push(renderTextBlock('GSE-1 model', payload?.engine?.modelDisplayName || payload?.engine?.modelProfileId || 'unset', { compact }));
+      blocks.push(renderTextBlock('Workspace coding model', payload?.workspace?.modelDisplayName || payload?.workspace?.modelProfileId || 'unset', { compact }));
+      blocks.push(renderTextBlock('Engine control model', payload?.engine?.modelDisplayName || payload?.engine?.modelProfileId || 'unset', { compact }));
       if (Array.isArray(payload?.roles)) {
         payload.roles.slice(0, 3).forEach((role) => {
           const lanes = Array.isArray(role?.laneIds) ? role.laneIds.filter(Boolean).join(', ') : '';
@@ -2159,6 +2193,13 @@ function renderSystemCheck(report, options = {}) {
         blocks.push(renderTextBlock(
           'Provisioning',
           `${String(payload.provisioning.status || 'unknown').toUpperCase()} | ${payload.provisioning.summary}`,
+          { compact },
+        ));
+      }
+      if (Array.isArray(payload?.provisioning?.routeCoverage?.missingLiveModels) && payload.provisioning.routeCoverage.missingLiveModels.length > 0) {
+        blocks.push(renderTextBlock(
+          'Missing live tags',
+          payload.provisioning.routeCoverage.missingLiveModels.join(', '),
           { compact },
         ));
       }

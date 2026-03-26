@@ -21723,6 +21723,125 @@
   var import_react2 = __toESM(require_react());
   var import_client = __toESM(require_client());
 
+  // renderer-src/lib/ai-route-copy.ts
+  var AI_ROUTE_COPY = Object.freeze({
+    settingsTabDescription: "Manage selector-driven routing, bridge profiles, local model inventory, remote providers, and per-route overrides from one place.",
+    modelSetupPrompt: "Set up the workspace coding model, engine control model, and verify the route plan is ready.",
+    enginePanelTitle: "Chat follows the current route plan",
+    overrideMetricLabel: "Route overrides",
+    overrideMetricActiveSummary: "Manual route overrides are active.",
+    overrideMetricIdleSummary: "All capability routes currently follow the active profile and route plan.",
+    resetOverridesLabel: "Reset route overrides",
+    capabilityRoutesEyebrow: "Capability routes",
+    capabilityRoutesTitle: "Tune each capability route without hand-editing routing rules",
+    capabilityRoutesSummary: "Leave a route on inherit to follow the active profile and route plan, or pin that route to the benchmark leader or a specific model.",
+    routeCardEyebrow: "Route",
+    routeSourceOverride: "Manual route override",
+    routeSourceInherited: "Inherited from route plan",
+    routeSelectLabel: "Route selection",
+    routeResetLabel: "Reset route",
+    ladderEyebrow: "Local model MVP ladder",
+    ladderSummary: "This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof.",
+    unlockEyebrow: "Capability unlock ladder",
+    unlockSummary: "Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block."
+  });
+  function localModelProgramStatusLabel(value) {
+    if (value === "verified") {
+      return "Verified";
+    }
+    if (value === "next") {
+      return "Next";
+    }
+    return "Locked";
+  }
+  function buildLocalModelProgram(evidence) {
+    const foundationStatus = evidence.localModelCount >= 2 ? "verified" : evidence.localModelCount === 1 && evidence.localRuntimeReady ? "next" : "locked";
+    const routingStatus = evidence.localRuntimeReady && evidence.localModelCount > 0 ? evidence.activeRouteOverrideCount > 0 || evidence.routePolicy.includes("local") || evidence.routePolicy.includes("hybrid") ? "verified" : "next" : "locked";
+    const codingStatus = String(evidence.localCodingProofSummary || "").trim() ? "verified" : evidence.acceptanceStatus === "pass" ? "verified" : evidence.acceptanceStatus === "warn" || evidence.benchmarkSummaryCount > 0 ? "next" : "locked";
+    const promotionStatus = evidence.promotedCandidateCount > 0 ? "verified" : evidence.modelFoundryCandidateCount > 0 || evidence.candidateCount > 0 ? "next" : "locked";
+    const selfImproveStatus = evidence.promotedCandidateCount > 0 && evidence.acceptanceStatus === "pass" ? "verified" : evidence.acceptanceStatus === "pass" || evidence.promotedCandidateCount > 0 ? "next" : "locked";
+    const layers = [
+      {
+        id: "foundation",
+        label: "Layer 0: Foundation",
+        status: foundationStatus,
+        summary: foundationStatus === "verified" ? `${evidence.localModelCount} ready local coding models are installed and the local runtime is usable.` : foundationStatus === "next" ? "The local runtime is usable, but the second ready coding-grade local model still needs to be locked in." : "Install and register local coding models before treating the engine as local-first.",
+        unlockRule: "Need 2 ready local coding models plus a working local runtime."
+      },
+      {
+        id: "routing",
+        label: "Layer 1: Local coding parity",
+        status: routingStatus,
+        summary: routingStatus === "verified" ? `Local-first routing is configured${evidence.activeRouteOverrideCount > 0 ? ` with ${evidence.activeRouteOverrideCount} explicit route override${evidence.activeRouteOverrideCount === 1 ? "" : "s"}` : ""}.` : routingStatus === "next" ? "Local runtime is available, but planner/coder/validator still need a locked local-first route plan." : "Routing is not yet stable enough to treat local models as the default coding path.",
+        unlockRule: "Planner, coder, and validator must route local-first before widening capability."
+      },
+      {
+        id: "coding",
+        label: "Layer 2: Verified coding block",
+        status: codingStatus,
+        summary: String(evidence.localCodingProofSummary || "").trim() || (codingStatus === "verified" ? `Acceptance is green and ${evidence.benchmarkLeaderIsLocal ? "the current benchmark leader is local-first" : "benchmark evidence exists"} for the coding block.` : codingStatus === "next" ? "Benchmark or partial acceptance evidence exists, but the local-first coding block is not fully proven yet." : "The local-first coding block still needs benchmark and acceptance proof before autonomy expands."),
+        unlockRule: "Need benchmark plus acceptance proof for local-first planner/coder/validator lanes."
+      },
+      {
+        id: "promotion",
+        label: "Layer 3: Foundry and promotion",
+        status: promotionStatus,
+        summary: promotionStatus === "verified" ? `${evidence.promotedCandidateCount} promoted local candidate${evidence.promotedCandidateCount === 1 ? "" : "s"} already proved the promotion path.` : promotionStatus === "next" ? "Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path." : "No verified candidate promotion path exists yet for local model bundles.",
+        unlockRule: "Only benchmark-backed local candidates should become promoted defaults."
+      },
+      {
+        id: "self-improve",
+        label: "Layer 4: Self-improvement",
+        status: selfImproveStatus,
+        summary: selfImproveStatus === "verified" ? "Trusted self-improvement can stay gated behind approved runs while the local baseline remains green." : selfImproveStatus === "next" ? "The repo is close to trusted self-improvement, but promotion or acceptance proof is still incomplete." : "Keep self-improvement bounded until the lower local-first blocks are verified.",
+        unlockRule: "Approved-run exports only, and only after local-first acceptance stays green."
+      }
+    ];
+    const unlocks = [
+      {
+        id: "chat",
+        label: "Unlock local-first daily coding",
+        status: foundationStatus === "verified" && routingStatus === "verified" ? "verified" : foundationStatus === "next" || routingStatus === "next" ? "next" : "locked",
+        summary: "Daily planning and coding can default local-first once foundation and routing are verified."
+      },
+      {
+        id: "repair",
+        label: "Unlock local repair and edit loop",
+        status: codingStatus === "verified" ? "verified" : codingStatus === "next" ? "next" : "locked",
+        summary: "Repair, edit, and rerun loops should widen only after benchmark plus acceptance proof is visible."
+      },
+      {
+        id: "promotion",
+        label: "Unlock model promotion",
+        status: promotionStatus,
+        summary: "Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe."
+      },
+      {
+        id: "self-improve",
+        label: "Unlock trusted self-improvement",
+        status: selfImproveStatus,
+        summary: "Training exports and self-improvement stay gated behind approved runs and a stable local baseline."
+      },
+      {
+        id: "remote-min",
+        label: "Unlock remote-minimized operation",
+        status: selfImproveStatus === "verified" && evidence.benchmarkLeaderIsLocal && !evidence.safeModeActive ? "verified" : (routingStatus === "verified" || codingStatus === "verified") && evidence.remoteFallbackReady ? "next" : "locked",
+        summary: evidence.remoteFallbackReady ? "Remote models can stay as explicit compare or overflow helpers instead of the daily default." : "Configure remote fallback only as backup, not as the primary coding path."
+      }
+    ];
+    const nextLayer = layers.find((layer) => layer.status !== "verified") || layers[layers.length - 1];
+    const verifiedCount = layers.filter((layer) => layer.status === "verified").length;
+    return {
+      verifiedCount,
+      localModelCount: evidence.localModelCount,
+      benchmarkLeaderIsLocal: evidence.benchmarkLeaderIsLocal,
+      nextLayer,
+      summary: nextLayer.status === "verified" ? "All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison." : `Next focus: ${nextLayer.label}. ${nextLayer.summary}`,
+      layers,
+      unlocks
+    };
+  }
+
   // renderer-src/lib/format.ts
   function formatStamp(value) {
     const date = value ? new Date(value) : null;
@@ -21781,7 +21900,6 @@
   var import_jsx_runtime = __toESM(require_jsx_runtime());
   var THREADS_KEY = "gosenderr.desktop.workbench.threads.v3";
   var ACTIVE_THREAD_KEY = "gosenderr.desktop.workbench.active-thread.v3";
-  var SETTINGS_TABS = ["general", "workspace", "ai", "autonomy", "skills", "extensions", "tools", "automations", "labs", "learning", "storage"];
   var MONITOR_TABS = ["overview", "runs", "learning", "promotions", "debug"];
   var INSPECTOR_TABS = ["manager", "inbox", "file", "diff", "learning"];
   var INSPECTOR_TAB_LABELS = {
@@ -21790,6 +21908,90 @@
     file: "File",
     diff: "Diff",
     learning: "Learning"
+  };
+  var SETTINGS_NAV_GROUPS = [
+    { id: "system", label: "System", tabs: ["general", "workspace", "storage"] },
+    { id: "intelligence", label: "Intelligence", tabs: ["ai", "autonomy", "skills", "tools"] },
+    { id: "operations", label: "Operations", tabs: ["extensions", "automations", "labs", "learning"] }
+  ];
+  var SETTINGS_TAB_META = {
+    general: {
+      navLabel: "System",
+      title: "Desktop system controls",
+      eyebrow: "Shell + updates",
+      description: "Theme, chat defaults, instruction shaping, and updater controls stay here so the main chat surface can stay focused on work.",
+      icon: "mode"
+    },
+    workspace: {
+      navLabel: "Workspace",
+      title: "Workspace targeting",
+      eyebrow: "Roots + editor alignment",
+      description: "Choose the active workspace, confirm the current target, and keep the VS Code companion aligned with the desktop shell.",
+      icon: "repo"
+    },
+    ai: {
+      navLabel: "AI routing",
+      title: "AI routing and model selection",
+      eyebrow: "Profiles + providers",
+      description: AI_ROUTE_COPY.settingsTabDescription,
+      icon: "spark"
+    },
+    autonomy: {
+      navLabel: "Autonomy",
+      title: "Autonomy and safety policy",
+      eyebrow: "Guardrails + retries",
+      description: "Tune how far the engine can go on its own, how often it retries, and which actions still require supervision.",
+      icon: "agents"
+    },
+    skills: {
+      navLabel: "Skills",
+      title: "Local skills library",
+      eyebrow: "Reusable expertise",
+      description: "Review the installed skill catalog and open individual skills when you want to inspect or refine the packaged guidance.",
+      icon: "session"
+    },
+    extensions: {
+      navLabel: "Extensions",
+      title: "Integration studio",
+      eyebrow: "Plugins + adapters",
+      description: "Track starter integrations, installed items, and rollback archives without scattering extension management across other panels.",
+      icon: "pull-request"
+    },
+    tools: {
+      navLabel: "Tools",
+      title: "Tool catalog",
+      eyebrow: "Capabilities + safety",
+      description: "See which tools are exposed to the engine and how each one is classified before you widen or tighten the operational surface.",
+      icon: "git"
+    },
+    automations: {
+      navLabel: "Automations",
+      title: "Automation queue",
+      eyebrow: "Jobs + schedules",
+      description: "Keep recurring jobs and autopilot-style actions grouped here so scheduled work does not clutter the interactive workflow.",
+      icon: "plus"
+    },
+    labs: {
+      navLabel: "Labs",
+      title: "Lab management",
+      eyebrow: "Scratch spaces",
+      description: "Create disposable labs, broken proof targets, and mirrors from the same surface you use to manage the rest of the system.",
+      icon: "spaces"
+    },
+    learning: {
+      navLabel: "Learning",
+      title: "Learning loop",
+      eyebrow: "Journal + carry-forward",
+      description: "Capture approved lessons, inspect the current learning state, and export the journal without leaving the unified settings surface.",
+      icon: "issue"
+    },
+    storage: {
+      navLabel: "Diagnostics",
+      title: "Storage and diagnostics roots",
+      eyebrow: "Paths + persistence",
+      description: "Keep the durable storage locations explicit so runs, labs, journals, and rollback artifacts never drift to the wrong place.",
+      icon: "repo"
+    }
   };
   var initialState = {
     loading: true,
@@ -22191,7 +22393,7 @@
     if (suggestions.length === 0) {
       pushUniqueSuggestion(suggestions, "Plan the next safe coding task.");
       pushUniqueSuggestion(suggestions, "Review the current repo and tell me what needs fixing first.");
-      pushUniqueSuggestion(suggestions, "Set up the coding model and verify the engine is ready.");
+      pushUniqueSuggestion(suggestions, AI_ROUTE_COPY.modelSetupPrompt);
     }
     return suggestions.slice(0, 3);
   }
@@ -22409,16 +22611,7 @@
     const provider = String(value || "").trim().toLowerCase();
     return provider === "ollama" || provider === "local";
   }
-  function modelProgramStatusLabel(value) {
-    if (value === "verified") {
-      return "Verified";
-    }
-    if (value === "next") {
-      return "Next";
-    }
-    return "Locked";
-  }
-  function buildLocalModelProgram(snapshot, aiStatus, tuning) {
+  function buildLocalModelProgramView(snapshot, aiStatus, tuning) {
     const settings = snapshot?.settings || {};
     const localModels = readAiModelOptions(aiStatus, tuning, settings).filter((option) => option.ready && isLocalProvider(option.provider));
     const currentProvider = String(aiStatus?.current?.provider || settings.runtime || "ollama").trim().toLowerCase();
@@ -22428,6 +22621,7 @@
     const benchmarkSummary = Array.isArray(aiStatus?.benchmarkSummary) ? aiStatus.benchmarkSummary : [];
     const benchmarkLeader = benchmarkSummary[0] || {};
     const benchmarkLeaderIsLocal = isLocalProvider(benchmarkLeader.providerSource || benchmarkLeader.provider || currentProvider);
+    const localCodingProof = aiStatus?.localCodingProof && typeof aiStatus.localCodingProof === "object" ? aiStatus.localCodingProof : aiStatus?.gsDev1?.localCodingProof && typeof aiStatus.gsDev1.localCodingProof === "object" ? aiStatus.gsDev1.localCodingProof : null;
     const acceptance = snapshot?.acceptance?.report && typeof snapshot.acceptance.report === "object" ? snapshot.acceptance.report : {};
     const acceptanceStatus = String(acceptance.overallStatus || "").trim().toLowerCase();
     const promotions = snapshot?.promotions && typeof snapshot.promotions === "object" ? snapshot.promotions : {};
@@ -22438,91 +22632,21 @@
     const remoteFallbackReady = Boolean(String(settings.aiRemoteModel || aiStatus?.current?.remoteModel || "").trim());
     const activeLaneOverrideCount = Object.keys(laneOverrides).length;
     const localRuntimeReady = ["ollama", "local", "hybrid"].includes(currentRuntime) || ["ollama", "local", "hybrid"].includes(currentProvider);
-    const foundationStatus = localModels.length >= 2 ? "verified" : localModels.length === 1 && localRuntimeReady ? "next" : "locked";
-    const routingStatus = localRuntimeReady && localModels.length > 0 ? activeLaneOverrideCount > 0 || routePolicy.includes("local") || routePolicy.includes("hybrid") ? "verified" : "next" : "locked";
-    const codingStatus = acceptanceStatus === "pass" ? "verified" : acceptanceStatus === "warn" || benchmarkSummary.length > 0 ? "next" : "locked";
-    const promotionStatus = promotedCandidates.length > 0 ? "verified" : Number(modelFoundry.candidateCount || 0) > 0 || candidates.length > 0 ? "next" : "locked";
-    const selfImproveStatus = promotedCandidates.length > 0 && acceptanceStatus === "pass" ? "verified" : acceptanceStatus === "pass" || promotedCandidates.length > 0 ? "next" : "locked";
-    const layers = [
-      {
-        id: "foundation",
-        label: "Layer 0: Foundation",
-        status: foundationStatus,
-        summary: foundationStatus === "verified" ? `${localModels.length} ready local coding models are installed and the local runtime is usable.` : foundationStatus === "next" ? "The local runtime is usable, but the second ready coding-grade local model still needs to be locked in." : "Install and register local coding models before treating the engine as local-first.",
-        unlockRule: "Need 2 ready local coding models plus a working local runtime."
-      },
-      {
-        id: "routing",
-        label: "Layer 1: Local coding parity",
-        status: routingStatus,
-        summary: routingStatus === "verified" ? `Local-first routing is configured${activeLaneOverrideCount > 0 ? ` with ${activeLaneOverrideCount} explicit lane override${activeLaneOverrideCount === 1 ? "" : "s"}` : ""}.` : routingStatus === "next" ? "Local runtime is available, but planner/coder/validator still need a locked local-first route policy." : "Routing is not yet stable enough to treat local models as the default coding path.",
-        unlockRule: "Planner, coder, and validator must route local-first before widening capability."
-      },
-      {
-        id: "coding",
-        label: "Layer 2: Verified coding block",
-        status: codingStatus,
-        summary: codingStatus === "verified" ? `Acceptance is green and ${benchmarkLeaderIsLocal ? "the current benchmark leader is local-first" : "benchmark evidence exists"} for the coding block.` : codingStatus === "next" ? "Benchmark or partial acceptance evidence exists, but the local-first coding block is not fully proven yet." : "The local-first coding block still needs benchmark and acceptance proof before autonomy expands.",
-        unlockRule: "Need benchmark plus acceptance proof for local-first planner/coder/validator lanes."
-      },
-      {
-        id: "promotion",
-        label: "Layer 3: Foundry and promotion",
-        status: promotionStatus,
-        summary: promotionStatus === "verified" ? `${promotedCandidates.length} promoted local candidate${promotedCandidates.length === 1 ? "" : "s"} already proved the promotion path.` : promotionStatus === "next" ? "Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path." : "No verified candidate promotion path exists yet for local model bundles.",
-        unlockRule: "Only benchmark-backed local candidates should become promoted defaults."
-      },
-      {
-        id: "self-improve",
-        label: "Layer 4: Self-improvement",
-        status: selfImproveStatus,
-        summary: selfImproveStatus === "verified" ? "Trusted self-improvement can stay gated behind approved runs while the local baseline remains green." : selfImproveStatus === "next" ? "The repo is close to trusted self-improvement, but promotion or acceptance proof is still incomplete." : "Keep self-improvement bounded until the lower local-first blocks are verified.",
-        unlockRule: "Approved-run exports only, and only after local-first acceptance stays green."
-      }
-    ];
-    const unlocks = [
-      {
-        id: "chat",
-        label: "Unlock local-first daily coding",
-        status: foundationStatus === "verified" && routingStatus === "verified" ? "verified" : foundationStatus === "next" || routingStatus === "next" ? "next" : "locked",
-        summary: "Daily planning and coding can default local-first once foundation and routing are verified."
-      },
-      {
-        id: "repair",
-        label: "Unlock local repair and edit loop",
-        status: codingStatus === "verified" ? "verified" : codingStatus === "next" ? "next" : "locked",
-        summary: "Repair, edit, and rerun loops should widen only after benchmark plus acceptance proof is visible."
-      },
-      {
-        id: "promotion",
-        label: "Unlock model promotion",
-        status: promotionStatus,
-        summary: "Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe."
-      },
-      {
-        id: "self-improve",
-        label: "Unlock trusted self-improvement",
-        status: selfImproveStatus,
-        summary: "Training exports and self-improvement stay gated behind approved runs and a stable local baseline."
-      },
-      {
-        id: "remote-min",
-        label: "Unlock remote-minimized operation",
-        status: selfImproveStatus === "verified" && benchmarkLeaderIsLocal && !safeMode.active ? "verified" : (routingStatus === "verified" || codingStatus === "verified") && remoteFallbackReady ? "next" : "locked",
-        summary: remoteFallbackReady ? "Remote models can stay as explicit compare or overflow helpers instead of the daily default." : "Configure remote fallback only as backup, not as the primary coding path."
-      }
-    ];
-    const nextLayer = layers.find((layer) => layer.status !== "verified") || layers[layers.length - 1];
-    const verifiedCount = layers.filter((layer) => layer.status === "verified").length;
-    return {
-      verifiedCount,
+    return buildLocalModelProgram({
       localModelCount: localModels.length,
+      localRuntimeReady,
+      routePolicy,
+      activeRouteOverrideCount: activeLaneOverrideCount,
+      localCodingProofSummary: String(localCodingProof?.summary || "").trim(),
+      acceptanceStatus,
+      benchmarkSummaryCount: benchmarkSummary.length,
       benchmarkLeaderIsLocal,
-      nextLayer,
-      summary: nextLayer.status === "verified" ? "All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison." : `Next focus: ${nextLayer.label}. ${nextLayer.summary}`,
-      layers,
-      unlocks
-    };
+      promotedCandidateCount: promotedCandidates.length,
+      candidateCount: candidates.length,
+      modelFoundryCandidateCount: Number(modelFoundry.candidateCount || 0),
+      remoteFallbackReady,
+      safeModeActive: safeMode.active === true
+    });
   }
   function App() {
     const state = useStoreValue(store);
@@ -23664,7 +23788,7 @@
             quickPrompts: [
               "Plan the next safe coding task in this repo.",
               "Review the current repo and tell me what needs fixing first.",
-              "Set up the coding model and verify the engine is ready."
+              AI_ROUTE_COPY.modelSetupPrompt
             ],
             onUpdateSetting,
             onQuickChat,
@@ -23751,7 +23875,7 @@
     const promptCards = [
       `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
       "Review the current repo and tell me what needs fixing first.",
-      "Set up the coding model and verify the engine is ready."
+      AI_ROUTE_COPY.modelSetupPrompt
     ];
     const launcherActions = [
       { label: "Agent", icon: "agents", onClick: () => void props.onUpdateSetting("chatMode", "agent") },
@@ -24159,6 +24283,7 @@
     const groupedAutomations = settings.automations || {};
     const updates = props.snapshot?.updates && typeof props.snapshot.updates === "object" ? props.snapshot.updates : {};
     const binaryUpdates = updates.binary && typeof updates.binary === "object" ? updates.binary : {};
+    const updateRecovery = updates.workspace?.recovery && typeof updates.workspace.recovery === "object" ? updates.workspace.recovery : updates.recovery && typeof updates.recovery === "object" ? updates.recovery : {};
     const resourcePolicy = props.aiStatus?.resourcePolicy || {};
     const aiTelemetry = props.aiStatus?.telemetry || {};
     const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
@@ -24178,6 +24303,7 @@
     const installedIntegrations = Array.isArray(integrations?.installed) ? integrations.installed : [];
     const appRollbacks = props.snapshot?.appRollbacks || {};
     const archivedAppBackups = Array.isArray(appRollbacks?.backups) ? appRollbacks.backups : [];
+    const appRollbackSummary = String(appRollbacks?.summary || "").trim();
     const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
     const activeLaneOverrideCount = Object.keys(aiLaneOverrides).length;
     const aiManualMode = settings.aiManualMode === true || props.aiStatus?.current?.manualMode === true;
@@ -24273,6 +24399,104 @@
     const binaryConfigured = binaryUpdates.configured === true || binaryFeedUrl.length > 0 || binaryDownloaded;
     const binaryInstallLabel = String(binaryUpdates.localArtifactPath || "").trim() ? "Open staged installer" : "Install update";
     const autoInstallEnabled = settings.autoUpdateEnabled === true && settings.autoUpdateAutoApply === true;
+    const activeTabMeta = SETTINGS_TAB_META[props.activeTab];
+    const labsList = Array.isArray(props.labs?.labs) ? props.labs.labs : [];
+    const learningEntries = Array.isArray(props.learningChanges?.entries) ? props.learningChanges.entries : [];
+    const styleProfileSummary = String(props.learningStatus?.styleProfile?.summary || "").trim();
+    const safeToolCount = props.tools.filter((tool) => String(tool?.safetyLevel || "safe") === "safe").length;
+    const settingsHeroStats = [
+      {
+        label: "Target workspace",
+        value: shortPath(groupedWorkspace.currentTargetRoot) || "No target selected",
+        detail: groupedWorkspace.selectedLabRoot ? `Lab active: ${shortPath(groupedWorkspace.selectedLabRoot)}` : "Real workspace is active."
+      },
+      {
+        label: "Routing profile",
+        value: String(props.aiStatus?.profileId || settings.aiProfile || "hybrid-default"),
+        detail: `${currentProvider} runtime${aiManualMode ? " \u2022 custom mode" : " \u2022 selector mode"}`
+      },
+      {
+        label: "Safety level",
+        value: String(activeSafetyLevel?.label || selectedSafetyLevel),
+        detail: `${String(groupedAutonomy.profileId || "supervised-auto")} autonomy profile`
+      },
+      {
+        label: "Learning state",
+        value: styleProfileSummary ? "Profile active" : "Warming up",
+        detail: `${Number(props.learningStatus?.reusablePrompts?.length || 0)} reusable prompt${Number(props.learningStatus?.reusablePrompts?.length || 0) === 1 ? "" : "s"}`
+      }
+    ];
+    const activeTabHighlights = (() => {
+      switch (props.activeTab) {
+        case "general":
+          return [
+            { label: "Chat mode", value: String(settings.chatMode || "auto") },
+            { label: "Theme", value: String(["codex", "obsidian"].includes(settings.theme || "") ? settings.theme : "codex") },
+            { label: "Updates", value: binaryDownloaded ? "Ready to install" : binaryUpdateState || "idle" }
+          ];
+        case "workspace":
+          return [
+            { label: "Current target", value: shortPath(groupedWorkspace.currentTargetRoot) || "None" },
+            { label: "VS Code", value: vscodeSetup?.ok ? "Connected" : "Needs setup" },
+            { label: "Runs", value: String(props.taskRuns.length) }
+          ];
+        case "ai":
+          return [
+            { label: "Provider", value: currentProvider },
+            { label: "Ready models", value: String(readyModelCount) },
+            { label: "Overrides", value: String(activeLaneOverrideCount) }
+          ];
+        case "autonomy":
+          return [
+            { label: "Safety", value: String(activeSafetyLevel?.label || selectedSafetyLevel) },
+            { label: "Mode", value: String(groupedAutonomy.profileId || "supervised-auto") },
+            { label: "Retries", value: String(groupedAutonomy.maxRetryRounds || 2) }
+          ];
+        case "skills":
+          return [
+            { label: "Installed skills", value: String(props.skills.length) },
+            { label: "Guidance", value: styleProfileSummary ? "Learning active" : "No style profile yet" },
+            { label: "Prompts", value: String(Number(props.learningStatus?.reusablePrompts?.length || 0)) }
+          ];
+        case "extensions":
+          return [
+            { label: "Starter items", value: String(integrationLibrary.length) },
+            { label: "Installed", value: String(installedIntegrations.length) },
+            { label: "Rollbacks", value: String(archivedAppBackups.length) }
+          ];
+        case "tools":
+          return [
+            { label: "Catalog size", value: String(props.tools.length) },
+            { label: "Safe tools", value: String(safeToolCount) },
+            { label: "Needs review", value: String(Math.max(props.tools.length - safeToolCount, 0)) }
+          ];
+        case "automations":
+          return [
+            { label: "Jobs", value: String(props.automations.length) },
+            { label: "Action", value: String(groupedAutomations.action || "implement") },
+            { label: "Self improve", value: groupedAutomations.selfImprove ? "Enabled" : "Off" }
+          ];
+        case "labs":
+          return [
+            { label: "Known labs", value: String(labsList.length) },
+            { label: "Active target", value: shortPath(groupedWorkspace.selectedLabRoot) || "Workspace" },
+            { label: "Benchmarks", value: String(Array.isArray(props.benchmarks?.runs) ? props.benchmarks.runs.length : 0) }
+          ];
+        case "learning":
+          return [
+            { label: "Style profile", value: styleProfileSummary ? "Active" : "Pending" },
+            { label: "Journal entries", value: String(learningEntries.length) },
+            { label: "Prompts", value: String(Number(props.learningStatus?.reusablePrompts?.length || 0)) }
+          ];
+        case "storage":
+        default:
+          return [
+            { label: "Runs root", value: shortPath(groupedStorage.runsDir) || "Unset" },
+            { label: "Labs root", value: shortPath(groupedStorage.labsRoot) || "Unset" },
+            { label: "Benchmarks", value: shortPath(groupedStorage.benchmarkRoot) || "Unset" }
+          ];
+      }
+    })();
     const refreshKeyPanelPresence = (0, import_react2.useEffectEvent)(async () => {
       const entries = keyPanelEntries.filter((entry) => String(entry?.secretName || "").trim());
       const results = await Promise.all(entries.map(async (entry) => {
@@ -24355,1050 +24579,1093 @@
         setKeyPanelBusySecretName("");
       }
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel settings-panel-v2", "data-panel": "settings", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Unified settings center" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Keep chat clean and move the system controls here" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "AI, autonomy, workspace targeting, tools, labs, learning, and diagnostics all live behind one modular settings surface." })
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel settings-panel-v2", "data-panel": "settings", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-shell", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-hero", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-hero-main", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Unified settings center" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Keep chat clean and move the system controls here" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "AI, autonomy, workspace targeting, tools, labs, learning, and diagnostics all live behind one modular settings surface." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions settings-hero-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, children: "Refresh" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPickWorkspace, children: "Pick workspace" })
+          ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, children: "Refresh" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPickWorkspace, children: "Pick workspace" })
-        ] })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-hero-grid", children: settingsHeroStats.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: item.label }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.value }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: item.detail })
+        ] }, item.label)) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-tabs", "data-settings-tabs": "true", children: SETTINGS_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "button",
-        {
-          className: props.activeTab === tab ? "active" : "",
-          "data-settings-tab": tab,
-          onClick: () => props.onSetActiveTab(tab),
-          children: tab === "ai" ? "AI" : tab === "labs" ? "Labs" : tab === "tools" ? "Tools" : tab === "extensions" ? "Extensions" : tab === "storage" ? "Storage & Diagnostics" : tab.charAt(0).toUpperCase() + tab.slice(1)
-        },
-        tab
-      )) }),
-      props.activeTab === "general" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), children: ["auto", "ask", "plan", "edit", "agent"].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Theme" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: ["codex", "obsidian"].includes(settings.theme || "") ? settings.theme : "codex", onChange: (event) => void props.onUpdateSetting("theme", event.target.value), children: ["codex", "obsidian"].map((theme) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: theme, children: theme }, theme)) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Inspector mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: settings.chatUtilityMode || "context", onChange: (event) => void props.onUpdateSetting("chatUtilityMode", event.target.value), children: ["context", "diff", "review"].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat instruction mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "select",
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-layout", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("aside", { className: "settings-sidebar", "aria-label": "Settings sections", children: SETTINGS_NAV_GROUPS.map((group) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-nav-group", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-nav-group-label", children: group.label }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-nav-list", children: group.tabs.map((tab) => {
+            const meta = SETTINGS_TAB_META[tab];
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "button",
               {
-                value: ["off", "auto", "custom"].includes(String(settings.chatInstructionMode || "").toLowerCase()) ? String(settings.chatInstructionMode || "").toLowerCase() : "auto",
-                onChange: (event) => void props.onUpdateSetting("chatInstructionMode", event.target.value),
+                className: `settings-nav-button${props.activeTab === tab ? " active" : ""}`,
+                "data-settings-tab": tab,
+                "aria-pressed": props.activeTab === tab,
+                onClick: () => props.onSetActiveTab(tab),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "off", children: "Off" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "Auto" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "Custom" })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: meta.icon, className: "settings-nav-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-nav-copy", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: meta.navLabel }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: meta.eyebrow })
+                  ] })
                 ]
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat inspector width" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "number",
-                min: 320,
-                max: 620,
-                value: String(settings.chatInspectorWidth || 380),
-                onChange: (event) => void props.onUpdateSetting("chatInspectorWidth", Number(event.target.value || 380))
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Composer height" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "select",
-              {
-                value: String(settings.chatComposerHeight || "comfortable"),
-                onChange: (event) => void props.onUpdateSetting("chatComposerHeight", event.target.value),
-                children: ["compact", "comfortable", "tall"].map((height) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: height, children: height }, height))
-              }
-            )
-          ] })
-        ] }),
-        String(settings.chatInstructionMode || "auto").toLowerCase() === "custom" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "stacked-input", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Custom chat instructions" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "textarea",
-            {
-              value: String(settings.chatCustomInstructions || ""),
-              onChange: (event) => void props.onUpdateSetting("chatCustomInstructions", event.target.value),
-              placeholder: "Example: Prefer reusable file edits, explain risky changes briefly, and keep UI changes screen-by-screen."
-            }
-          )
-        ] }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace target" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentTargetRoot) || "No target selected" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.selectedLabRoot ? `Lab: ${shortPath(groupedWorkspace.selectedLabRoot)}` : "The real workspace is active." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat startup" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: settings.startInChatWorkspace === false ? "Custom" : "Chat first" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "The app opens directly into the chat canvas so the workbench stays simple by default." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Learned chat guidance" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.learningStatus?.styleProfile?.summary ? "Active" : "Warming up" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.learningStatus?.styleProfile?.summary || "Approved sessions will shape naming, prompt suggestions, and reusable guidance here.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Reusable prompts" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) > 0 ? "Chat suggestions can pull from trusted prompt patterns as you work." : "Trusted prompt patterns will show up here after accepted runs." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Update Center" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Install desktop updates without leaving the app" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.message || "Connect a release feed or stage a local release so the desktop shell can check, download, and install updates here.") })
-          ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Release feed URL" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  defaultValue: binaryFeedUrl,
-                  placeholder: "https://updates.example.com/live",
-                  onBlur: (event) => void props.onUpdateSetting("releaseFeedUrl", event.target.value)
-                }
-              )
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-check interval minutes" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "number",
-                  min: 5,
-                  max: 240,
-                  value: String(settings.autoUpdateIntervalMinutes || 30),
-                  onChange: (event) => void props.onUpdateSetting("autoUpdateIntervalMinutes", Number(event.target.value || 30))
-                }
-              )
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toggle-grid", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: settings.releaseAutoDownload === true, onChange: (event) => void props.onUpdateSetting("releaseAutoDownload", event.target.checked) }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-download desktop releases when one is found" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: autoInstallEnabled,
-                  onChange: (event) => {
-                    const checked = event.target.checked;
-                    void props.onUpdateSetting("autoUpdateEnabled", checked);
-                    void props.onUpdateSetting("autoUpdateAutoApply", checked);
-                    if (checked && settings.releaseAutoDownload !== true) {
-                      void props.onUpdateSetting("releaseAutoDownload", true);
-                    }
-                  }
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Install downloaded updates automatically when the app is idle and safe" })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Desktop update status" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryUpdateState || "idle" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryConfigured ? "Updater is configured for this build." : "Add a feed URL or stage a local installer to enable in-app desktop updates." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current version" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryCurrentVersion }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryAvailableVersion !== "not announced" ? `Latest announced: ${binaryAvailableVersion}` : "No newer desktop release is announced yet." })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Download state" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryDownloaded ? "Ready to install" : binaryUpdateState === "downloading" ? `${binaryProgressPercent}%` : "Waiting" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.localArtifactPath || "").trim() ? "A staged local installer is ready." : "Feed-downloaded releases can install directly from the app once they are ready." })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onCheckBinaryUpdate(), disabled: props.binaryUpdateBusy, children: props.binaryUpdateBusy && binaryUpdateState === "checking" ? "Checking\u2026" : "Check for updates" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onDownloadBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryConfigured && !binaryDownloaded || binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "downloading" ? `Downloading ${binaryProgressPercent}%` : "Download update" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onInstallBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "installing" ? "Installing\u2026" : binaryInstallLabel })
-          ] })
-        ] })
-      ] }) : null,
-      props.activeTab === "workspace" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current workspace" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentRoot) || "Not selected" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.hasWorkspace ? "The workspace is explicit and separate from the app repo." : "Pick a workspace to start routing chat tasks." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current target" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentTargetRoot) || "None" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.selectedLabRoot ? "A lab is currently active." : "Runs will target the real workspace unless you select a lab." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPickWorkspace, children: "Switch workspace" }),
-          vscodeSetup?.ok ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              className: "ghost",
-              onClick: () => void window.gosAgent.bootstrapWorkspaceVsCode({
-                workspaceRoot: props.snapshot?.workspaceRoot,
-                targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
-              }).then(props.onRefresh),
-              children: "Bootstrap VS Code"
-            }
-          ) : null,
-          groupedWorkspace.selectedLabRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onClearLab, children: "Leave active lab" }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code workspace" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: vscodeSetup?.ok ? Number(vscodeSetup?.missingFiles?.length || 0) + Number(vscodeSetup?.missingRecommendations?.length || 0) + Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? "Needs bootstrap" : "Ready" : "Unavailable" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(vscodeSetup?.summary || "Bootstrap workspace settings, tasks, and recommended extensions from here.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code recommendations" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: Number(vscodeSetup?.recommendations?.length || 0) }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-              Number(vscodeSetup?.missingRecommendations?.length || 0),
-              " missing recommendation(s) \u2022 ",
-              Number(vscodeSetup?.missingTaskLabels?.length || 0),
-              " missing task(s)"
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension health" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? extensionHealth?.status === "ready" ? "Ready" : "Needs attention" : "Not detected" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(extensionHealth?.summary || "Check the VS Code extension path here so the desktop app and editor flow do not drift.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Goals" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.goalList.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.goalList[0]?.title || "Chat will create the first goal when you ask for real work." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tasks" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.taskList.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.taskList[0] ? `${props.taskList[0].status || "ready"} \u2022 ${props.taskList[0].title}` : "Scoped tasks stay attached to the current workspace or lab." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Runs" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.taskRuns.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.taskRuns[0] ? `${props.taskRuns[0].runtimeState || props.taskRuns[0].status || "idle"} \u2022 ${props.taskRuns[0].runtimeLabel || props.taskRuns[0].label || "Latest run"}` : "Runs appear here after the first actionable prompt or recipe." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code setup" }),
-          Number(vscodeSetup?.missingFiles?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing files" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingFiles) ? vscodeSetup.missingFiles : []).join(", ") })
-          ] }) : null,
-          Number(vscodeSetup?.missingRecommendations?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing extension recommendations" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              (Array.isArray(vscodeSetup.missingRecommendations) ? vscodeSetup.missingRecommendations.slice(0, 5) : []).join(", "),
-              Number(vscodeSetup?.missingRecommendations?.length || 0) > 5 ? "\u2026" : ""
-            ] })
-          ] }) : null,
-          Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing VS Code tasks" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingTaskLabels) ? vscodeSetup.missingTaskLabels : []).join(", ") })
-          ] }) : null,
-          Number(vscodeSetup?.missingFiles?.length || 0) === 0 && Number(vscodeSetup?.missingRecommendations?.length || 0) === 0 && Number(vscodeSetup?.missingTaskLabels?.length || 0) === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "VS Code workspace files are already ready for this target." }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension alignment" }),
-          Array.isArray(extensionHealth?.warnings) && extensionHealth.warnings.length > 0 ? extensionHealth.warnings.map((warning, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code extension" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: warning })
-          ] }, `${warning}-${index}`)) : extensionHealth?.exists ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code extension" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(extensionHealth.nextStep || extensionHealth.summary || "Extension health looks good.") })
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No VS Code extension path was detected for this workspace." })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion install" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? "Companion detected" : "Install companion" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(extensionHealth?.nextStep || extensionHealth?.summary || "Install the VS Code companion so the desktop app and editor stay aligned.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              className: "ghost",
-              onClick: () => void window.gosAgent.bootstrapWorkspaceVsCode({
-                workspaceRoot: props.snapshot?.workspaceRoot,
-                targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
-              }).then(props.onRefresh),
-              children: "Install companion"
-            }
-          ) })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Work graph" }),
-          props.goalList.slice(0, 2).map((goal) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: goal.title || "Goal" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              goal.status || "active",
-              " \u2022 ",
-              shortPath(goal.labRoot || goal.targetWorkspaceRoot || goal.workspaceRoot || "") || "target pending"
-            ] })
-          ] }, String(goal.id || goal.title))),
-          props.taskList.slice(0, 3).map((task) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: task.title || "Task" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              task.status || "ready",
-              " \u2022 ",
-              task.riskClass || "medium",
-              " risk \u2022 ",
-              (Array.isArray(task.capabilities) ? task.capabilities.slice(0, 2).join(", ") : "chat-fast") || "chat-fast"
-            ] })
-          ] }, String(task.id || task.title))),
-          props.taskRuns.slice(0, 3).map((run) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: run.runtimeLabel || run.label || "Run" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              run.runtimeState || run.status || "idle",
-              run.blockedReason ? ` \u2022 ${summarizeText(run.blockedReason, 100)}` : ""
-            ] })
-          ] }, String(run.runId || run.id || run.label))),
-          props.goalList.length === 0 && props.taskList.length === 0 && props.taskRuns.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No goals, tasks, or runs are recorded yet." }) : null
-        ] })
-      ] }) : null,
-      props.activeTab === "ai" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Routing profile" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.aiStatus?.profileId || settings.aiProfile || "hybrid-default" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: aiProfiles.find((profile) => profile.active)?.summary || "Use the profile cards below to swap routing behavior quickly." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active provider" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: currentProvider }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-              selectedRuntime,
-              " runtime \u2022 ",
-              aiManualMode ? "custom mode" : "selector mode"
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Remote provider" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: selectedRemoteProvider?.label || "OpenAI" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-              selectedRemoteProvider?.available ? "API key configured" : "API key missing",
-              " \u2022 ",
-              String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "compatible endpoint")
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Benchmark leader" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: benchmarkLeader?.model || settings.trainingOllamaModel || settings.model || "No benchmark yet" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: benchmarkLeader ? `${benchmarkLeader.passRate || 0}% pass \u2022 ${benchmarkLeader.averageLatencyMs || 0}ms avg latency` : "Run a benchmark to seed smarter lane routing." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Lane overrides" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeLaneOverrideCount }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: activeLaneOverrideCount > 0 ? "Manual lane overrides are active." : "All lanes currently inherit the profile and routing policy." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selector catalog" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              readyModelCount,
-              " ready \u2022 ",
-              catalogProviderCount,
-              " provider",
-              catalogProviderCount === 1 ? "" : "s"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: aiManualMode ? "Custom mode is enabled, but the selector catalog is still available for comparison." : "Use selectors first. Manual text fields stay hidden until you switch to Custom." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model storage" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              storedModelCount,
-              " stored / ",
-              registeredModelCount,
-              " registered"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: modelStorageRoot || "No shared model folder is configured yet." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Target hardware" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget)?.label || "Current machine" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget)?.summary || "Use the current machine profile unless you are preparing a Windows or workstation target.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model Foundry" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              Number(modelFoundry?.candidateCount || 0),
-              " candidate",
-              Number(modelFoundry?.candidateCount || 0) === 1 ? "" : "s"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(modelFoundry?.summary || "Capture benchmark-backed route bundles and prompt distillation candidates here.") })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Configuration mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: aiManualMode ? "custom" : "selector", onChange: (event) => void props.onUpdateSetting("aiManualMode", event.target.value === "custom"), children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "selector", children: "Selector" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "Custom" })
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Runtime" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "runtime", value: settings.runtime || "ollama", onChange: (event) => void props.onUpdateSetting("runtime", event.target.value), children: ["ollama", "local", "hybrid", "openai"].map((runtime) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: runtime, children: runtime }, runtime)) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote provider" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteProviderId, onChange: (event) => void props.onUpdateSetting("aiRemoteProvider", event.target.value), children: (aiRemoteProviders.length ? aiRemoteProviders : [{ id: "openai", label: "OpenAI" }]).map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(provider.id || ""), children: String(provider.label || provider.id || "") }, String(provider.id || ""))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote model" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteModel, onChange: (event) => void props.onUpdateSetting("aiRemoteModel", event.target.value), children: (aiRemoteModelOptions.length ? aiRemoteModelOptions : [{ model: "gpt-4o-mini", label: "GPT-4o Mini" }]).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "AI profile" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: settings.aiProfile || "hybrid-default", onChange: (event) => void props.onUpdateSetting("aiProfile", event.target.value), children: (aiProfiles.length ? aiProfiles : [
-              { id: "local-fast", label: "Local Fast" },
-              { id: "balanced-local", label: "Balanced Local" },
-              { id: "hybrid-default", label: "Hybrid Default" },
-              { id: "best-available", label: "Best Available" },
-              { id: "custom", label: "Custom" }
-            ]).map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(profile.id || ""), children: String(profile.label || profile.id || "") }, String(profile.id || ""))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Routing policy" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "ai-routing-policy", value: settings.aiRoutingPolicy || settings.aiProfile || "hybrid-default", onChange: (event) => void props.onUpdateSetting("aiRoutingPolicy", event.target.value), children: (aiRoutingPolicies.length ? aiRoutingPolicies : ["local-fast", "balanced-local", "hybrid-default", "best-available", "custom"]).map((policy) => {
-              const policyId = typeof policy === "string" ? policy : String(policy.id || "");
-              const policyLabel = typeof policy === "string" ? policy : String(policy.label || policy.id || "");
-              return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: policyId, children: policyLabel }, policyId);
-            }) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bridge profile" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: aiBridgeProfile, onChange: (event) => void props.onUpdateSetting("aiBridgeProfile", event.target.value), children: visibleBridgeProfiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(profile.id || ""), children: String(profile.label || profile.id || "") }, String(profile.id || ""))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Target hardware" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedHardwareTarget, onChange: (event) => void props.onUpdateSetting("trainingHardwareTarget", event.target.value), children: (targetHardwareOptions.length ? targetHardwareOptions : [{ id: "auto", label: "Current machine" }]).map((target) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(target.id || ""), children: String(target.label || target.id || "") }, String(target.id || ""))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Primary model" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "trainingOllamaModel", value: String(settings.trainingOllamaModel || "qwen2.5-coder:7b"), onChange: (event) => void props.onUpdateSetting("trainingOllamaModel", event.target.value), children: aiModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: option.model, children: [
-              option.label,
-              " \u2022 ",
-              option.provider,
-              option.ready ? " \u2022 ready" : option.source === "recommended" ? " \u2022 recommended" : " \u2022 import needed"
-            ] }, `${option.provider}-${option.model}`)) })
-          ] }),
-          aiManualMode ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Model label" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { "data-setting": "model", value: settings.model || "", onChange: (event) => void props.onUpdateSetting("model", event.target.value) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteBaseUrl || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteBaseUrl", event.target.value), placeholder: "https://provider.example/v1" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key name" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteApiKeyName || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteApiKeyName", event.target.value), placeholder: "OPENAI_COMPAT_API_KEY" })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: `${selectedRemoteKeyConfigured ? "Configured" : "Missing"} \u2022 ${providerSecretName}`, readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Local AI command" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  "data-setting": "localAiCmd",
-                  defaultValue: settings.localAiCmdManual || settings.localAiCmd || "",
-                  placeholder: "Optional local bridge command",
-                  onBlur: (event) => void props.onUpdateSetting("localAiCmd", event.target.value)
-                }
-              )
-            ] })
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Derived model label" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: derivedModelLabel, readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Resolved bridge command" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: resolvedBridgeCommand || "No bridge command is needed for this runtime.", readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "Use the provider default"), readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key slot" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY"), readOnly: true })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: `${selectedRemoteKeyConfigured ? "Configured" : "Missing"} \u2022 ${providerSecretName}`, readOnly: true })
-            ] })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.startOllama({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Start Ollama" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.stopOllama().then(props.onRefresh), children: "Stop Ollama" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh), children: "Import selected model" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Import all stored models" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", "data-run-benchmark": "true", onClick: props.onRunBenchmark, children: "Run benchmark" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => openKeyPanel(selectedRemoteProviderId), children: "API keys" }),
-          nextFoundryCandidate ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              className: "ghost",
-              onClick: () => void window.gosAgent.seedModelFoundryCandidate({
-                workspaceRoot: props.snapshot?.workspaceRoot,
-                candidate: nextFoundryCandidate
-              }).then(props.onRefresh),
-              children: "Seed next candidate"
-            }
-          ) : null,
-          activeLaneOverrideCount > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("aiLaneOverrides", {}), children: "Reset lane overrides" }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Guardrails" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: resourcePolicy.recommendedProfileId || "hybrid-default" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: resourcePolicy.summary || "No guardrail summary yet." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Machine load" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              "CPU ",
-              Number(aiTelemetry.cpuUsagePercent || 0),
-              "% \u2022 MEM ",
-              Number(aiTelemetry.memoryUsedPercent || 0),
-              "%"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-              String(aiTelemetry.thermalState || "unknown"),
-              " thermal \u2022 ",
-              Number(aiTelemetry.activeRuns || 0),
-              " active run(s)"
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Storage + background work" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: resourcePolicy.storageReachable === false ? "Paused" : resourcePolicy.shouldThrottleBackgroundWork ? "Throttle" : "Ready" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: resourcePolicy.storageReachable === false ? "Model storage is unreachable." : `Background work ${resourcePolicy.shouldThrottleBackgroundWork ? "should stay quiet" : "can stay enabled"} right now.` })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Training fallback" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: trainingFallback ? trainingFallback.label || "Ready" : "Not needed" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: trainingFallback ? String(trainingFallback.summary || "Use the smaller fallback path first.") : "Current telemetry does not need a fallback path right now." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: aiProfiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `metric-card${profile.active ? " active" : ""}`, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: profile.active ? "Active profile" : "Profile" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: profile.label || profile.id }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: profile.summary }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "button",
-            {
-              className: profile.active ? "ghost" : "primary",
-              onClick: () => {
-                void props.onUpdateSetting("aiProfile", profile.id);
-                void props.onUpdateSetting("aiRoutingPolicy", profile.routingPolicy || profile.id);
               },
-              children: profile.active ? "Active" : "Use profile"
-            }
-          ) })
-        ] }, profile.id)) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: aiProviders.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: provider.available ? "Ready" : "Unavailable" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: provider.label || provider.id }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: provider.detail || provider.summary })
-        ] }, provider.id)) }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selector catalog" }),
-          modelStorageRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "empty-copy", children: [
-            "Shared folder: ",
-            modelStorageRoot
-          ] }) : null,
-          aiModelOptions.slice(0, 10).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: option.label }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              option.provider,
-              " \u2022 ",
-              option.ready ? "ready" : option.source === "recommended" ? "recommended" : "import needed",
-              option.note ? ` \u2022 ${option.note}` : ""
-            ] })
-          ] }, `${option.provider}-${option.model}`)),
-          aiModelOptions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No selector-backed models are available yet. Start Ollama or import a recommended model first." }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Download presets" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Pull more local models without guessing" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Use these curated presets for the current hardware target. Hugging Face links stay attached so you can trace the source." })
-          ] }) }),
-          (recommendedInstallPresets.length ? recommendedInstallPresets : installPresets).slice(0, 6).map((preset) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: preset.label || preset.id }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              String(preset.sizeLabel || "") || "size pending",
-              preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : "",
-              preset.hardwareRecommended ? " \u2022 good fit for this target" : "",
-              preset.sourceUrl ? ` \u2022 ${String(preset.sourceUrl)}` : ""
+              tab
+            );
+          }) })
+        ] }, group.id)) }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-main", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-focus-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-focus-copy", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-focus-heading", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-focus-icon-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: activeTabMeta.icon, className: "settings-focus-icon" }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: activeTabMeta.eyebrow }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h3", { children: activeTabMeta.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: activeTabMeta.description })
+              ] })
+            ] }) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-highlight-grid", children: activeTabHighlights.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-highlight-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: item.label }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.value })
+            ] }, item.label)) })
+          ] }),
+          props.activeTab === "general" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), children: ["auto", "ask", "plan", "edit", "agent"].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Theme" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: ["codex", "obsidian"].includes(settings.theme || "") ? settings.theme : "codex", onChange: (event) => void props.onUpdateSetting("theme", event.target.value), children: ["codex", "obsidian"].map((theme) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: theme, children: theme }, theme)) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Inspector mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: settings.chatUtilityMode || "context", onChange: (event) => void props.onUpdateSetting("chatUtilityMode", event.target.value), children: ["context", "diff", "review"].map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat instruction mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                  "select",
+                  {
+                    value: ["off", "auto", "custom"].includes(String(settings.chatInstructionMode || "").toLowerCase()) ? String(settings.chatInstructionMode || "").toLowerCase() : "auto",
+                    onChange: (event) => void props.onUpdateSetting("chatInstructionMode", event.target.value),
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "off", children: "Off" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "Auto" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "Custom" })
+                    ]
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chat inspector width" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "number",
+                    min: 320,
+                    max: 620,
+                    value: String(settings.chatInspectorWidth || 380),
+                    onChange: (event) => void props.onUpdateSetting("chatInspectorWidth", Number(event.target.value || 380))
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Composer height" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "select",
+                  {
+                    value: String(settings.chatComposerHeight || "comfortable"),
+                    onChange: (event) => void props.onUpdateSetting("chatComposerHeight", event.target.value),
+                    children: ["compact", "comfortable", "tall"].map((height) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: height, children: height }, height))
+                  }
+                )
+              ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-              preset.ollamaModel ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("trainingOllamaModel", String(preset.ollamaModel || "")), children: "Pick model" }) : null,
-              preset.downloadCommand ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.navigator.clipboard?.writeText(String(preset.downloadCommand || "")), children: "Copy install command" }) : null
-            ] })
-          ] }, String(preset.id || preset.label))),
-          (recommendedInstallPresets.length ? recommendedInstallPresets : installPresets).length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No curated local model presets are available yet." }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model Foundry suggestions" }),
-          suggestedFoundryCandidates.slice(0, 4).map((candidate) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: candidate.title || candidate.id || "Candidate" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: summarizeText(candidate.summary || "") })
-          ] }, String(candidate.id || candidate.title))),
-          suggestedFoundryCandidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Run more benchmarks or approve more sessions to seed the next candidate automatically." }) : null
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Saved Model Foundry candidates" }),
-          savedFoundryCandidates.slice(0, 4).map((candidate) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: candidate.title || candidate.id || "Candidate" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              candidate.safetyLevel || "candidate",
-              " \u2022 ",
-              (Array.isArray(candidate.targetLanes) ? candidate.targetLanes.join(", ") : "") || "lanes pending"
-            ] })
-          ] }, String(candidate.id || candidate.title))),
-          savedFoundryCandidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No foundry candidates have been seeded yet." }) : null
-        ] }),
-        keyPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "modal-scrim", "data-api-key-modal": "true", onClick: closeKeyPanel, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-          "section",
-          {
-            className: "settings-modal api-key-modal",
-            role: "dialog",
-            "aria-modal": "true",
-            "aria-label": "API keys",
-            onClick: (event) => event.stopPropagation(),
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-modal-header", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Secure key manager" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "API keys" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keys are stored through the desktop secret store. Use Hugging Face Router for hosted models and HF_TOKEN for Hub downloads." })
+            String(settings.chatInstructionMode || "auto").toLowerCase() === "custom" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "stacked-input", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Custom chat instructions" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "textarea",
+                {
+                  value: String(settings.chatCustomInstructions || ""),
+                  onChange: (event) => void props.onUpdateSetting("chatCustomInstructions", event.target.value),
+                  placeholder: "Example: Prefer reusable file edits, explain risky changes briefly, and keep UI changes screen-by-screen."
+                }
+              )
+            ] }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentTargetRoot) || "No target selected" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.selectedLabRoot ? `Lab: ${shortPath(groupedWorkspace.selectedLabRoot)}` : "The real workspace is active." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Chat startup" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: settings.startInChatWorkspace === false ? "Custom" : "Chat first" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "The app opens directly into the chat canvas so the workbench stays simple by default." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Learned chat guidance" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.learningStatus?.styleProfile?.summary ? "Active" : "Warming up" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.learningStatus?.styleProfile?.summary || "Approved sessions will shape naming, prompt suggestions, and reusable guidance here.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Reusable prompts" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: Number(props.learningStatus?.reusablePrompts?.length || 0) > 0 ? "Chat suggestions can pull from trusted prompt patterns as you work." : "Trusted prompt patterns will show up here after accepted runs." })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Update Center" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Install desktop updates without leaving the app" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.message || "Connect a release feed or stage a local release so the desktop shell can check, download, and install updates here.") })
+              ] }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Release feed URL" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      defaultValue: binaryFeedUrl,
+                      placeholder: "https://updates.example.com/live",
+                      onBlur: (event) => void props.onUpdateSetting("releaseFeedUrl", event.target.value)
+                    }
+                  )
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void refreshKeyPanelPresence(), children: "Refresh status" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: closeKeyPanel, children: "Close" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-check interval minutes" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      type: "number",
+                      min: 5,
+                      max: 240,
+                      value: String(settings.autoUpdateIntervalMinutes || 30),
+                      onChange: (event) => void props.onUpdateSetting("autoUpdateIntervalMinutes", Number(event.target.value || 30))
+                    }
+                  )
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "api-key-modal-layout", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "api-key-provider-list", children: keyPanelEntries.map((entry) => {
-                  const entryId = String(entry.id || "");
-                  const entrySecretName = String(entry.secretName || "");
-                  const configured = Object.prototype.hasOwnProperty.call(keyPanelPresence, entrySecretName) ? keyPanelPresence[entrySecretName] === true : entry.available === true;
-                  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                    "button",
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "toggle-grid", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: settings.releaseAutoDownload === true, onChange: (event) => void props.onUpdateSetting("releaseAutoDownload", event.target.checked) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-download desktop releases when one is found" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
                     {
-                      className: `api-key-provider-button${keyPanelSelectedId === entryId ? " active" : ""}`,
-                      onClick: () => {
-                        setKeyPanelSelectedId(entryId);
-                        setKeyPanelError("");
-                        setKeyPanelMessage("");
-                      },
-                      children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "Key") }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: entrySecretName }),
-                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: configured ? "Configured" : "Missing" })
-                      ]
-                    },
-                    entryId
-                  );
-                }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "api-key-editor", children: selectedKeyPanelEntry ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid compact", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card compact", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selected key" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(selectedKeyPanelEntry.label || selectedKeyPanelEntry.id || "Key") }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(selectedKeyPanelEntry.summary || "Store this secret securely for the current desktop profile.") })
+                      type: "checkbox",
+                      checked: autoInstallEnabled,
+                      onChange: (event) => {
+                        const checked = event.target.checked;
+                        void props.onUpdateSetting("autoUpdateEnabled", checked);
+                        void props.onUpdateSetting("autoUpdateAutoApply", checked);
+                        if (checked && settings.releaseAutoDownload !== true) {
+                          void props.onUpdateSetting("releaseAutoDownload", true);
+                        }
+                      }
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Install downloaded updates automatically when the app is idle and safe" })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Desktop update status" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryUpdateState || "idle" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryConfigured ? "Updater is configured for this build." : "Add a feed URL or stage a local installer to enable in-app desktop updates." })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current version" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryCurrentVersion }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: binaryAvailableVersion !== "not announced" ? `Latest announced: ${binaryAvailableVersion}` : "No newer desktop release is announced yet." })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Download state" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: binaryDownloaded ? "Ready to install" : binaryUpdateState === "downloading" ? `${binaryProgressPercent}%` : "Waiting" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(binaryUpdates.localArtifactPath || "").trim() ? "A staged local installer is ready." : "Feed-downloaded releases can install directly from the app once they are ready." })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Rollback readiness" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: updateRecovery.rollbackReady ? shortPath(String(updateRecovery.latestBackupId || "")) || "Ready" : "Not staged" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(updateRecovery.summary || "No workspace update rollback snapshot is recorded yet.") })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onCheckBinaryUpdate(), disabled: props.binaryUpdateBusy, children: props.binaryUpdateBusy && binaryUpdateState === "checking" ? "Checking\u2026" : "Check for updates" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onDownloadBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryConfigured && !binaryDownloaded || binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "downloading" ? `Downloading ${binaryProgressPercent}%` : "Download update" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: () => void props.onInstallBinaryUpdate(), disabled: props.binaryUpdateBusy || !binaryDownloaded, children: props.binaryUpdateBusy && binaryUpdateState === "installing" ? "Installing\u2026" : binaryInstallLabel })
+              ] })
+            ] })
+          ] }) : null,
+          props.activeTab === "workspace" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current workspace" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentRoot) || "Not selected" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.hasWorkspace ? "The workspace is explicit and separate from the app repo." : "Pick a workspace to start routing chat tasks." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(groupedWorkspace.currentTargetRoot) || "None" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedWorkspace.selectedLabRoot ? "A lab is currently active." : "Runs will target the real workspace unless you select a lab." })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onPickWorkspace, children: "Switch workspace" }),
+              vscodeSetup?.ok ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "ghost",
+                  onClick: () => void window.gosAgent.bootstrapWorkspaceVsCode({
+                    workspaceRoot: props.snapshot?.workspaceRoot,
+                    targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
+                  }).then(props.onRefresh),
+                  children: "Bootstrap VS Code"
+                }
+              ) : null,
+              groupedWorkspace.selectedLabRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onClearLab, children: "Leave active lab" }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code workspace" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: vscodeSetup?.ok ? Number(vscodeSetup?.missingFiles?.length || 0) + Number(vscodeSetup?.missingRecommendations?.length || 0) + Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? "Needs bootstrap" : "Ready" : "Unavailable" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(vscodeSetup?.summary || "Bootstrap workspace settings, tasks, and recommended extensions from here.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code recommendations" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: Number(vscodeSetup?.recommendations?.length || 0) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  Number(vscodeSetup?.missingRecommendations?.length || 0),
+                  " missing recommendation(s) \u2022 ",
+                  Number(vscodeSetup?.missingTaskLabels?.length || 0),
+                  " missing task(s)"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension health" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? extensionHealth?.status === "ready" ? "Ready" : "Needs attention" : "Not detected" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(extensionHealth?.summary || "Check the VS Code extension path here so the desktop app and editor flow do not drift.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Goals" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.goalList.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.goalList[0]?.title || "Chat will create the first goal when you ask for real work." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tasks" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.taskList.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.taskList[0] ? `${props.taskList[0].status || "ready"} \u2022 ${props.taskList[0].title}` : "Scoped tasks stay attached to the current workspace or lab." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Runs" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.taskRuns.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.taskRuns[0] ? `${props.taskRuns[0].runtimeState || props.taskRuns[0].status || "idle"} \u2022 ${props.taskRuns[0].runtimeLabel || props.taskRuns[0].label || "Latest run"}` : "Runs appear here after the first actionable prompt or recipe." })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code setup" }),
+              Number(vscodeSetup?.missingFiles?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing files" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingFiles) ? vscodeSetup.missingFiles : []).join(", ") })
+              ] }) : null,
+              Number(vscodeSetup?.missingRecommendations?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing extension recommendations" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  (Array.isArray(vscodeSetup.missingRecommendations) ? vscodeSetup.missingRecommendations.slice(0, 5) : []).join(", "),
+                  Number(vscodeSetup?.missingRecommendations?.length || 0) > 5 ? "\u2026" : ""
+                ] })
+              ] }) : null,
+              Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing VS Code tasks" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingTaskLabels) ? vscodeSetup.missingTaskLabels : []).join(", ") })
+              ] }) : null,
+              Number(vscodeSetup?.missingFiles?.length || 0) === 0 && Number(vscodeSetup?.missingRecommendations?.length || 0) === 0 && Number(vscodeSetup?.missingTaskLabels?.length || 0) === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "VS Code workspace files are already ready for this target." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Extension alignment" }),
+              Array.isArray(extensionHealth?.warnings) && extensionHealth.warnings.length > 0 ? extensionHealth.warnings.map((warning, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code extension" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: warning })
+              ] }, `${warning}-${index}`)) : extensionHealth?.exists ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code extension" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(extensionHealth.nextStep || extensionHealth.summary || "Extension health looks good.") })
+              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No VS Code extension path was detected for this workspace." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion install" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth?.exists ? "Companion detected" : "Install companion" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(extensionHealth?.nextStep || extensionHealth?.summary || "Install the VS Code companion so the desktop app and editor stay aligned.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "ghost",
+                  onClick: () => void window.gosAgent.bootstrapWorkspaceVsCode({
+                    workspaceRoot: props.snapshot?.workspaceRoot,
+                    targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
+                  }).then(props.onRefresh),
+                  children: "Install companion"
+                }
+              ) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Work graph" }),
+              props.goalList.slice(0, 2).map((goal) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: goal.title || "Goal" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  goal.status || "active",
+                  " \u2022 ",
+                  shortPath(goal.labRoot || goal.targetWorkspaceRoot || goal.workspaceRoot || "") || "target pending"
+                ] })
+              ] }, String(goal.id || goal.title))),
+              props.taskList.slice(0, 3).map((task) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: task.title || "Task" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  task.status || "ready",
+                  " \u2022 ",
+                  task.riskClass || "medium",
+                  " risk \u2022 ",
+                  (Array.isArray(task.capabilities) ? task.capabilities.slice(0, 2).join(", ") : "chat-fast") || "chat-fast"
+                ] })
+              ] }, String(task.id || task.title))),
+              props.taskRuns.slice(0, 3).map((run) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: run.runtimeLabel || run.label || "Run" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  run.runtimeState || run.status || "idle",
+                  run.blockedReason ? ` \u2022 ${summarizeText(run.blockedReason, 100)}` : ""
+                ] })
+              ] }, String(run.runId || run.id || run.label))),
+              props.goalList.length === 0 && props.taskList.length === 0 && props.taskRuns.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No goals, tasks, or runs are recorded yet." }) : null
+            ] })
+          ] }) : null,
+          props.activeTab === "ai" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Routing profile" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.aiStatus?.profileId || settings.aiProfile || "hybrid-default" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: aiProfiles.find((profile) => profile.active)?.summary || "Use the profile cards below to swap routing behavior quickly." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active provider" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: currentProvider }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  selectedRuntime,
+                  " runtime \u2022 ",
+                  aiManualMode ? "custom mode" : "selector mode"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Remote provider" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: selectedRemoteProvider?.label || "OpenAI" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  selectedRemoteProvider?.available ? "API key configured" : "API key missing",
+                  " \u2022 ",
+                  String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "compatible endpoint")
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Benchmark leader" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: benchmarkLeader?.model || settings.trainingOllamaModel || settings.model || "No benchmark yet" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: benchmarkLeader ? `${benchmarkLeader.passRate || 0}% pass \u2022 ${benchmarkLeader.averageLatencyMs || 0}ms avg latency` : "Run a benchmark to seed smarter lane routing." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.overrideMetricLabel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeLaneOverrideCount }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: activeLaneOverrideCount > 0 ? AI_ROUTE_COPY.overrideMetricActiveSummary : AI_ROUTE_COPY.overrideMetricIdleSummary })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selector catalog" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  readyModelCount,
+                  " ready \u2022 ",
+                  catalogProviderCount,
+                  " provider",
+                  catalogProviderCount === 1 ? "" : "s"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: aiManualMode ? "Custom mode is enabled, but the selector catalog is still available for comparison." : "Use selectors first. Manual text fields stay hidden until you switch to Custom." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model storage" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  storedModelCount,
+                  " stored / ",
+                  registeredModelCount,
+                  " registered"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: modelStorageRoot || "No shared model folder is configured yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Target hardware" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget)?.label || "Current machine" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget)?.summary || "Use the current machine profile unless you are preparing a Windows or workstation target.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model Foundry" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  Number(modelFoundry?.candidateCount || 0),
+                  " candidate",
+                  Number(modelFoundry?.candidateCount || 0) === 1 ? "" : "s"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(modelFoundry?.summary || "Capture benchmark-backed route bundles and prompt distillation candidates here.") })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Configuration mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", { value: aiManualMode ? "custom" : "selector", onChange: (event) => void props.onUpdateSetting("aiManualMode", event.target.value === "custom"), children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "selector", children: "Selector" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "Custom" })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Runtime" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "runtime", value: settings.runtime || "ollama", onChange: (event) => void props.onUpdateSetting("runtime", event.target.value), children: ["ollama", "local", "hybrid", "openai"].map((runtime) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: runtime, children: runtime }, runtime)) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote provider" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteProviderId, onChange: (event) => void props.onUpdateSetting("aiRemoteProvider", event.target.value), children: (aiRemoteProviders.length ? aiRemoteProviders : [{ id: "openai", label: "OpenAI" }]).map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(provider.id || ""), children: String(provider.label || provider.id || "") }, String(provider.id || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote model" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedRemoteModel, onChange: (event) => void props.onUpdateSetting("aiRemoteModel", event.target.value), children: (aiRemoteModelOptions.length ? aiRemoteModelOptions : [{ model: "gpt-4o-mini", label: "GPT-4o Mini" }]).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(option.model || ""), children: String(option.label || option.model || "") }, String(option.model || option.label || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "AI profile" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: settings.aiProfile || "hybrid-default", onChange: (event) => void props.onUpdateSetting("aiProfile", event.target.value), children: (aiProfiles.length ? aiProfiles : [
+                  { id: "local-fast", label: "Local Fast" },
+                  { id: "balanced-local", label: "Balanced Local" },
+                  { id: "hybrid-default", label: "Hybrid Default" },
+                  { id: "best-available", label: "Best Available" },
+                  { id: "custom", label: "Custom" }
+                ]).map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(profile.id || ""), children: String(profile.label || profile.id || "") }, String(profile.id || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Route plan" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "ai-routing-policy", value: settings.aiRoutingPolicy || settings.aiProfile || "hybrid-default", onChange: (event) => void props.onUpdateSetting("aiRoutingPolicy", event.target.value), children: (aiRoutingPolicies.length ? aiRoutingPolicies : ["local-fast", "balanced-local", "hybrid-default", "best-available", "custom"]).map((policy) => {
+                  const policyId = typeof policy === "string" ? policy : String(policy.id || "");
+                  const policyLabel = typeof policy === "string" ? policy : String(policy.label || policy.id || "");
+                  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: policyId, children: policyLabel }, policyId);
+                }) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Bridge profile" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: aiBridgeProfile, onChange: (event) => void props.onUpdateSetting("aiBridgeProfile", event.target.value), children: visibleBridgeProfiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(profile.id || ""), children: String(profile.label || profile.id || "") }, String(profile.id || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Target hardware" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedHardwareTarget, onChange: (event) => void props.onUpdateSetting("trainingHardwareTarget", event.target.value), children: (targetHardwareOptions.length ? targetHardwareOptions : [{ id: "auto", label: "Current machine" }]).map((target) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(target.id || ""), children: String(target.label || target.id || "") }, String(target.id || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Primary model" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { "data-setting": "trainingOllamaModel", value: String(settings.trainingOllamaModel || "qwen2.5-coder:7b"), onChange: (event) => void props.onUpdateSetting("trainingOllamaModel", event.target.value), children: aiModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: option.model, children: [
+                  option.label,
+                  " \u2022 ",
+                  option.provider,
+                  option.ready ? " \u2022 ready" : option.source === "recommended" ? " \u2022 recommended" : " \u2022 import needed"
+                ] }, `${option.provider}-${option.model}`)) })
+              ] }),
+              aiManualMode ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Model label" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { "data-setting": "model", value: settings.model || "", onChange: (event) => void props.onUpdateSetting("model", event.target.value) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteBaseUrl || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteBaseUrl", event.target.value), placeholder: "https://provider.example/v1" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key name" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.aiRemoteApiKeyName || ""), onChange: (event) => void props.onUpdateSetting("aiRemoteApiKeyName", event.target.value), placeholder: "OPENAI_COMPAT_API_KEY" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: `${selectedRemoteKeyConfigured ? "Configured" : "Missing"} \u2022 ${providerSecretName}`, readOnly: true })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Local AI command" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      "data-setting": "localAiCmd",
+                      defaultValue: settings.localAiCmdManual || settings.localAiCmd || "",
+                      placeholder: "Optional local bridge command",
+                      onBlur: (event) => void props.onUpdateSetting("localAiCmd", event.target.value)
+                    }
+                  )
+                ] })
+              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Derived model label" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: derivedModelLabel, readOnly: true })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Resolved bridge command" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: resolvedBridgeCommand || "No bridge command is needed for this runtime.", readOnly: true })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Compatible base URL" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.baseUrl || props.aiStatus?.current?.remoteBaseUrl || "Use the provider default"), readOnly: true })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote API key slot" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(selectedRemoteProvider?.secretName || props.aiStatus?.current?.remoteApiKeyName || "OPENAI_API_KEY"), readOnly: true })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: `${selectedRemoteKeyConfigured ? "Configured" : "Missing"} \u2022 ${providerSecretName}`, readOnly: true })
+                ] })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.startOllama({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Start Ollama" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.stopOllama().then(props.onRefresh), children: "Stop Ollama" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot, onlySelected: true }).then(props.onRefresh), children: "Import selected model" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.importAiModels({ workspaceRoot: props.snapshot?.workspaceRoot }).then(props.onRefresh), children: "Import all stored models" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", "data-run-benchmark": "true", onClick: props.onRunBenchmark, children: "Run benchmark" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => openKeyPanel(selectedRemoteProviderId), children: "API keys" }),
+              nextFoundryCandidate ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "ghost",
+                  onClick: () => void window.gosAgent.seedModelFoundryCandidate({
+                    workspaceRoot: props.snapshot?.workspaceRoot,
+                    candidate: nextFoundryCandidate
+                  }).then(props.onRefresh),
+                  children: "Seed next candidate"
+                }
+              ) : null,
+              activeLaneOverrideCount > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("aiLaneOverrides", {}), children: AI_ROUTE_COPY.resetOverridesLabel }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Guardrails" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: resourcePolicy.recommendedProfileId || "hybrid-default" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: resourcePolicy.summary || "No guardrail summary yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Machine load" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  "CPU ",
+                  Number(aiTelemetry.cpuUsagePercent || 0),
+                  "% \u2022 MEM ",
+                  Number(aiTelemetry.memoryUsedPercent || 0),
+                  "%"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  String(aiTelemetry.thermalState || "unknown"),
+                  " thermal \u2022 ",
+                  Number(aiTelemetry.activeRuns || 0),
+                  " active run(s)"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Storage + background work" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: resourcePolicy.storageReachable === false ? "Paused" : resourcePolicy.shouldThrottleBackgroundWork ? "Throttle" : "Ready" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: resourcePolicy.storageReachable === false ? "Model storage is unreachable." : `Background work ${resourcePolicy.shouldThrottleBackgroundWork ? "should stay quiet" : "can stay enabled"} right now.` })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Training fallback" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: trainingFallback ? trainingFallback.label || "Ready" : "Not needed" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: trainingFallback ? String(trainingFallback.summary || "Use the smaller fallback path first.") : "Current telemetry does not need a fallback path right now." })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: aiProfiles.map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `metric-card${profile.active ? " active" : ""}`, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: profile.active ? "Active profile" : "Profile" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: profile.label || profile.id }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: profile.summary }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: profile.active ? "ghost" : "primary",
+                  onClick: () => {
+                    void props.onUpdateSetting("aiProfile", profile.id);
+                    void props.onUpdateSetting("aiRoutingPolicy", profile.routingPolicy || profile.id);
+                  },
+                  children: profile.active ? "Active" : "Use profile"
+                }
+              ) })
+            ] }, profile.id)) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: aiProviders.map((provider) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: provider.available ? "Ready" : "Unavailable" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: provider.label || provider.id }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: provider.detail || provider.summary })
+            ] }, provider.id)) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selector catalog" }),
+              modelStorageRoot ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "empty-copy", children: [
+                "Shared folder: ",
+                modelStorageRoot
+              ] }) : null,
+              aiModelOptions.slice(0, 10).map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: option.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  option.provider,
+                  " \u2022 ",
+                  option.ready ? "ready" : option.source === "recommended" ? "recommended" : "import needed",
+                  option.note ? ` \u2022 ${option.note}` : ""
+                ] })
+              ] }, `${option.provider}-${option.model}`)),
+              aiModelOptions.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No selector-backed models are available yet. Start Ollama or import a recommended model first." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Download presets" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Pull more local models without guessing" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Use these curated presets for the current hardware target. Hugging Face links stay attached so you can trace the source." })
+              ] }) }),
+              (recommendedInstallPresets.length ? recommendedInstallPresets : installPresets).slice(0, 6).map((preset) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: preset.label || preset.id }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  String(preset.sizeLabel || "") || "size pending",
+                  preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : "",
+                  preset.hardwareRecommended ? " \u2022 good fit for this target" : "",
+                  preset.sourceUrl ? ` \u2022 ${String(preset.sourceUrl)}` : ""
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                  preset.ollamaModel ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("trainingOllamaModel", String(preset.ollamaModel || "")), children: "Pick model" }) : null,
+                  preset.downloadCommand ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.navigator.clipboard?.writeText(String(preset.downloadCommand || "")), children: "Copy install command" }) : null
+                ] })
+              ] }, String(preset.id || preset.label))),
+              (recommendedInstallPresets.length ? recommendedInstallPresets : installPresets).length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No curated local model presets are available yet." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model Foundry suggestions" }),
+              suggestedFoundryCandidates.slice(0, 4).map((candidate) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: candidate.title || candidate.id || "Candidate" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: summarizeText(candidate.summary || "") })
+              ] }, String(candidate.id || candidate.title))),
+              suggestedFoundryCandidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Run more benchmarks or approve more sessions to seed the next candidate automatically." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Saved Model Foundry candidates" }),
+              savedFoundryCandidates.slice(0, 4).map((candidate) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: candidate.title || candidate.id || "Candidate" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  candidate.safetyLevel || "candidate",
+                  " \u2022 ",
+                  (Array.isArray(candidate.targetLanes) ? candidate.targetLanes.join(", ") : "") || "lanes pending"
+                ] })
+              ] }, String(candidate.id || candidate.title))),
+              savedFoundryCandidates.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No foundry candidates have been seeded yet." }) : null
+            ] }),
+            keyPanelOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "modal-scrim", "data-api-key-modal": "true", onClick: closeKeyPanel, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "section",
+              {
+                className: "settings-modal api-key-modal",
+                role: "dialog",
+                "aria-modal": "true",
+                "aria-label": "API keys",
+                onClick: (event) => event.stopPropagation(),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-modal-header", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Secure key manager" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "API keys" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keys are stored through the desktop secret store. Use Hugging Face Router for hosted models and HF_TOKEN for Hub downloads." })
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card compact", children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Secret slot" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: selectedKeyPanelSecretName }),
-                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(selectedKeyPanelEntry.baseUrl || "Stored locally in encrypted desktop secrets.") })
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void refreshKeyPanelPresence(), children: "Refresh status" }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: closeKeyPanel, children: "Close" })
                     ] })
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                      "input",
-                      {
-                        type: "password",
-                        value: selectedKeyPanelDraft,
-                        onChange: (event) => setKeyPanelDrafts((current) => ({
-                          ...current,
-                          [selectedKeyPanelSecretName]: event.target.value
-                        })),
-                        placeholder: `Save to ${selectedKeyPanelSecretName}`
-                      }
-                    )
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "api-key-modal-layout", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "api-key-provider-list", children: keyPanelEntries.map((entry) => {
+                      const entryId = String(entry.id || "");
+                      const entrySecretName = String(entry.secretName || "");
+                      const configured = Object.prototype.hasOwnProperty.call(keyPanelPresence, entrySecretName) ? keyPanelPresence[entrySecretName] === true : entry.available === true;
+                      return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                        "button",
+                        {
+                          className: `api-key-provider-button${keyPanelSelectedId === entryId ? " active" : ""}`,
+                          onClick: () => {
+                            setKeyPanelSelectedId(entryId);
+                            setKeyPanelError("");
+                            setKeyPanelMessage("");
+                          },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "Key") }),
+                            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: entrySecretName }),
+                            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: configured ? "Configured" : "Missing" })
+                          ]
+                        },
+                        entryId
+                      );
+                    }) }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "api-key-editor", children: selectedKeyPanelEntry ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid compact", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card compact", children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selected key" }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(selectedKeyPanelEntry.label || selectedKeyPanelEntry.id || "Key") }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(selectedKeyPanelEntry.summary || "Store this secret securely for the current desktop profile.") })
+                        ] }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card compact", children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Secret slot" }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: selectedKeyPanelSecretName }),
+                          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(selectedKeyPanelEntry.baseUrl || "Stored locally in encrypted desktop secrets.") })
+                        ] })
+                      ] }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Provider API key" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "input",
+                          {
+                            type: "password",
+                            value: selectedKeyPanelDraft,
+                            onChange: (event) => setKeyPanelDrafts((current) => ({
+                              ...current,
+                              [selectedKeyPanelSecretName]: event.target.value
+                            })),
+                            placeholder: `Save to ${selectedKeyPanelSecretName}`
+                          }
+                        )
+                      ] }),
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "api-key-status-row", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `status-pill${(Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? " ready" : ""}`, children: (Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? "Configured" : "Missing" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selectedKeyPanelEntry.id === "huggingface-hub-token" ? "Use this token for Hugging Face Hub downloads and higher rate limits." : "Use this key for the selected hosted provider route." })
+                      ] }),
+                      keyPanelError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "api-key-feedback error", children: keyPanelError }) : null,
+                      keyPanelMessage ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "api-key-feedback success", children: keyPanelMessage }) : null,
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "button",
+                          {
+                            className: "primary",
+                            disabled: !selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName || !selectedKeyPanelDraft.trim(),
+                            onClick: () => void saveSelectedKeyPanelEntry(),
+                            children: keyPanelBusySecretName === selectedKeyPanelSecretName ? "Saving key\u2026" : `Save ${String(selectedKeyPanelEntry.label || "key")}`
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                          "button",
+                          {
+                            className: "ghost",
+                            disabled: !selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName,
+                            onClick: () => void clearSelectedKeyPanelEntry(),
+                            children: "Clear key"
+                          }
+                        )
+                      ] })
+                    ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No provider key slots are available yet." }) })
+                  ] })
+                ]
+              }
+            ) }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Training fallback plan" }),
+              trainingFallback ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: trainingFallback.label || "Fallback plan" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(trainingFallback.summary || "") })
+                ] }),
+                (Array.isArray(trainingFallback.notes) ? trainingFallback.notes : []).slice(0, 3).map((note, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                    trainingFallback.recommendedProfile || "low",
+                    " profile"
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "api-key-status-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `status-pill${(Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? " ready" : ""}`, children: (Object.prototype.hasOwnProperty.call(keyPanelPresence, selectedKeyPanelSecretName) ? keyPanelPresence[selectedKeyPanelSecretName] === true : selectedKeyPanelEntry.available === true) ? "Configured" : "Missing" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: selectedKeyPanelEntry.id === "huggingface-hub-token" ? "Use this token for Hugging Face Hub downloads and higher rate limits." : "Use this key for the selected hosted provider route." })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: note })
+                ] }, `${note}-${index}`))
+              ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "The current machine load does not require a smaller fallback path." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.capabilityRoutesEyebrow }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: AI_ROUTE_COPY.capabilityRoutesTitle }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: AI_ROUTE_COPY.capabilityRoutesSummary })
+              ] }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid lane-grid", children: capabilityLanes.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card lane-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.routeCardEyebrow }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: lane.label || lane.id }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: lane.summary }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "lane-summary", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                    lane.provider || "provider",
+                    " \u2022 ",
+                    lane.preferredModel || "model pending"
                   ] }),
-                  keyPanelError ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "api-key-feedback error", children: keyPanelError }) : null,
-                  keyPanelMessage ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "api-key-feedback success", children: keyPanelMessage }) : null,
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: lane.sourceLabel || (lane.source === "override" ? AI_ROUTE_COPY.routeSourceOverride : AI_ROUTE_COPY.routeSourceInherited) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                    "Default: ",
+                    lane.defaultProvider || "provider",
+                    " \u2022 ",
+                    lane.defaultModel || "model pending"
+                  ] })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "lane-select-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: AI_ROUTE_COPY.routeSelectLabel }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                    "select",
+                    {
+                      "data-lane-select": String(lane.id),
+                      value: encodeLaneOverrideValue(lane.override || aiLaneOverrides[String(lane.id)] || null),
+                      onChange: (event) => {
+                        const nextOverrides = { ...aiLaneOverrides };
+                        const nextOverride = decodeLaneOverrideValue(event.target.value);
+                        if (nextOverride) {
+                          nextOverrides[String(lane.id)] = nextOverride;
+                        } else {
+                          delete nextOverrides[String(lane.id)];
+                        }
+                        void props.onUpdateSetting("aiLaneOverrides", nextOverrides);
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "inherit", children: "Inherit profile + policy" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "current", children: "Pin to current workspace route" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "benchmark", children: "Use benchmark leader" }),
+                        aiModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: `model:${option.provider}:${option.model}`, children: [
+                          option.label,
+                          " (",
+                          option.provider,
+                          option.ready ? ", ready" : ", import",
+                          ")"
+                        ] }, `${lane.id}-${option.provider}-${option.model}`))
+                      ]
+                    }
+                  )
+                ] }),
+                lane.override ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => {
+                  const nextOverrides = { ...aiLaneOverrides };
+                  delete nextOverrides[String(lane.id)];
+                  void props.onUpdateSetting("aiLaneOverrides", nextOverrides);
+                }, children: AI_ROUTE_COPY.routeResetLabel }) }) : null
+              ] }, String(lane.id))) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Monitor handoff" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Deep health, benchmarks, promotions, and debug exports moved to Monitor." }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Keep AI settings focused on selectors and lane tuning here, then use Monitor for the live operational view." })
+              ] })
+            ] })
+          ] }) : null,
+          props.activeTab === "autonomy" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Safety level" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedSafetyLevel, onChange: (event) => void props.onUpdateSetting("safetyLevel", event.target.value), children: safetyLevels.map((level) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(level.id), children: level.label || level.id }, String(level.id))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Autonomy profile" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "select",
+                  {
+                    value: groupedAutonomy.profileId || "supervised-auto",
+                    disabled: selectedSafetyLevel !== "custom",
+                    onChange: (event) => void props.onUpdateSetting("autonomyMode", event.target.value),
+                    children: ["manual", "supervised-auto", "builder", "operator", "lab-full-auto", "custom"].map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: profile, children: profile }, profile))
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Max retry rounds" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "number", min: 1, max: 8, value: String(groupedAutonomy.maxRetryRounds || 2), onChange: (event) => void props.onUpdateSetting("maxRetryRounds", Number(event.target.value || 2)) })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active safety level" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeSafetyLevel?.label || selectedSafetyLevel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(activeSafetyLevel?.summary || groupedAutonomy.safetySummary || "Choose how aggressive the engine is allowed to be.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Autonomy mode" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutonomy.profileId || "supervised-auto" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selectedSafetyLevel === "custom" ? "Custom safety leaves the autonomy profile editable." : "Autonomy follows the selected safety level unless you switch to Custom." })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toggle-grid", children: [
+              ["autoSynthesizeBats", "Auto-queue bounded next task after the run settles", groupedAutonomy.autoSynthesizeBats],
+              ["autoRetryUntilPass", "Auto retry failing coding runs", groupedAutonomy.autoRetryUntilPass],
+              ["autoBrainstormOnFailure", "Brainstorm repair options on failure", groupedAutonomy.autoBrainstormOnFailure],
+              ["autoApproveLowRisk", "Auto approve low-risk patches", groupedAutonomy.autoApproveLowRisk],
+              ["supervisedAutoRunRecipes", "Auto-run queued next task when safe", groupedAutonomy.supervisedAutoRunRecipes],
+              ["humanApprovalProtectedOnly", "Gate protected paths only", groupedAutonomy.humanApprovalProtectedOnly],
+              ["sandboxRequired", "Require sandboxed execution", groupedAutonomy.sandboxRequired]
+            ].map(([field, label, checked]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: checked === true, onChange: (event) => void props.onUpdateSetting(String(field), event.target.checked) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: label })
+            ] }, String(field))) })
+          ] }) : null,
+          props.activeTab === "skills" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: props.skills.map((skill) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Skill" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: skill.name }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: skill.description }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.runSkill({ skillPath: skill.path, open: true }), children: "Open" })
+            ] }, String(skill.path || skill.name))) }),
+            props.skills.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No local skills were discovered yet." }) : null
+          ] }) : null,
+          props.activeTab === "extensions" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Integration Studio" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  integrationLibrary.length,
+                  " starter item",
+                  integrationLibrary.length === 1 ? "" : "s"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(integrations.summary || "Keep one clean registry for plugins, adapters, and extensions so the system grows without duplicating surfaces.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Installed locally" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: installedIntegrations.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: installedIntegrations.length ? "Installed items live under .gos-integrations in the target workspace." : "Nothing is installed yet. Start with a bounded sample and review it before expanding the surface." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Rollback archive" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
+                  archivedAppBackups.length,
+                  " archived app backup",
+                  archivedAppBackups.length === 1 ? "" : "s"
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: appRollbackSummary || String(props.snapshot?.settings?.storage?.appRollbackRoot || appRollbacks.root || "Desktop app rollbacks will be archived outside /Applications so the live install stays clean.") })
+              ] })
+            ] }),
+            integrationKinds.map((kind) => {
+              const entries = integrationLibrary.filter((item) => String(item?.kind || "") === kind);
+              if (!entries.length) {
+                return null;
+              }
+              return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "eyebrow", children: [
+                  kind,
+                  "s"
+                ] }),
+                entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "") }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(entry.summary || "No summary recorded yet.") }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                      String(entry.version || "0.1.0"),
+                      " \u2022 ",
+                      entry.installed ? "installed" : "ready to install"
+                    ] })
+                  ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                       "button",
                       {
-                        className: "primary",
-                        disabled: !selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName || !selectedKeyPanelDraft.trim(),
-                        onClick: () => void saveSelectedKeyPanelEntry(),
-                        children: keyPanelBusySecretName === selectedKeyPanelSecretName ? "Saving key\u2026" : `Save ${String(selectedKeyPanelEntry.label || "key")}`
+                        className: "ghost",
+                        onClick: () => void window.gosAgent.openLocation({ path: String(entry.installedPath || entry.rootPath || "") }),
+                        children: "Open"
                       }
                     ),
                     /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                       "button",
                       {
-                        className: "ghost",
-                        disabled: !selectedKeyPanelSecretName || keyPanelBusySecretName === selectedKeyPanelSecretName,
-                        onClick: () => void clearSelectedKeyPanelEntry(),
-                        children: "Clear key"
+                        className: entry.installed ? "ghost" : "primary",
+                        onClick: () => void window.gosAgent.installIntegration({
+                          workspaceRoot: props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot,
+                          integrationId: entry.id
+                        }).then(props.onRefresh),
+                        children: entry.installed ? "Reinstall sample" : "Install sample"
                       }
                     )
                   ] })
-                ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No provider key slots are available yet." }) })
-              ] })
-            ]
-          }
-        ) }) : null,
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Training fallback plan" }),
-          trainingFallback ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: trainingFallback.label || "Fallback plan" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(trainingFallback.summary || "") })
+                ] }, String(entry.id || "")))
+              ] }, kind);
+            }),
+            installedIntegrations.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Installed items" }),
+              installedIntegrations.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "") }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  String(entry.kind || "integration"),
+                  " \u2022 ",
+                  shortPath(String(entry.rootPath || ""))
+                ] })
+              ] }, String(entry.rootPath || entry.id)))
+            ] }) : null
+          ] }) : null,
+          props.activeTab === "tools" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "settings-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: props.tools.map((tool) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "eyebrow", children: [
+              tool.safetyLevel || "safe",
+              " \u2022 ",
+              tool.kind || "tool"
             ] }),
-            (Array.isArray(trainingFallback.notes) ? trainingFallback.notes : []).slice(0, 3).map((note, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-                trainingFallback.recommendedProfile || "low",
-                " profile"
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: tool.label || tool.id }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: tool.summary })
+          ] }, String(tool.id))) }) }) : null,
+          props.activeTab === "automations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Autopilot action" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutomations.action || "implement" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedAutomations.selfImprove ? "Self-improvement support is enabled." : "General coding automation mode." })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: note })
-            ] }, `${note}-${index}`))
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "The current machine load does not require a smaller fallback path." })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Capability lanes" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Tune each lane without hand-editing routing rules" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Leave a lane on inherit to follow the active profile, or pin it to the benchmark leader or a specific model." })
-          ] }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid lane-grid", children: capabilityLanes.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card lane-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Lane" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: lane.label || lane.id }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: lane.summary }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "lane-summary", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                lane.provider || "provider",
-                " \u2022 ",
-                lane.preferredModel || "model pending"
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: lane.sourceLabel || (lane.source === "override" ? "Manual override" : "Inherited route") }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                "Default: ",
-                lane.defaultProvider || "provider",
-                " \u2022 ",
-                lane.defaultModel || "model pending"
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Queued automations" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.automations.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keep automation jobs here so the chat surface stays uncluttered." })
               ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "lane-select-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Route this lane" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                "select",
-                {
-                  "data-lane-select": String(lane.id),
-                  value: encodeLaneOverrideValue(lane.override || aiLaneOverrides[String(lane.id)] || null),
-                  onChange: (event) => {
-                    const nextOverrides = { ...aiLaneOverrides };
-                    const nextOverride = decodeLaneOverrideValue(event.target.value);
-                    if (nextOverride) {
-                      nextOverrides[String(lane.id)] = nextOverride;
-                    } else {
-                      delete nextOverrides[String(lane.id)];
-                    }
-                    void props.onUpdateSetting("aiLaneOverrides", nextOverrides);
-                  },
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "inherit", children: "Inherit profile + policy" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "current", children: "Pin to current workspace route" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "benchmark", children: "Use benchmark leader" }),
-                    aiModelOptions.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: `model:${option.provider}:${option.model}`, children: [
-                      option.label,
-                      " (",
-                      option.provider,
-                      option.ready ? ", ready" : ", import",
-                      ")"
-                    ] }, `${lane.id}-${option.provider}-${option.model}`))
-                  ]
-                }
-              )
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Automation jobs" }),
+              props.automations.map((job) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: job.name || job.id }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                  job.enabled === false ? "disabled" : "active",
+                  " \u2022 ",
+                  job.cron || job.schedule || "manual"
+                ] })
+              ] }, String(job.id || job.name))),
+              props.automations.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No automations are configured yet." }) : null
+            ] })
+          ] }) : null,
+          props.activeTab === "labs" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("self-host"), children: "Create self-host lab" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("mirror"), children: "Create scratch mirror" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("benchmark-self-host"), children: "Create self-host benchmark" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("dummy-node-app"), children: "Create dummy app lab" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("dummy-broken-node-app"), children: "Create broken dummy lab" })
             ] }),
-            lane.override ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => {
-              const nextOverrides = { ...aiLaneOverrides };
-              delete nextOverrides[String(lane.id)];
-              void props.onUpdateSetting("aiLaneOverrides", nextOverrides);
-            }, children: "Reset lane" }) }) : null
-          ] }, String(lane.id))) })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Monitor handoff" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Deep health, benchmarks, promotions, and debug exports moved to Monitor." }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Keep AI settings focused on selectors and lane tuning here, then use Monitor for the live operational view." })
-          ] })
-        ] })
-      ] }) : null,
-      props.activeTab === "autonomy" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Safety level" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedSafetyLevel, onChange: (event) => void props.onUpdateSetting("safetyLevel", event.target.value), children: safetyLevels.map((level) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(level.id), children: level.label || level.id }, String(level.id))) })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Autonomy profile" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "select",
+              LabsPanel,
               {
-                value: groupedAutonomy.profileId || "supervised-auto",
-                disabled: selectedSafetyLevel !== "custom",
-                onChange: (event) => void props.onUpdateSetting("autonomyMode", event.target.value),
-                children: ["manual", "supervised-auto", "builder", "operator", "lab-full-auto", "custom"].map((profile) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: profile, children: profile }, profile))
+                snapshot: props.snapshot,
+                labs: props.labs,
+                onSelectLab: props.onSelectLab,
+                onRefresh: props.onRefresh
               }
             )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Max retry rounds" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "number", min: 1, max: 8, value: String(groupedAutonomy.maxRetryRounds || 2), onChange: (event) => void props.onUpdateSetting("maxRetryRounds", Number(event.target.value || 2)) })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active safety level" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeSafetyLevel?.label || selectedSafetyLevel }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(activeSafetyLevel?.summary || groupedAutonomy.safetySummary || "Choose how aggressive the engine is allowed to be.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Autonomy mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutonomy.profileId || "supervised-auto" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: selectedSafetyLevel === "custom" ? "Custom safety leaves the autonomy profile editable." : "Autonomy follows the selected safety level unless you switch to Custom." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "toggle-grid", children: [
-          ["autoSynthesizeBats", "Auto-queue bounded next task after the run settles", groupedAutonomy.autoSynthesizeBats],
-          ["autoRetryUntilPass", "Auto retry failing coding runs", groupedAutonomy.autoRetryUntilPass],
-          ["autoBrainstormOnFailure", "Brainstorm repair options on failure", groupedAutonomy.autoBrainstormOnFailure],
-          ["autoApproveLowRisk", "Auto approve low-risk patches", groupedAutonomy.autoApproveLowRisk],
-          ["supervisedAutoRunRecipes", "Auto-run queued next task when safe", groupedAutonomy.supervisedAutoRunRecipes],
-          ["humanApprovalProtectedOnly", "Gate protected paths only", groupedAutonomy.humanApprovalProtectedOnly],
-          ["sandboxRequired", "Require sandboxed execution", groupedAutonomy.sandboxRequired]
-        ].map(([field, label, checked]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "toggle-row", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { type: "checkbox", checked: checked === true, onChange: (event) => void props.onUpdateSetting(String(field), event.target.checked) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: label })
-        ] }, String(field))) })
-      ] }) : null,
-      props.activeTab === "skills" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: props.skills.map((skill) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Skill" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: skill.name }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: skill.description }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.gosAgent.runSkill({ skillPath: skill.path, open: true }), children: "Open" })
-        ] }, String(skill.path || skill.name))) }),
-        props.skills.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No local skills were discovered yet." }) : null
-      ] }) : null,
-      props.activeTab === "extensions" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Integration Studio" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              integrationLibrary.length,
-              " starter item",
-              integrationLibrary.length === 1 ? "" : "s"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(integrations.summary || "Keep one clean registry for plugins, adapters, and extensions so the system grows without duplicating surfaces.") })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Installed locally" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: installedIntegrations.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: installedIntegrations.length ? "Installed items live under .gos-integrations in the target workspace." : "Nothing is installed yet. Start with a bounded sample and review it before expanding the surface." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Rollback archive" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("strong", { children: [
-              archivedAppBackups.length,
-              " archived app backup",
-              archivedAppBackups.length === 1 ? "" : "s"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.snapshot?.settings?.storage?.appRollbackRoot || appRollbacks.root || "Desktop app rollbacks will be archived outside /Applications so the live install stays clean.") })
-          ] })
-        ] }),
-        integrationKinds.map((kind) => {
-          const entries = integrationLibrary.filter((item) => String(item?.kind || "") === kind);
-          if (!entries.length) {
-            return null;
-          }
-          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "eyebrow", children: [
-              kind,
-              "s"
-            ] }),
-            entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "run-item", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "") }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(entry.summary || "No summary recorded yet.") }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-                  String(entry.version || "0.1.0"),
-                  " \u2022 ",
-                  entry.installed ? "installed" : "ready to install"
-                ] })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "button",
-                  {
-                    className: "ghost",
-                    onClick: () => void window.gosAgent.openLocation({ path: String(entry.installedPath || entry.rootPath || "") }),
-                    children: "Open"
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "button",
-                  {
-                    className: entry.installed ? "ghost" : "primary",
-                    onClick: () => void window.gosAgent.installIntegration({
-                      workspaceRoot: props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot,
-                      integrationId: entry.id
-                    }).then(props.onRefresh),
-                    children: entry.installed ? "Reinstall sample" : "Install sample"
-                  }
-                )
-              ] })
-            ] }, String(entry.id || "")))
-          ] }, kind);
-        }),
-        installedIntegrations.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Installed items" }),
-          installedIntegrations.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(entry.label || entry.id || "") }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              String(entry.kind || "integration"),
-              " \u2022 ",
-              shortPath(String(entry.rootPath || ""))
-            ] })
-          ] }, String(entry.rootPath || entry.id)))
-        ] }) : null
-      ] }) : null,
-      props.activeTab === "tools" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "settings-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: props.tools.map((tool) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "eyebrow", children: [
-          tool.safetyLevel || "safe",
-          " \u2022 ",
-          tool.kind || "tool"
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: tool.label || tool.id }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: tool.summary })
-      ] }, String(tool.id))) }) }) : null,
-      props.activeTab === "automations" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Autopilot action" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: groupedAutomations.action || "implement" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: groupedAutomations.selfImprove ? "Self-improvement support is enabled." : "General coding automation mode." })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Queued automations" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.automations.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keep automation jobs here so the chat surface stays uncluttered." })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Automation jobs" }),
-          props.automations.map((job) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: job.name || job.id }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-              job.enabled === false ? "disabled" : "active",
-              " \u2022 ",
-              job.cron || job.schedule || "manual"
-            ] })
-          ] }, String(job.id || job.name))),
-          props.automations.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No automations are configured yet." }) : null
+          ] }) : null,
+          props.activeTab === "learning" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            LearningPanel,
+            {
+              snapshot: props.snapshot,
+              learningStatus: props.learningStatus,
+              learningChanges: props.learningChanges,
+              onCaptureLearning: props.onCaptureLearning,
+              onExport: props.onExportLearning
+            }
+          ) : null,
+          props.activeTab === "storage" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "settings-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: [
+            ["Runs", groupedStorage.runsDir],
+            ["Learning journal", groupedStorage.journalPath],
+            ["Labs root", groupedStorage.labsRoot],
+            ["Benchmarks", groupedStorage.benchmarkRoot],
+            ["App rollbacks", groupedStorage.appRollbackRoot]
+          ].map(([label, value]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: label }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(String(value || "")) || "Not configured" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(value || "") || "This path will remain explicit so the app never silently writes into the wrong place." })
+          ] }, String(label))) }) }) : null
         ] })
-      ] }) : null,
-      props.activeTab === "labs" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("self-host"), children: "Create self-host lab" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("mirror"), children: "Create scratch mirror" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("benchmark-self-host"), children: "Create self-host benchmark" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("dummy-node-app"), children: "Create dummy app lab" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onCreateLab("dummy-broken-node-app"), children: "Create broken dummy lab" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          LabsPanel,
-          {
-            snapshot: props.snapshot,
-            labs: props.labs,
-            onSelectLab: props.onSelectLab,
-            onRefresh: props.onRefresh
-          }
-        )
-      ] }) : null,
-      props.activeTab === "learning" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        LearningPanel,
-        {
-          snapshot: props.snapshot,
-          learningStatus: props.learningStatus,
-          learningChanges: props.learningChanges,
-          onCaptureLearning: props.onCaptureLearning,
-          onExport: props.onExportLearning
-        }
-      ) : null,
-      props.activeTab === "storage" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "settings-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: [
-        ["Runs", groupedStorage.runsDir],
-        ["Learning journal", groupedStorage.journalPath],
-        ["Labs root", groupedStorage.labsRoot],
-        ["Benchmarks", groupedStorage.benchmarkRoot],
-        ["App rollbacks", groupedStorage.appRollbackRoot]
-      ].map(([label, value]) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: label }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(String(value || "")) || "Not configured" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(value || "") || "This path will remain explicit so the app never silently writes into the wrong place." })
-      ] }, String(label))) }) }) : null
-    ] });
+      ] })
+    ] }) });
   }
   function MonitorPanel(props) {
     const safeMode = readSafeMode(props.snapshot);
@@ -25414,6 +25681,7 @@
     const backups = Array.isArray(promotions.backups) ? promotions.backups : [];
     const promotionHistory = Array.isArray(promotions.history) ? promotions.history : [];
     const promotionGate = promotions.promotionGate && typeof promotions.promotionGate === "object" ? promotions.promotionGate : {};
+    const promotionRecoverySummary = backups[0]?.id ? `Rollback backup ${String(backups[0].id || "")} is ready if the current promotion needs to unwind.` : "No promotion backup is recorded yet.";
     const selectedLabRoot = String(props.snapshot?.selectedLabRoot || "").trim();
     const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
     const modelProvisioning = props.aiStatus?.provisioning && typeof props.aiStatus.provisioning === "object" ? props.aiStatus.provisioning : {};
@@ -25424,7 +25692,7 @@
     const readinessHardGate = readiness.hardGate && typeof readiness.hardGate === "object" ? readiness.hardGate : {};
     const docsVault = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
     const operatorSupervision = props.learningStatus?.operatorSupervision && typeof props.learningStatus.operatorSupervision === "object" ? props.learningStatus.operatorSupervision : {};
-    const localModelProgram = buildLocalModelProgram(props.snapshot, props.aiStatus, props.tuning);
+    const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
     const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
     const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
     const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === "object" ? testBench.nextSafeAction : {};
@@ -25603,32 +25871,32 @@
           ] }, `${item.domain || index}-docs-domain`)) : null
         ] }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Local model MVP ladder" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.ladderEyebrow }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified` }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.summary })
           ] }),
           localModelProgram.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: layer.label }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${modelProgramStatusLabel(layer.status)} \u2022 ${layer.summary}` }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${localModelProgramStatusLabel(layer.status)} \u2022 ${layer.summary}` }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "chip", children: modelProgramStatusLabel(layer.status) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "chip", children: localModelProgramStatusLabel(layer.status) }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "chip", children: layer.unlockRule })
             ] })
           ] }, layer.id)),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof." })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: AI_ROUTE_COPY.ladderSummary })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Capability unlock ladder" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.unlockEyebrow }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: localModelProgram.nextLayer.label }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.nextLayer.unlockRule })
           ] }),
           localModelProgram.unlocks.map((unlock) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: unlock.label }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${modelProgramStatusLabel(unlock.status)} \u2022 ${unlock.summary}` })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${localModelProgramStatusLabel(unlock.status)} \u2022 ${unlock.summary}` })
           ] }, unlock.id)),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block." })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: AI_ROUTE_COPY.unlockSummary })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Hard safe-mode controller" }),
@@ -25647,6 +25915,10 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(promotionGate.status || "blocked").toUpperCase() }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(promotionGate.summary || "Create a verified candidate and run acceptance before promoting live.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Recovery state" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: promotionRecoverySummary })
           ] }),
           String(promotionGate.acceptanceSummary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Acceptance baseline" }),
@@ -25929,7 +26201,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Backups" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: backups.length }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: backups[0]?.id ? `Last known good ${shortPath(backups[0].id)}` : "No promotion backups yet." })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: promotionRecoverySummary })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Gate" }),

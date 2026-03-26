@@ -1,6 +1,6 @@
 # Engine Daily Report
 
-- Generated: 2026-03-17T16:06:40.797158+00:00
+- Generated: 2026-03-26T20:27:46.250343+00:00
 - Project root: E:\dev\projects\gosenderr-desktop-agent-PC
 - Window: last 24h
 
@@ -9,14 +9,56 @@
 - Suggested workstream: review-and-triage
 - Reason: Recent runs or experiments still require manual review before widening scope.
 
+## Maintenance Checklist
+
+### Completed Today
+
+- [completed | audit | daily-report] Reviewed runtime baseline state. (green baseline; blocked=False; Baseline healthy.)
+- [completed | audit | daily-report] Reviewed review, repair, and validation pressure. (30 runs; 0 review-held; 0 executed repairs; 4 pass / 8 fail today)
+- [completed | audit | board] Reviewed board backlog and current audit snapshot. (0 active TODO BAT items; 3 current broken audit bullets.)
+- [completed | audit | board] Reviewed missing engine capability gaps for faster returns. (0 priority capability gaps still open.)
+
+### Open Today
+
+- [open | test | board-audit] The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
+- [open | remove | board-audit] Older docs still contain stale Mac-first examples and duplicate information.
+- [open | fix | board-audit] Repo-wide validation still includes unrelated red tests outside this cleanup block (`tests/app-storage-paths.test.js` and `tests/smart-patch.test.js`), so the global green baseline remains blocked until those failures are repaired.
+
+### New Problems Today
+
+- [new | audit] No new problems were detected in the selected window.
+
+### Missing For Faster Returns
+
+- [missing | audit] No missing capability gaps were flagged.
+
+### Audit Notes
+
+- Clear review-required runs before scheduling broader autonomous work.
+- Bias the next slice toward a single retry policy: repair (16 recent experiment rows).
+- Keep the next operator-visible action narrow: Review the diff, update the BAT board, and continue with the next highest-priority ticket..
+- Retry pressure still leans to repair (16 recent experiment rows).
+- Most common training next action is Review the diff, update the BAT board, and continue with the next highest-priority ticket. (119 rows).
+- Board still flags: The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
+
+### Audit Log
+
+- [verified | audit | daily-report] Reviewed runtime baseline state. (green baseline; blocked=False; Baseline healthy.)
+- [verified | audit | daily-report] Reviewed review, repair, and validation pressure. (30 runs; 0 review-held; 0 executed repairs; 4 pass / 8 fail today)
+- [verified | audit | board] Reviewed board backlog and current audit snapshot. (0 active TODO BAT items; 3 current broken audit bullets.)
+- [verified | audit | board] Reviewed missing engine capability gaps for faster returns. (0 priority capability gaps still open.)
+- [open | test | board-audit] The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
+- [open | remove | board-audit] Older docs still contain stale Mac-first examples and duplicate information.
+- [open | fix | board-audit] Repo-wide validation still includes unrelated red tests outside this cleanup block (`tests/app-storage-paths.test.js` and `tests/smart-patch.test.js`), so the global green baseline remains blocked until those failures are repaired.
+
 ## Daily Quota Proof
 
 - Focus task: none recorded
-- Safe autonomous actions today: 0/5
+- Safe autonomous actions today: 4/5
 - Safe self-improvement today: 0/5
 - Blocked or rescoped tasks today: 0
-- Validation today: 0 pass / 0 fail / 0 review-held
-- Do not widen yet because: Do not widen yet because safe autonomous progress is 0/5 today.
+- Validation today: 4 pass / 8 fail / 0 review-held
+- Do not widen yet because: Do not widen yet because safe autonomous progress is 4/5 today.
 
 ### Operator Actions
 
@@ -36,12 +78,10 @@
 - Baseline state: green
 - Blocked: False
 - Baseline reason: Baseline healthy.
-- Runs analyzed: 0
-- Success rate: 0.0% (0/0)
-- Review request rate: 0.0% (0/0)
+- Runs analyzed: 30
+- Success rate: 46.7% (14/30)
+- Review request rate: 0.0% (0/30)
 - Executed repair attempts: 0 total across 0 repaired runs
-
-- No true execution runs found in the selected window.
 
 ## Experiment Pressure
 
@@ -57,6 +97,10 @@
 - Weakest strategy: backend_api (75.0% success, avg score 86.2)
 
 ## Top Blockers
+
+- none observed in the selected window
+
+## Common Failure Fingerprints
 
 - none observed in the selected window
 

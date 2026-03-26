@@ -9,8 +9,11 @@ This file is the single source of truth for engine work, operator workflow, Copi
 - Prefer source files under `runtime/`, `core/`, `renderer-src/`, `shared-runtime/`, and root Electron files.
 - Edit source-of-truth files only: `renderer-src/*`, `main.js`, `preload.js`, `core/*`, `shared-runtime/*`, and `runtime/backend/*`.
 - Treat `renderer/*` as generated output that should be refreshed from source instead of hand-edited.
+- If code or docs are retired but might still matter later, move them under `archive/` with a short note instead of hard-deleting them on the first pass.
 - Keep the desktop UI shell and current feature surface intact while fixing behavior.
 - Prefer layered fixes over one-off patches.
+- Baseline target rule: treat self-hosted engine autonomy, clone-lab autopilot preview, and local-first model parity as the product baseline target; when the engine cannot safely finish a full task yet, rescope it into smaller bounded jobs instead of widening remote dependence by default.
+- Daily audit rule: treat `docs/ENGINE_DAILY_REPORT.md` as the canonical manager pull report for today; it should capture the completed audit checklist, open maintenance work, newly observed problems, missing engine capabilities, and audit notes for the current window.
 - Promotion rule: run `npm run engine:acceptance` before treating engine changes as ready.
 - For Windows work, prefer the workspace tasks under `scripts/windows/*.ps1` and the VS Code tasks already defined in the workspace.
 
@@ -46,13 +49,24 @@ What is working:
 - The Windows validation wrapper now fails fast on external command exit codes instead of masking failing `npm` steps.
 - Validator `git_status` now skips cleanly in disposable non-git labs instead of surfacing fatal repository noise.
 - The repo now has a cheap focused `npm run test:ui-shell` regression path for the settings-shell contract.
+- Self-host runtime-context refreshes now reuse stable baseline/docs/config sections within a run, and repair retries inherit the last bounded validation command pack instead of widening back to unrelated checks.
 - The desktop shell now exposes in-app desktop update controls, including a check/download/install path in Settings and a live install button when a downloaded release is ready.
+- Update and promotion surfaces now show rollback readiness directly from workspace recovery data so operators can see the last safe unwind path before triggering install, update, or promotion actions.
+- The live Windows RTX 4060 local-model baseline is re-verified for the current Qwen route stack after the synthesized-edit recovery work, the clean broken-node lab replay, and a passing `npm run engine:acceptance`.
+- The AI settings and Monitor now share one helper-backed route vocabulary for route overrides, capability-route tuning, and the local-model ladder copy instead of duplicating those strings inline.
+- `system-check` fallback lane summaries now keep `chat-fast` on the engine/orchestrator path even when lane role metadata is incomplete, which matches the live AI status contract.
+- Focused route cleanup tests now lock the cleaned-up UI wording and the `chat-fast` engine-role parity across `ai-center`, `engine-contract`, `system-check`, and the bundled UI shell.
+- Route naming now has one canonical schema in `core/route-schema.js`: each lane declares its loop task mode, model-routing task mode, wrapped profile role, and execution role once, and `ai-center`, `engine-contract`, `system-check`, and `promotions` all read that shared map instead of maintaining separate lane-role fallback tables.
+- The repo now has an `archive/` workflow for retiring old code or docs safely instead of deleting possibly-useful material on the first cleanup pass.
+- Desktop rollback archive proof now covers both `darwin` and `win32` archive roots in the focused app-backup regression pack.
+- The engine daily report now acts as the manager-style maintenance checklist for the current window, including completed audit checks, open actions, newly observed problems, missing capability gaps, and an audit log written to `docs/ENGINE_DAILY_REPORT.md`.
+- The repo now has an explicit `npm run proof:route-quality` command that runs the UI shell contract, focused route parity pack, and engine acceptance as one reusable minimum gate for route-sensitive work.
 
 What is still broken:
 
 - The learning journal large-file path is functionally correct but still expensive enough that the large-journal regression test is a noticeable hotspot in the repo test suite.
 - Older docs still contain stale Mac-first examples and duplicate information.
-- The repo does not yet have a locked local-model MVP ladder with explicit capability-unlock gates for widening engine autonomy and self-improvement.
+- Repo-wide validation still includes unrelated red tests outside this cleanup block (`tests/app-storage-paths.test.js` and `tests/smart-patch.test.js`), so the global green baseline remains blocked until those failures are repaired.
 
 ## 4. Agent Working Contract
 
@@ -85,11 +99,20 @@ Primary npm commands:
 
 ```powershell
 npm run engine:acceptance
+npm run proof:route-quality
+npm run engine:daily-report
+npm run engine:cli -- audit
 npm run engine:cli -- plan "Plan the next safe coding task."
 npm run engine:cli -- edit --yes "Prepare the smallest safe fix for the current issue."
 npm run engine:cli -- repair --lab "E:\dev\projects\gosenderr_dev_offload\assistant_labs\scratch\<lab-name>"
+npm run engine:cli -- repair --lab "E:\dev\projects\gosenderr_dev_offload\assistant_labs\scratch\<lab-name>" --validation-command "node --test tests/<focused>.test.js"
 npm test
 ```
+
+Bounded repair proof rule:
+
+- When the repo-wide baseline is already red or the objective is intentionally narrow, pass one or more `--validation-command` overrides to `engine:cli` so clone-lab edit and repair runs are judged against the smallest relevant proof instead of unrelated suite failures.
+- Use `npm run engine:daily-report` or `npm run engine:cli -- audit` before manual triage so the current-day maintenance checklist and missing-capability notes are regenerated from live board and runtime evidence instead of stale notes.
 
 Use these in order when changing engine behavior:
 
@@ -97,7 +120,8 @@ Use these in order when changing engine behavior:
 2. Reproduce in a disposable lab.
 3. Fix source files, not generated copies.
 4. Re-run the smallest relevant validation.
-5. Re-run acceptance.
+5. Run `npm run proof:route-quality` when routing, repair, validation, or operator wording changed.
+6. Re-run acceptance.
 
 ## 6. Operating Workflow
 
@@ -108,6 +132,12 @@ Standard safe loop:
 3. Edit: prepare or apply the change.
 4. Agent: only when you want bounded autonomous execution.
 5. Acceptance: confirm the engine baseline is still healthy.
+
+Retirement and archive rule:
+
+1. If code or docs are no longer active but still might matter later, move them into `archive/<yyyy-mm-dd>-<topic>/` instead of deleting them immediately.
+2. Add a short note in that archive folder that says what was moved, where it came from, why it was retired, and what replaced it.
+3. Archive source-side material only. Do not use `archive/` as a dump for generated output under `renderer/`, `dist/`, or `WINDOWS_APP/`.
 
 For engine debugging:
 
@@ -163,8 +193,138 @@ When debugging the engine, capture these artifacts if needed:
 - BAT<MODEL-002> DONE: Add a canonical local coding proof gate that requires local benchmark coverage for planner, coder, and validator plus a safe acceptance baseline before the local-first block can widen.
 - BAT<MODEL-003> DONE: Promote only benchmark-backed local foundry route bundles into the live lane map, back up the active assistant model config, and restore the last known-good bundle on rollback.
 - BAT<MODEL-004> DONE: Keep self-improvement and GS-Dev-1 export readiness limited to approved or trusted runs, and clamp that readiness behind a green local-first acceptance baseline.
+- BAT<MODEL-BASE-001> DONE: Make local readiness honest on the live machine so routed local-lane status now requires explicitly live Ollama tags and the system-check models area surfaces missing live routed tags instead of treating staged/configured inventory as ready.
+- BAT<MODEL-BASE-002> DONE: Capture failed local `synthesize_edit` selections in the runtime review summary so raw candidate patches, scores, previews, and failure reasons survive into run artifacts without reclassifying normal failures as approval-blocked runs.
+- BAT<MODEL-BASE-003> DONE: Harden the local synthesized-edit normalization path so shell heredoc writes, echoed instruction preambles, control-token tails, and bounded append/create/edit payloads normalize into file contents; the focused tool-loop regression pack now covers those shapes and the clean broken-node lab replay produced a real local diff again.
+- BAT<MODEL-BASE-004> DONE: Import and verify the full routed local stack on this machine, including planner, coder, validator, repair, and compare tags, and fail readiness clearly when any routed tag is missing live registration.
+- BAT<MODEL-BASE-005> DONE: Re-run the canonical local coding proof on the baseline labs and acceptance path using only live local routes; on 2026-03-26 the disposable broken Node lab replay produced a real `src/calculator.js` diff plus green `npm test`, and `npm run engine:acceptance` passed with a fresh acceptance artifact.
+- BAT<MODEL-BASE-006> DONE: Lock the per-model bring-up recipe into the operator workflow and treat it as mandatory for DeepSeek candidates, Qwen compare lanes, and every future promoted local family before widening defaults.
+- BAT<ROUTE-CLEANUP-001> DONE: Reconcile lane IDs, loop task modes, model-routing task modes, wrapped profile roles, execution roles, and fallback role defaults behind the shared `core/route-schema.js` contract so `core/ai-center.js`, `core/engine-contract.js`, `core/system-check.js`, `core/mvp-readiness.js`, `core/promotions.js`, and `host/assistant-config.js` all inherit one durable naming model.
+- BAT<UIUX-CLEANUP-001> DONE: Clean up the AI settings and Monitor route surfaces so route overrides, capability-route tuning, and layer labels use one shared naming set across the operator views.
+- BAT<UIUX-CLEANUP-002> DONE: Remove hardcoded local-ladder and unlock-copy drift by deriving Monitor wording from the shared `renderer-src/lib/ai-route-copy.ts` helper path instead of separate inline strings in `renderer-src/main.tsx`.
+- BAT<QUALITY-ROUTE-001> DONE: Add focused parity tests that fail when `chat-fast` role defaults or cleaned-up route wording drift across `ai-center`, `engine-contract`, `system-check`, and the UI shell.
+- BAT<OPS-005> DONE: Add a safe retirement workflow for old code and docs by creating the root `archive/` convention and documenting when to move items there instead of deleting them on the first cleanup pass.
+- BAT<AUDIT-002> DONE: Extend the engine daily report so it emits a manager-style maintenance checklist, new-problem queue, missing-capability list, and audit log in `docs/ENGINE_DAILY_REPORT.md` for the current audit window.
+- BAT<UIUX-CLEANUP-003> DONE: Keep `route plan`, `workspace coding model`, `engine control model`, and route-ownership wording aligned across every new operator surface by pushing the shared helper-backed copy into the settings shell, engine panel, prompt suggestions, chat help text, and desktop guide instead of leaving one-off labels behind.
+- BAT<MODEL-BASE-007> DONE: Unify `staged`, `registered`, `ready`, and `live` local-model readiness vocabulary across the board, Monitor, system-check, CLI summaries, and the daily audit/runtime summaries so operator surfaces now distinguish staged, registered, live, and missing local state consistently.
+- BAT<AUTONOMY-BASE-001> DONE: Default bounded autonomy proof work to clone labs so task-loop coding, repair, and self-host autonomy runs land in scratch self-host labs up front instead of waiting for main-repo safety holds to force a fallback.
+- BAT<AUTONOMY-BASE-002> DONE: Auto-queue a bounded `needs-rescope` follow-up when overscoped autonomy work or immediate empty-patch/review-held failures should become a smaller lab-safe retry instead of dying as a one-shot warning.
+- BAT<MODEL-PARITY-001> DONE: Record a local-vs-remote parity pack in the acceptance/reporting path for plan, edit, repair, validate, and review so operators can see whether the local workspace stack is matching the remote helper envelope before widening defaults.
+- BAT<PERF-ENGINE-001> DONE: Shrink repeated self-host loop overhead by reusing stable runtime-context baseline/docs/config sections during refreshes and by carrying the last bounded validation command pack into repair retries instead of widening back to unrelated checks.
+- BAT<QUALITY-ROUTE-002> DONE: Add the explicit `npm run proof:route-quality` gate (`npm run test:ui-shell`, focused route parity tests, and `npm run engine:acceptance`), wire it into the Windows validate flow, and require it in task acceptance guidance whenever routing, repair, validation, or operator wording changes.
+- BAT<OPS-006> DONE: Re-prove the route-sensitive update/promotion path with a passing quality proof pack, add recovery summaries to `system-check`, and surface rollback readiness directly in Settings and Monitor wherever operators can trigger updates or promotions.
+- BAT<AUDIT-001> DONE: Add a standing layered cleanup audit in this board so route cleanup, UI/UX cleanup, stale docs, naming drift, and cross-layer wiring debt stay visible after the baseline recovery pass.
 
-## 10. Local-Model MVP Ladder
+## 10. Whole-Project Stable Baseline
+
+How to read this section:
+
+- This is the one whole-project stability checklist for the repo.
+- Each layer answers five plain questions: what the layer is for, what must stay green, how we prove it, what failure looks like, and what unlocks next.
+- Work from the bottom up. If a higher layer regresses, treat the lower verified layer as the real baseline.
+
+Whole-project stable layers:
+
+1. Layer 0: App foundation.
+  Status: Working on this machine.
+  Goal: The desktop app opens, the main screens load, the workspace target stays correct, and the operator can reach chat, settings, Monitor, and inspector views without hacks.
+  Must stay green:
+  - [x] The desktop shell keeps the chat-first layout, settings center, Monitor, and inspector reachable.
+  - [x] Workspace targeting, lab switching, and VS Code companion setup are exposed from the app.
+  - [x] Storage paths, handbook access, and in-app update controls are visible from the normal operator flow.
+  Proof:
+  - Focused UI shell coverage exists and the settings-shell parity regression path is back in place.
+  - The app can open the handbook and surface update controls without leaving the shell.
+  Failure signs:
+  - Blank or partial shell, missing tabs, wrong workspace target, or settings/Monitor controls disappearing.
+  Next unlock:
+  - Daily work only counts as stable if normal chat, planning, coding, and review flow still work from this shell.
+
+2. Layer 1: Daily work baseline.
+  Status: Working, with the main operator wording now aligned.
+  Goal: A normal day of ask, plan, edit, and review work feels like one system instead of stitched-together surfaces.
+  Must stay green:
+  - [x] Chat mode, task routing, and workspace targeting produce actionable runs.
+  - [x] The code edit flow can scope work, change files, and summarize the result.
+  - [x] AI settings and Monitor now share route-copy helpers for the main route labels.
+  - [x] Main operator wording now uses one vocabulary for `route plan`, `workspace coding model`, and `engine control model` across the board, UI, and system-check.
+  Proof:
+  - Focused UI shell tests and route parity tests now guard the main daily-work surfaces.
+  - Shared route-copy helpers remove the previous duplicated route wording drift.
+  Failure signs:
+  - The same route means different things across the UI, runtime, and system-check, or the operator cannot tell which path is active.
+  Next unlock:
+  - Repair and retest flow only counts as stable if the day-to-day route names and ownership rules stay consistent.
+
+3. Layer 2: Repair and validation baseline.
+  Status: Re-verified on 2026-03-26.
+  Goal: When work breaks, the app can repair it, rerun the smallest relevant checks, and show honest evidence instead of vague success.
+  Must stay green:
+  - [x] Repair exists as a dedicated route and task mode instead of being hidden inside generic coder behavior.
+  - [x] Repair and edit loops can produce real diffs in disposable labs.
+  - [x] Validation and acceptance still catch regressions instead of hiding them.
+  - [x] Failed synthesized edits keep raw evidence for later review.
+  Proof:
+  - The clean broken Node lab replay on 2026-03-26 produced a real `src/calculator.js` fix and a passing lab `npm test`.
+  - `npm run engine:acceptance` passed again on the active routed local stack.
+  - Focused engine-contract, promotions, system-check, runtime-service, and ai-center route tests are green.
+  Failure signs:
+  - No-op repairs, empty patches, hidden validation failures, or acceptance going red after a route or repair change.
+  Next unlock:
+  - AI and model health only counts as stable if the models behind repair and validation are honestly reported as live and loadable.
+
+4. Layer 3: AI and model health baseline.
+  Status: Working, with readiness vocabulary aligned on 2026-03-26.
+  Goal: The routed AI stack tells the truth about what is live, missing, fallback-only, compare-only, and safe to use on this machine.
+  Must stay green:
+  - [x] Local readiness now means live in Ollama, not just staged on disk or listed in config.
+  - [x] Route naming now has one canonical schema in `core/route-schema.js`.
+  - [x] Repair can be routed separately from coder, and route promotion honors that split.
+  - [x] Operator vocabulary for `staged`, `registered`, `ready`, and `live` is now aligned across board, Monitor, system-check, CLI summaries, and the daily audit/runtime summaries.
+  Proof:
+  - `system-check`, `ai-center`, and the daily report all distinguish registered-but-not-live Ollama tags from fully live local routes.
+  - Route-schema regression coverage passed in the focused route suite.
+  - The live Windows RTX 4060 route stack was re-verified with one-shot load probes on 2026-03-26.
+  Failure signs:
+  - Monitor says a route is ready while the runtime cannot actually load it, or the same lane resolves to different roles in different surfaces.
+  Next unlock:
+  - Release and recovery only count as stable if the packaged app, update path, promotion path, and rollback path stay honest about the live route state.
+
+5. Layer 4: Release and recovery baseline.
+  Status: Source-ready, keep re-proving it when release workflow changes.
+  Goal: Build, package, update, backup, and rollback paths stay boring and safe enough that recovery does not depend on guesswork.
+  Must stay green:
+  - [x] The app exposes desktop update controls.
+  - [x] Assistant model config backup and restore exist for route promotion rollback.
+  - [x] Promotion rules are benchmark-backed and rollback-aware.
+  - [ ] Packaging, update, and recovery proof should be rerun whenever the release workflow changes.
+  - [ ] Backup and rollback status should stay visible where promotions or updates are shown.
+  Proof:
+  - Promotion tests cover activation and rollback.
+  - App rollback archive proof now covers both `darwin` and `win32` desktop directory archives.
+  - The board documents the release, backup, and promotion rules in one place.
+  Failure signs:
+  - A new route becomes default without rollback proof, update controls drift from real behavior, or recovery depends on tribal knowledge.
+  Next unlock:
+  - Controlled growth only widens after release and recovery stay stable over repeated runs, not one lucky pass.
+
+6. Layer 5: Controlled growth baseline.
+  Status: Intentionally limited.
+  Goal: Improve the system and widen capability without letting autonomy, remote dependency, or new model families outrun proof.
+  Must stay green:
+  - [x] Self-improvement stays behind trusted or approved-run gates.
+  - [x] Remote models stay fallback, compare, or approval helpers instead of becoming the silent daily default.
+  - [ ] Wider autonomy stays locked until the lower layers remain green over time.
+  - [ ] Every new model family must repeat the bring-up recipe before promotion.
+  Proof:
+  - Trust and approval gates already exist in source.
+  - The board keeps the bring-up recipe and widening rules explicit.
+  Failure signs:
+  - Hidden remote dependence, ungated self-improvement, or a new family becoming default because it "felt good" in chat.
+  Next unlock:
+  - None. This layer stays supervised until the lower layers are boringly stable.
+
+Local-model MVP ladder inside the whole-project baseline:
 
 Goal:
 
@@ -172,7 +332,7 @@ Goal:
 - Treat remote models as fallback, comparison, or approval helpers until the verified local baseline is strong enough to carry more lanes.
 - Expand capability only after the previous block has hard evidence, not just a successful chat demo.
 
-Layer-by-layer baseline:
+Layer-by-layer local-model ladder:
 
 1. Layer 0: Foundation.
   Exit gate: at least two ready local coding models are installed, the selected local runtime works, and the benchmark path is runnable.
@@ -202,28 +362,118 @@ Unlock rules:
 - Trusted learning exports must stay gated behind approval or trusted-change filters.
 - If a higher block regresses, fall back to the last verified block instead of keeping the wider capability open.
 
+Requested baseline target locked on 2026-03-26:
+
+- The real product baseline is now a self-hosted engine that can plan, rescope, edit, repair, validate, review, and queue the next bounded follow-up in clone labs with a visible autopilot-preview path.
+- Local models should be able to carry the normal daily coding loop that a remote helper can carry today; remote models stay compare, overflow, or approval helpers until the local proof catches up.
+- When the engine is not ready for the whole task, it must break the work into smaller bounded jobs instead of failing the entire objective or silently leaning on a remote path.
+- Speed is part of the baseline: the self-host loop must feel fast enough for repeated solo-dev work and small team follow-up loops, not just pass one slow acceptance run.
+- This baseline is now the canonical target even though the currently verified state is still narrower; keep the board honest about that gap until the proof is real.
+
 Stable MVP target:
 
 - MVP means the app can plan, edit, repair, validate, and review a normal repo with local-first routing, while the operator can see exactly which capability block is verified, next, or locked.
-- The first MVP is not "equal to every remote model". The first MVP is "good enough to carry the daily solo-dev loop locally, with clear fallback and promotion rules".
+- The currently verified MVP is not yet "equal to every remote model". The current verified MVP is "good enough to carry the daily solo-dev loop locally, with clear fallback and promotion rules" while the locked baseline target above keeps driving the parity and autonomy work.
 
 Current Windows RTX 4060 starter local stack:
 
 - Primary coder: `qwen2.5-coder:14b`
 - Fast planner: `qwen2.5-coder:7b`
 - Fast validator and summarizer: `qwen2.5-coder:7b`
-- Repair and compare fallback: `deepseek-coder-v2-lite-instruct:q4-k-m`
+- Repair primary: `qwen2.5-coder:7b`
+- Low-headroom repair and worker fallback: `qwen2.5-coder:3b`
 - Manual reasoning compare lane: `qwen3-14b:q4-k-m`
 - Remote models should stay fallback-only until the local benchmark and acceptance blocks are verified.
+
+Current machine baseline recovery block:
+
+- The source-side MVP BATs above are complete, and the live Windows RTX 4060 baseline was re-verified on 2026-03-26 after the local synthesized-edit recovery work landed.
+- Readiness for this block means the routed tags are visible to the live Ollama runtime on this machine, not merely staged on disk or listed in config-derived inventory.
+- For local mutation lanes, readiness also means a one-shot preflight load check can start the routed model inside current memory headroom before the repair/edit loop begins.
+- The main synthesized-edit failure classes that were blocking this machine are now captured or normalized: empty patches survive in runtime review artifacts, and shell-write / echoed-instruction / control-token-wrapped replies normalize before write.
+- On this Windows RTX 4060 machine, repair should stay Qwen-only for now: the shared `qwen2.5-coder:14b` coder lane is close enough to the live RAM ceiling that repair preflight can fail under normal desktop load, so the machine-specific repair lane should stay pinned to `qwen2.5-coder:7b` and fall back to the now-proven `qwen2.5-coder:3b` route when headroom is tighter.
+- A fresh 2026-03-26 route-load replay proved the active routed local stack can load inside current headroom on this machine: planner/validator/summarizer plus repair all preflight on `qwen2.5-coder:7b`, coder resolves to `qwen2.5-coder:14b`, and the manual compare tag `qwen3-14b:q4-k-m` also passed the one-shot live load probe.
+- A fresh 2026-03-26 clean-baseline replay on `dummy-broken-node-app-1774472034725` produced a real `src/calculator.js` repair diff and a passing lab `npm test`, and the same session finished with a passing `npm run engine:acceptance` artifact at `E:\dev\projects\gosenderr_dev_offload\assistant_benchmarks\acceptance\2026-03-26T16-52-18-681Z-engine-acceptance-1774543888624-y6bzpjkz.json`.
+- DeepSeek Coder V2 Lite `q2-k` is now imported as a smaller candidate on this machine, but the repair-lane replay still fails the preflight load check with a live Ollama memory-fit error, so the DeepSeek family remains candidate-only here until a genuinely smaller viable route is found.
+- Keep the local-first ladder at the re-verified Layer 2 block unless a future local family repeats the bring-up recipe below and clears the same proof sequence.
+
+Per-model bring-up recipe:
+
+1. Verify live runtime readiness for every routed tag in the family and record whether each tag is staged-only, imported, or actually live in Ollama.
+2. Run a clean git-lab proof for append, create, and bounded edit objectives, and keep the raw provider response plus candidate-score artifact for every failed attempt.
+3. Fix prompt shaping or response normalization until the family can produce deterministic file contents instead of empty patches, shell commands, or fenced/prose-only replies.
+4. Re-run the canonical local coding proof and acceptance path with that family carrying only the lanes it is meant to own.
+5. Promote the family only after the proof is green, rollback is preserved, and the operator surfaces show live readiness rather than staged-only confidence.
+6. Repeat this exact recipe for DeepSeek candidates, the Qwen compare lane, and every later local family before any of them becomes a default or widened route.
+
+Layer follow-through audit:
+
+1. Layer 0 follow-through.
+  Need next:
+  - [ ] Keep app-start, shell-layout, and workspace-target checks current whenever the settings shell or top-level navigation changes.
+  - [ ] Keep handbook, diagnostics, and update entry points visible from the normal operator path.
+
+2. Layer 1 follow-through.
+  Need next:
+  - [ ] Keep `route plan`, `workspace coding model`, `engine control model`, and related route ownership labels aligned as new operator surfaces are added.
+  - [ ] Keep shared route-copy helpers as the only source for repeated route wording in operator surfaces.
+
+3. Layer 2 follow-through.
+  Need next:
+  - [x] Keep route parity tests, UI shell checks, and `npm run engine:acceptance` as the minimum gate when repair, routing, or validation flow changes.
+  - [x] Keep repair evidence honest so failed synthesized edits preserve raw candidate diagnostics.
+
+4. Layer 3 follow-through.
+  Need next:
+  - [x] Re-run package, update, and rollback proof whenever release workflow or promotion workflow changes.
+  - [x] Keep recovery status obvious wherever the operator can trigger promotion or update actions.
+
+5. Layer 4 follow-through.
+  Need next:
+  - [ ] Re-run package, update, and rollback proof whenever release workflow or promotion workflow changes.
+  - [ ] Keep recovery status obvious wherever the operator can trigger promotion or update actions.
+
+6. Layer 5 follow-through.
+  Need next:
+  - [ ] Keep self-improvement and widening behind trusted proof, not chat feel.
+  - [ ] Keep remote usage explicit as compare, overflow, or approval-only instead of letting hidden dependency creep back in.
 
 ## 11. Audit Plan
 
 Current board status:
 
-1. All active BAT items on this board are complete through Layer 4 of the local-model MVP ladder.
-2. Inbox and stored approval state are currently clear, with no pending approvals queued in the recorded runtime artifacts.
-3. The first local-model MVP target is complete: local-first routing, verified coding proof, rollback-ready route-bundle promotion, and approval-or-trust-gated self-improvement export proof all exist in source and tests.
-4. The Monitor overview and system-check surfaces are the operator proof points for that ladder, so board policy, routing state, and widening gates stay aligned.
+1. Section 10 is now the one whole-project stable baseline checklist, and it is organized in layers from app foundation through controlled growth.
+2. The live local baseline is back to green for the current Qwen route stack, but the new priority is self-host autonomy proof, automatic task slicing, and local-vs-remote parity rather than more one-off recovery work.
+3. The latest main-workspace repair trial held one controlled edit approval, so clone-lab self-host runs should be the default autonomy proof lane until the autopilot-preview path is proven.
+4. The highest-value remaining work is to keep route names and readiness states aligned while making the engine smaller-job-first, faster, and honest about the gap between the verified baseline and the new locked target baseline.
+
+Standing layered cleanup audit:
+
+1. Layer 0: App foundation.
+  Audit focus:
+  - Shell navigation, workspace target, handbook access, diagnostics, and update entry points stay reachable from the normal operator path.
+
+2. Layer 1: Shared operator vocabulary.
+  Audit focus:
+  - `route plan`, `workspace coding model`, `engine control model`, and route ownership wording stay sourced from shared helpers instead of one-off labels.
+
+3. Layer 2: Route and repair proof.
+  Audit focus:
+  - `npm run proof:route-quality` remains the named minimum gate for routing, repair, validation, and operator-wording work.
+  - Repair runs keep the last bounded validation pack and preserve raw candidate diagnostics when synthesized edits fail.
+
+4. Layer 3: Model and naming parity.
+  Audit focus:
+  - Readiness terms stay locked to `staged`, `registered`, `live`, and `missing`, and route-schema ownership stays centralized.
+
+5. Layer 4: Release and recovery.
+  Audit focus:
+  - Update, backup, rollback, and promotion surfaces keep showing the latest recovery path before operators trigger risky actions.
+  - Package/update/rollback proof is rerun whenever release or promotion wiring changes.
+
+6. Layer 5: Controlled growth.
+  Audit focus:
+  - Self-improvement, autonomy widening, and remote usage stay gated by trusted proof instead of convenience or hidden fallback drift.
 
 ## 12. Completion Standard
 
@@ -231,5 +481,6 @@ A task on this board is not done until:
 
 - the source fix exists in non-generated files
 - the smallest relevant validation passes
+- `npm run proof:route-quality` passes for routing, repair, validation, or operator-wording changes
 - acceptance still passes if engine behavior changed
 - this board is updated if the durable workflow changed

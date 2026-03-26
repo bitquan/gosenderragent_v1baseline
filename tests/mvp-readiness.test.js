@@ -95,6 +95,13 @@ test('mvp readiness maps a fully healthy workspace to the 12-month baseline end 
       report: {
         overallStatus: 'pass',
         summary: 'All tracked acceptance checks passed.',
+        modelParity: {
+          status: 'pass',
+          capabilityCount: 5,
+          readyCount: 5,
+          widenReady: true,
+          summary: 'Local-vs-remote parity is PROVEN across 5/5 core coding capabilities.',
+        },
         checks: [
           { id: 'tests', status: 'pass', summary: 'Tests passed.' },
           { id: 'smoke-ui', status: 'pass', summary: 'UI smoke passed.' },
@@ -172,6 +179,7 @@ test('mvp readiness maps a fully healthy workspace to the 12-month baseline end 
   assert.match(readiness.summary, /5-phase MVP readiness is 100%/i);
   assert.equal(readiness.selfHostExpansion.eligible, false);
   assert.equal(readiness.selfHostExpansionProgress.label, 'NOT USED');
+  assert.equal(readiness.modelParity.label, 'PROVEN');
   assert.equal(readiness.nextPhasePreview, null);
   assert.ok(readiness.phases.some((item) => item.id === 'phase-1-safe-engine-core' && item.status === 'ready'));
   assert.ok(readiness.milestones.some((item) => item.id === 'month-2-gse1-engine-brain' && item.status === 'ready'));

@@ -351,6 +351,9 @@ def _orchestration_changed_paths(result: dict[str, Any] | None) -> list[str]:
         if isinstance(item, dict):
             path_value = str(item.get("path") or "").strip()
             if path_value:
+                normalized = path_value.replace("\\", "/").lower()
+                if normalized == ".gos-lab.json" or normalized.startswith(".gos-lab-recipes/"):
+                    continue
                 paths.append(path_value)
     return paths
 
@@ -1200,6 +1203,7 @@ def _camelize_operator_execution(payload: dict[str, Any] | None) -> dict[str, An
         "benchmarkMetadata": dict(benchmark_metadata or {}),
         "learningMetadata": dict(learning_metadata or {}),
         "artifactPaths": [str(path) for path in list(source.get("artifact_paths") or []) if str(path)],
+        "validationCommands": [str(command) for command in list(source.get("validation_commands") or []) if str(command)],
         "retryAvailable": bool(source.get("retry_available", False)),
         "repairAvailable": bool(source.get("repair_available", False)),
         "taskObjective": {
@@ -1308,6 +1312,18 @@ def _build_operator_execution_payload(
 ) -> dict[str, Any]:
     seed = dict(operator_execution or {})
     effective_artifact_paths = [str(path) for path in list(artifact_paths or seed.get("artifactPaths") or seed.get("artifact_paths") or []) if str(path)]
+    validation_commands = [
+        str(item).strip()
+        for item in list(
+            seed.get("validationCommands")
+            or seed.get("validation_commands")
+            or ((runtime_result or {}).get("validation") or {}).get("commands")
+            or ((runtime_context or {}).get("validation_scope") or {}).get("commands")
+            or ((runtime_context or {}).get("validationScope") or {}).get("commands")
+            or []
+        )
+        if str(item).strip()
+    ]
     memory_hints = dict(
         seed.get("memoryHints")
         or seed.get("memory_hints")
@@ -1392,6 +1408,7 @@ def _build_operator_execution_payload(
             "memory_hints": memory_hints,
         },
         artifact_paths=effective_artifact_paths,
+        validation_commands=validation_commands,
         lane_id=str(seed.get("laneId") or seed.get("lane_id") or lane_id or ""),
         lane_label=str(seed.get("laneLabel") or seed.get("lane_label") or lane_label or ""),
         model_profile_id=str(seed.get("modelProfileId") or seed.get("model_profile_id") or model_profile_id or ""),
@@ -3092,6 +3109,7 @@ def stop_scheduler() -> dict[str, Any]:
 
 def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(options or {})
+    metadata = dict(payload.get("metadata") or {})
     objective = str(payload.get("objective") or payload.get("prompt") or "").strip()
     if not objective:
         raise RuntimeApiError("orchestrate requires an objective")
@@ -3116,6 +3134,13 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
             **dict(payload.get("context") or {}),
             "host_boundary": payload.get("hostBoundary") or payload.get("host_boundary") or {},
             "project_root": str(selected_root),
+            "editor_context": dict(payload.get("editorContext") or payload.get("editor_context") or {}),
+            "task_mode": str(payload.get("taskMode") or payload.get("task_mode") or metadata.get("task_mode") or metadata.get("taskMode") or ""),
+            "lane_id": str(payload.get("laneId") or payload.get("lane_id") or metadata.get("lane_id") or metadata.get("laneId") or ""),
+            "lane_label": str(payload.get("laneLabel") or payload.get("lane_label") or metadata.get("lane_label") or metadata.get("laneLabel") or ""),
+            "validation": dict(payload.get("validation") or {}),
+            "repair": dict(payload.get("repair") or {}),
+            "artifact_paths": list(payload.get("artifactPaths") or payload.get("artifact_paths") or []),
         },
         approval_gate=gate,
         provider=provider,
@@ -3123,7 +3148,7 @@ def orchestrate(options: dict[str, Any] | None = None) -> dict[str, Any]:
     )
     if _orchestration_expects_mutation(payload, result):
         changed_paths = _orchestration_changed_paths(result)
-        if not changed_paths and not _orchestration_has_mutating_tool_events(result):
+        if result.get('ok') and not changed_paths and not _orchestration_has_mutating_tool_events(result):
             result = _mark_orchestration_noop_failure(result, objective)
     trust_summary = _extract_trust_summary(result)
     operator_execution = _build_operator_execution_payload(

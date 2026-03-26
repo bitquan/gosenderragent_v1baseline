@@ -9,6 +9,7 @@ const path = require('path');
 const {
   buildAcceptanceControlSummary,
   readLatestAcceptanceReport,
+  summarizeFailureOutput,
   summarizeAcceptanceReport,
   writeAcceptanceReport,
 } = require('../core/engine-acceptance');
@@ -170,4 +171,49 @@ test('buildAcceptanceControlSummary surfaces repo-scoped builder proof readabili
   assert.equal(summary.builderProof.actionCount, 1);
   assert.equal(summary.builderProof.workspaceScoped, true);
   assert.match(summary.builderProof.summary, /1\/1 safe current-workspace builder run/i);
+});
+
+test('buildAcceptanceControlSummary surfaces local-vs-remote model parity readability', () => {
+  const summary = buildAcceptanceControlSummary({
+    overallStatus: 'pass',
+    summary: 'Acceptance passed.',
+    checks: [
+      { id: 'tests', label: 'Node tests', status: 'pass', summary: 'Tests passed.' },
+      { id: 'smoke-ui', label: 'UI smoke suite', status: 'pass', summary: 'UI smoke passed.' },
+    ],
+    modelParity: {
+      status: 'pass',
+      capabilityCount: 5,
+      readyCount: 5,
+      widenReady: true,
+      summary: 'Local-vs-remote parity is PROVEN across 5/5 core coding capabilities.',
+      entries: [
+        {
+          id: 'plan',
+          label: 'Plan',
+          status: 'pass',
+          proofStatus: 'pass',
+          local: { role: 'workspace', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama' },
+          remote: { role: 'engine', modelProfileId: 'gse-1-engine', baseModel: 'gpt-5.4', providerSource: 'openai' },
+        },
+      ],
+    },
+  }, { exists: true });
+
+  assert.equal(summary.modelParity.status, 'pass');
+  assert.equal(summary.modelParity.proven, true);
+  assert.equal(summary.modelParity.readyCount, 5);
+  assert.equal(summary.modelParity.capabilityCount, 5);
+  assert.match(summary.modelParity.summary, /PROVEN across 5\/5/i);
+});
+
+test('summarizeFailureOutput preserves the actionable smoke failure instead of the trailing Node version line', () => {
+  const summary = summarizeFailureOutput('', [
+    'Error: Renderer guard failed: missing required snippet "data-inspector-tab" in renderer/app.js',
+    '    at assert (scripts/smoke.js:49:11)',
+    'Node.js v24.14.0',
+  ].join('\n'));
+
+  assert.match(summary, /Renderer guard failed/);
+  assert.doesNotMatch(summary, /Node\.js v24\.14\.0/);
 });

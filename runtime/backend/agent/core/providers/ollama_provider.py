@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http import HTTPStatus
 from typing import Any
 from urllib import error, request
 
@@ -40,9 +41,28 @@ class OllamaProvider(ModelProvider):
             body = response.read().decode("utf-8")
         return json.loads(body) if body else {}
 
+    def _http_error_message(self, exc: error.HTTPError) -> str:
+        status = exc.code if isinstance(exc.code, int) else 0
+        reason = exc.reason if exc.reason is not None else HTTPStatus(status).phrase if status else ''
+        body_text = ''
+        try:
+            payload = exc.read().decode("utf-8")
+            parsed = json.loads(payload) if payload else {}
+            if isinstance(parsed, dict):
+                body_text = str(parsed.get("error") or parsed.get("message") or '').strip()
+            if not body_text:
+                body_text = str(payload or '').strip()
+        except Exception:
+            body_text = ''
+        details = body_text or str(reason or '').strip() or 'ollama request failed'
+        prefix = f"Ollama request failed ({status})" if status else 'Ollama request failed'
+        return f"{prefix}: {details}" if details else prefix
+
     def _request_generate(self, payload: dict[str, Any]) -> str:
         try:
             data = self._post_json("/api/generate", payload)
+        except error.HTTPError as exc:
+            raise RuntimeError(self._http_error_message(exc)) from exc
         except (error.URLError, TimeoutError, ValueError, OSError):
             return ""
         return str(data.get("response") or "").strip()
@@ -50,6 +70,8 @@ class OllamaProvider(ModelProvider):
     def _request_chat(self, payload: dict[str, Any]) -> str:
         try:
             data = self._post_json("/api/chat", payload)
+        except error.HTTPError as exc:
+            raise RuntimeError(self._http_error_message(exc)) from exc
         except (error.URLError, TimeoutError, ValueError, OSError):
             return ""
         message = data.get("message") or {}
@@ -84,6 +106,26 @@ class OllamaProvider(ModelProvider):
         if temperature is not None:
             payload["options"]["temperature"] = temperature
         return self._request_chat(payload)
+
+    def preflight_check(self, **kwargs: Any) -> dict[str, Any]:
+        payload = {
+            "model": self.config.ollama_model,
+            "prompt": str(kwargs.get("prompt") or "Reply with READY."),
+            "system": str(kwargs.get("system_prompt") or self.config.system_prompt),
+            "stream": False,
+            "keep_alive": "0s",
+            "options": {
+                "temperature": 0,
+                "num_predict": 1,
+            },
+        }
+        try:
+            self._post_json("/api/generate", payload)
+        except error.HTTPError as exc:
+            return {"ok": False, "message": self._http_error_message(exc)}
+        except (error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "message": str(exc) or "Ollama request failed."}
+        return {"ok": True}
 
     def summarize(self, text: str, **kwargs: Any) -> str:
         prompt = f"Summarize this repository or engineering context in concise actionable bullets:\n\n{text}"

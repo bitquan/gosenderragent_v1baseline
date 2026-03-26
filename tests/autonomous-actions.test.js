@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildAutonomousActionSummary,
+  buildAutonomyRescopeTask,
   buildTaskAutonomyAssessment,
   inferModelLevel,
 } = require('../core/autonomous-actions');
@@ -291,4 +292,32 @@ test('buildTaskAutonomyAssessment blocks overscoped coding tasks before launch',
   assert.equal(assessment.modelLevel, 2);
   assert.equal(assessment.difficultyLevel, 5);
   assert.match(assessment.recommendedAction, /Rescope/i);
+});
+
+test('buildAutonomyRescopeTask produces a bounded lab-safe follow-up payload', () => {
+  const task = buildAutonomyRescopeTask({
+    objective: 'Run benchmark-grade promotion export with repair and trust handoff.',
+    taskMode: 'coder',
+    laneId: 'code-main',
+    sliceTargetPaths: [
+      'main.js',
+      'renderer/app.js',
+      'core/system-check.js',
+    ],
+  }, {
+    requestedModelRole: 'workspace',
+    modelLevel: 2,
+    blockingReason: 'Rescope this task before retrying.',
+  });
+
+  assert.equal(task.status, 'needs-rescope');
+  assert.equal(task.ring, 'lab');
+  assert.equal(task.sliceTargetPaths.length, 2);
+  assert.equal(task.metadata.lastBlockedBy, 'model-fit');
+  assert.equal(task.metadata.requestedModelRole, 'workspace');
+  assert.equal(task.metadata.routeLaneId, 'code-main');
+  assert.match(task.metadata.followupSignature, /^autonomy-rescope:/);
+  assert.match(task.objective, /lab-safe slice/i);
+  assert.equal(Array.isArray(task.slices), true);
+  assert.equal(task.slices.length, 3);
 });

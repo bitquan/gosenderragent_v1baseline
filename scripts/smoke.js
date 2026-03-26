@@ -25,7 +25,7 @@ const requiredFiles = [
 const requiredFunctionSnippets = [
   'data-workbench-shell',
   'data-panel',
-  'Ask the coding model what to build, fix, review, or explain.',
+  'data-inspector-tab',
   'data-settings-tab',
   'data-file-editor',
 ];

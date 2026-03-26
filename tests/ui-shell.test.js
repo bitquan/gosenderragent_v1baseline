@@ -31,7 +31,7 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /"ai"/);
   assert.match(appJs, /"labs"/);
   assert.match(appJs, /"learning"/);
-  assert.match(appJs, /Storage & Diagnostics/);
+  assert.match(appJs, /Storage and diagnostics roots/);
   assert.match(appJs, /Queued automations/);
   assert.match(appJs, /Automation jobs/);
   assert.match(appJs, /Create self-host lab/);
@@ -54,9 +54,15 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /props\.onUpdateSetting\("trainingOllamaModel"/);
   assert.match(appJs, /Plan the next safe coding task/);
   assert.match(appJs, /Review the current repo and tell me what needs fixing first/);
-  assert.match(appJs, /Set up the coding model and verify the engine is ready/);
+  assert.match(appJs, /Set up the workspace coding model, engine control model, and verify the route plan is ready/);
+  assert.match(appJs, /Chat follows the current route plan/);
+  assert.match(appJs, /Inherited from route plan/);
   assert.match(appJs, /Local model MVP ladder/);
   assert.match(appJs, /Capability unlock ladder/);
+  assert.match(appJs, /Route overrides/);
+  assert.match(appJs, /Capability routes/);
+  assert.match(appJs, /Route selection/);
+  assert.match(appJs, /Reset route overrides/);
   assert.match(appJs, /supervised engine loop/);
   assert.match(appJs, /dedupeInboxItems/);
   assert.match(appJs, /deriveInboxDedupeKey/);
@@ -67,7 +73,7 @@ test('workbench shell exposes the chat-first layout with settings sub-tabs', () 
   assert.match(appJs, /data-panel/);
   assert.match(settingsSection, /Automation jobs/);
   assert.match(settingsSection, /Create self-host lab/);
-  assert.match(settingsSection, /Storage & Diagnostics/);
+  assert.match(settingsSection, /diagnostics all live behind one modular settings surface/i);
   assert.match(settingsSection, /Import selected model/);
   assert.match(settingsSection, /Inspector mode/);
   assert.match(settingsSection, /Composer height/);

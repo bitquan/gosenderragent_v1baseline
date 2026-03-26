@@ -155,6 +155,10 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
       'assistant_engine_model_base_model: qwen2.5-coder:7b',
       'assistant_engine_model_base_provider: ollama',
       'assistant_engine_model_provider_source: ollama',
+      'assistant_task_mode_planner_provider: openai',
+      'assistant_task_mode_planner_model: gpt-4.1-mini',
+      'assistant_task_mode_repair_provider: openai',
+      'assistant_task_mode_repair_model: gpt-4.1-mini',
       'assistant_task_mode_coder_provider: openai',
       'assistant_task_mode_coder_model: gpt-4.1-mini',
       'assistant_task_mode_validator_provider: openai',
@@ -189,7 +193,7 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
         type: 'route-bundle',
         title: 'Local qwen route bundle',
         sourceBenchmarks: ['bench-route-bundle'],
-        targetLanes: ['code-main', 'review-verify'],
+        targetLanes: ['chat-fast', 'code-main', 'repair-fast', 'review-verify'],
         modelProfileId: 'gs-dev-1-default',
         baseModel: 'qwen2.5-coder:14b',
         providerSource: 'ollama',
@@ -209,7 +213,7 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
       providerSource: 'ollama',
       taskMode: 'coder',
       variantType: 'route-bundle',
-      targetLanes: ['code-main', 'review-verify'],
+      targetLanes: ['chat-fast', 'code-main', 'repair-fast', 'review-verify'],
     });
 
     writeAcceptanceReport(workspaceRoot, {
@@ -228,6 +232,10 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
     assert.equal(promoted.candidate.routeBundlePromotion.status, 'promoted');
 
     const activeConfig = readAssistantConfig(workspaceRoot);
+    assert.equal(activeConfig.taskModeRoutes.planner.provider, 'ollama');
+    assert.equal(activeConfig.taskModeRoutes.planner.model, 'qwen2.5-coder:14b');
+    assert.equal(activeConfig.taskModeRoutes.repair.provider, 'ollama');
+    assert.equal(activeConfig.taskModeRoutes.repair.model, 'qwen2.5-coder:14b');
     assert.equal(activeConfig.taskModeRoutes.coder.provider, 'ollama');
     assert.equal(activeConfig.taskModeRoutes.coder.model, 'qwen2.5-coder:14b');
     assert.equal(activeConfig.taskModeRoutes.validator.provider, 'ollama');
@@ -241,6 +249,10 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
 
     assert.equal(rolledBack.ok, true);
     const restoredConfig = readAssistantConfig(workspaceRoot);
+    assert.equal(restoredConfig.taskModeRoutes.planner.provider, 'openai');
+    assert.equal(restoredConfig.taskModeRoutes.planner.model, 'gpt-4.1-mini');
+    assert.equal(restoredConfig.taskModeRoutes.repair.provider, 'openai');
+    assert.equal(restoredConfig.taskModeRoutes.repair.model, 'gpt-4.1-mini');
     assert.equal(restoredConfig.taskModeRoutes.coder.provider, 'openai');
     assert.equal(restoredConfig.taskModeRoutes.coder.model, 'gpt-4.1-mini');
     assert.equal(restoredConfig.taskModeRoutes.validator.provider, 'openai');

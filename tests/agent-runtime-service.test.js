@@ -9,8 +9,8 @@ const {
   resolveExecutionModelRole,
 } = require('../host/agent-runtime-service');
 
-function createService() {
-  const runtime = {
+function createService(overrides = {}) {
+  const runtime = overrides.runtime || {
     workspaceRoot: '',
     setWorkspaceRoot(nextRoot) {
       this.workspaceRoot = nextRoot;
@@ -24,7 +24,33 @@ function createService() {
       };
     },
   };
-  return new DesktopAgentRuntimeService({
+  const createdLabs = [];
+  const createdTasks = [];
+  const createLab = overrides.createLab || ((workspaceRoot, payload) => {
+    const result = {
+      ok: true,
+      workspaceRoot,
+      labRoot: `E:\\labs\\${String(payload?.name || 'engine-run').trim() || 'engine-run'}`,
+      recipe: String(payload?.recipe || '').trim(),
+    };
+    createdLabs.push(result);
+    return result;
+  });
+  const createTask = overrides.createTask || ((_workspaceRoot, payload) => {
+    const result = {
+      ok: true,
+      task: {
+        id: `task-${createdTasks.length + 1}`,
+        title: String(payload?.title || '').trim(),
+        objective: String(payload?.objective || '').trim(),
+        status: String(payload?.status || '').trim(),
+        metadata: payload?.metadata || {},
+      },
+    };
+    createdTasks.push(result.task);
+    return result;
+  });
+  const service = new DesktopAgentRuntimeService({
     runtime,
     getWorkspaceRoot: () => 'E:\\repo',
     setWorkspaceRoot: (value) => value || 'E:\\repo',
@@ -69,7 +95,16 @@ function createService() {
       blockAutonomy: false,
       summary: '',
     }),
+    createLab,
+    createTask,
+    ...(overrides.serviceOptions || {}),
   });
+  return {
+    service,
+    runtime,
+    createdLabs,
+    createdTasks,
+  };
 }
 
 test('task loop lanes map capability lanes into existing runtime actions', () => {
@@ -106,7 +141,7 @@ test('task loop lanes map capability lanes into existing runtime actions', () =>
 });
 
 test('buildTaskLoopRequest preserves lane metadata and keeps summarizer off the engine start path', () => {
-  const service = createService();
+  const { service } = createService();
   const planned = service.buildTaskLoopRequest({
     laneId: 'review-verify',
     task: 'Run the bounded verification checks',
@@ -149,4 +184,118 @@ test('execution model role follows the existing lane split', () => {
   assert.equal(resolveExecutionModelRole({ laneId: 'plan-reasoning', taskMode: 'planner', action: 'plan' }), 'engine');
   assert.equal(resolveExecutionModelRole({ laneId: 'review-verify', taskMode: 'validator', action: 'run' }), 'engine');
   assert.equal(resolveExecutionModelRole({ laneId: 'ops-summary', taskMode: 'summarizer', action: 'summarize' }), 'engine');
+});
+
+test('task-loop coding defaults to a clone lab for autonomy proof work', () => {
+  const { service, runtime, createdLabs } = createService();
+
+  const result = service.startTaskLoop({
+    laneId: 'code-main',
+    task: 'Patch the repo task with bounded edits',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(createdLabs.length, 1);
+  assert.equal(result.autoCreatedLab, true);
+  assert.equal(runtime.workspaceRoot, createdLabs[0].labRoot);
+  assert.equal(result.request.labRoot, createdLabs[0].labRoot);
+  assert.equal(result.request.hostBoundary.hostKind, 'lab');
+});
+
+test('overscoped autonomy work is converted into a needs-rescope follow-up task', () => {
+  const { service, createdTasks } = createService();
+
+  const result = service.startTaskLoop({
+    laneId: 'code-main',
+    task: 'Refactor the renderer routing, repair, trust handoff, promotion export, and release notes in one pass.',
+    objective: 'Refactor the renderer routing, repair, trust handoff, promotion export, and release notes in one pass.',
+    riskClass: 'high',
+    capabilities: ['code-main', 'repair-fast', 'review-verify'],
+    acceptanceChecks: ['Run acceptance.', 'Summarize the diff.', 'Capture promotion metadata.'],
+    sliceTargetPaths: ['main.js', 'renderer/app.js', 'core/system-check.js', 'core/mvp-readiness.js'],
+    slices: [{ id: 'scope' }, { id: 'implement' }, { id: 'validate' }],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocked, true);
+  assert.equal(result.blockedBy, 'model-fit');
+  assert.equal(createdTasks.length, 1);
+  assert.equal(createdTasks[0].status, 'needs-rescope');
+  assert.equal(createdTasks[0].metadata.lastBlockedBy, 'model-fit');
+  assert.match(createdTasks[0].objective, /lab-safe slice/i);
+});
+
+test('immediate empty-patch failures queue a bounded rescope follow-up', () => {
+  const runtime = {
+    workspaceRoot: '',
+    setWorkspaceRoot(nextRoot) {
+      this.workspaceRoot = nextRoot;
+    },
+    run() {
+      return {
+        ok: false,
+        runId: 'run-empty-patch',
+        state: 'fail',
+        blockedReason: 'Provider returned an empty patch for the requested change.',
+      };
+    },
+  };
+  const { service, createdTasks } = createService({ runtime });
+
+  const result = service.handleRun('repair', {
+    workspaceRoot: 'E:\repo',
+    targetWorkspaceRoot: 'E:\repo',
+    metadata: {
+      operator_loop: true,
+      taskMode: 'repair',
+      lane_id: 'repair-fast',
+    },
+    taskMode: 'repair',
+    objective: 'Repair the current validation failure without widening scope.',
+    ticket: 'AUTONOMY-BASE-002',
+  });
+
+  assert.equal(result.runId, 'run-empty-patch');
+  assert.equal(result.autoRescoped, true);
+  assert.equal(createdTasks.length, 1);
+  assert.equal(createdTasks[0].metadata.lastBlockedBy, 'empty-patch');
+});
+
+test('repair loop reuses bounded validation commands from the latest failed run', () => {
+  let capturedRequest = null;
+  const runtime = {
+    workspaceRoot: '',
+    setWorkspaceRoot(nextRoot) {
+      this.workspaceRoot = nextRoot;
+    },
+    getStatus() {
+      return {
+        latest: [
+          {
+            runId: 'failed-run-1',
+            ticket: 'BAT-42',
+            state: 'fail',
+            operatorExecution: {
+              validationCommands: ['npm run test:ui-shell', 'node --test tests/system-check.test.js'],
+            },
+          },
+        ],
+      };
+    },
+    run(request) {
+      capturedRequest = request;
+      return {
+        ok: true,
+        runId: 'run-repair-1',
+        state: 'running',
+      };
+    },
+  };
+  const { service } = createService({ runtime });
+
+  const result = service.runRepairLoop({ workspaceRoot: 'E:\\repo' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ticket, 'BAT-42');
+  assert.deepEqual(capturedRequest.validationCommands, ['npm run test:ui-shell', 'node --test tests/system-check.test.js']);
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useEffectEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { AI_ROUTE_COPY, buildLocalModelProgram, localModelProgramStatusLabel } from './lib/ai-route-copy';
 import { shortPath, formatStamp, summarizeText, makeId } from './lib/format';
 import { createStore, useStoreValue } from './lib/store';
 import type { ChatMessage, ChatThread, InspectorState, JsonMap } from './lib/types';
@@ -21,6 +22,98 @@ const INSPECTOR_TAB_LABELS: Record<InspectorTabId, string> = {
   file: 'File',
   diff: 'Diff',
   learning: 'Learning',
+};
+
+const SETTINGS_NAV_GROUPS = [
+  { id: 'system', label: 'System', tabs: ['general', 'workspace', 'storage'] as SettingsTabId[] },
+  { id: 'intelligence', label: 'Intelligence', tabs: ['ai', 'autonomy', 'skills', 'tools'] as SettingsTabId[] },
+  { id: 'operations', label: 'Operations', tabs: ['extensions', 'automations', 'labs', 'learning'] as SettingsTabId[] },
+] as const;
+
+const SETTINGS_TAB_META: Record<SettingsTabId, {
+  navLabel: string;
+  title: string;
+  eyebrow: string;
+  description: string;
+  icon: UiIconName;
+}> = {
+  general: {
+    navLabel: 'System',
+    title: 'Desktop system controls',
+    eyebrow: 'Shell + updates',
+    description: 'Theme, chat defaults, instruction shaping, and updater controls stay here so the main chat surface can stay focused on work.',
+    icon: 'mode',
+  },
+  workspace: {
+    navLabel: 'Workspace',
+    title: 'Workspace targeting',
+    eyebrow: 'Roots + editor alignment',
+    description: 'Choose the active workspace, confirm the current target, and keep the VS Code companion aligned with the desktop shell.',
+    icon: 'repo',
+  },
+  ai: {
+    navLabel: 'AI routing',
+    title: 'AI routing and model selection',
+    eyebrow: 'Profiles + providers',
+    description: AI_ROUTE_COPY.settingsTabDescription,
+    icon: 'spark',
+  },
+  autonomy: {
+    navLabel: 'Autonomy',
+    title: 'Autonomy and safety policy',
+    eyebrow: 'Guardrails + retries',
+    description: 'Tune how far the engine can go on its own, how often it retries, and which actions still require supervision.',
+    icon: 'agents',
+  },
+  skills: {
+    navLabel: 'Skills',
+    title: 'Local skills library',
+    eyebrow: 'Reusable expertise',
+    description: 'Review the installed skill catalog and open individual skills when you want to inspect or refine the packaged guidance.',
+    icon: 'session',
+  },
+  extensions: {
+    navLabel: 'Extensions',
+    title: 'Integration studio',
+    eyebrow: 'Plugins + adapters',
+    description: 'Track starter integrations, installed items, and rollback archives without scattering extension management across other panels.',
+    icon: 'pull-request',
+  },
+  tools: {
+    navLabel: 'Tools',
+    title: 'Tool catalog',
+    eyebrow: 'Capabilities + safety',
+    description: 'See which tools are exposed to the engine and how each one is classified before you widen or tighten the operational surface.',
+    icon: 'git',
+  },
+  automations: {
+    navLabel: 'Automations',
+    title: 'Automation queue',
+    eyebrow: 'Jobs + schedules',
+    description: 'Keep recurring jobs and autopilot-style actions grouped here so scheduled work does not clutter the interactive workflow.',
+    icon: 'plus',
+  },
+  labs: {
+    navLabel: 'Labs',
+    title: 'Lab management',
+    eyebrow: 'Scratch spaces',
+    description: 'Create disposable labs, broken proof targets, and mirrors from the same surface you use to manage the rest of the system.',
+    icon: 'spaces',
+  },
+  learning: {
+    navLabel: 'Learning',
+    title: 'Learning loop',
+    eyebrow: 'Journal + carry-forward',
+    description: 'Capture approved lessons, inspect the current learning state, and export the journal without leaving the unified settings surface.',
+    icon: 'issue',
+  },
+  storage: {
+    navLabel: 'Diagnostics',
+    title: 'Storage and diagnostics roots',
+    eyebrow: 'Paths + persistence',
+    description: 'Keep the durable storage locations explicit so runs, labs, journals, and rollback artifacts never drift to the wrong place.',
+    icon: 'repo',
+  },
 };
 
 type AppState = {
@@ -555,7 +648,7 @@ function buildComposerSuggestions(input: {
   if (suggestions.length === 0) {
     pushUniqueSuggestion(suggestions, 'Plan the next safe coding task.');
     pushUniqueSuggestion(suggestions, 'Review the current repo and tell me what needs fixing first.');
-    pushUniqueSuggestion(suggestions, 'Set up the coding model and verify the engine is ready.');
+    pushUniqueSuggestion(suggestions, AI_ROUTE_COPY.modelSetupPrompt);
   }
 
   return suggestions.slice(0, 3);
@@ -799,17 +892,7 @@ function isLocalProvider(value: any) {
   return provider === 'ollama' || provider === 'local';
 }
 
-function modelProgramStatusLabel(value: string) {
-  if (value === 'verified') {
-    return 'Verified';
-  }
-  if (value === 'next') {
-    return 'Next';
-  }
-  return 'Locked';
-}
-
-function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
+function buildLocalModelProgramView(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
   const settings = snapshot?.settings || {};
   const localModels = readAiModelOptions(aiStatus, tuning, settings)
     .filter((option) => option.ready && isLocalProvider(option.provider));
@@ -837,136 +920,21 @@ function buildLocalModelProgram(snapshot: JsonMap | null, aiStatus: JsonMap | nu
   const remoteFallbackReady = Boolean(String(settings.aiRemoteModel || aiStatus?.current?.remoteModel || '').trim());
   const activeLaneOverrideCount = Object.keys(laneOverrides).length;
   const localRuntimeReady = ['ollama', 'local', 'hybrid'].includes(currentRuntime) || ['ollama', 'local', 'hybrid'].includes(currentProvider);
-
-  const foundationStatus = localModels.length >= 2
-    ? 'verified'
-    : localModels.length === 1 && localRuntimeReady
-      ? 'next'
-      : 'locked';
-  const routingStatus = localRuntimeReady && localModels.length > 0
-    ? ((activeLaneOverrideCount > 0 || routePolicy.includes('local') || routePolicy.includes('hybrid')) ? 'verified' : 'next')
-    : 'locked';
-  const codingStatus = String(localCodingProof?.status || '').trim().toLowerCase() || (acceptanceStatus === 'pass'
-    ? 'verified'
-    : acceptanceStatus === 'warn' || benchmarkSummary.length > 0
-      ? 'next'
-      : 'locked');
-  const promotionStatus = promotedCandidates.length > 0
-    ? 'verified'
-    : (Number(modelFoundry.candidateCount || 0) > 0 || candidates.length > 0 ? 'next' : 'locked');
-  const selfImproveStatus = promotedCandidates.length > 0 && acceptanceStatus === 'pass'
-    ? 'verified'
-    : (acceptanceStatus === 'pass' || promotedCandidates.length > 0 ? 'next' : 'locked');
-
-  const layers = [
-    {
-      id: 'foundation',
-      label: 'Layer 0: Foundation',
-      status: foundationStatus,
-      summary: foundationStatus === 'verified'
-        ? `${localModels.length} ready local coding models are installed and the local runtime is usable.`
-        : foundationStatus === 'next'
-          ? 'The local runtime is usable, but the second ready coding-grade local model still needs to be locked in.'
-          : 'Install and register local coding models before treating the engine as local-first.',
-      unlockRule: 'Need 2 ready local coding models plus a working local runtime.',
-    },
-    {
-      id: 'routing',
-      label: 'Layer 1: Local coding parity',
-      status: routingStatus,
-      summary: routingStatus === 'verified'
-        ? `Local-first routing is configured${activeLaneOverrideCount > 0 ? ` with ${activeLaneOverrideCount} explicit lane override${activeLaneOverrideCount === 1 ? '' : 's'}` : ''}.`
-        : routingStatus === 'next'
-          ? 'Local runtime is available, but planner/coder/validator still need a locked local-first route policy.'
-          : 'Routing is not yet stable enough to treat local models as the default coding path.',
-      unlockRule: 'Planner, coder, and validator must route local-first before widening capability.',
-    },
-    {
-      id: 'coding',
-      label: 'Layer 2: Verified coding block',
-      status: codingStatus,
-      summary: String(localCodingProof?.summary || '').trim() || (codingStatus === 'verified'
-        ? `Acceptance is green and ${benchmarkLeaderIsLocal ? 'the current benchmark leader is local-first' : 'benchmark evidence exists'} for the coding block.`
-        : codingStatus === 'next'
-          ? 'Benchmark or partial acceptance evidence exists, but the local-first coding block is not fully proven yet.'
-          : 'The local-first coding block still needs benchmark and acceptance proof before autonomy expands.'),
-      unlockRule: 'Need benchmark plus acceptance proof for local-first planner/coder/validator lanes.',
-    },
-    {
-      id: 'promotion',
-      label: 'Layer 3: Foundry and promotion',
-      status: promotionStatus,
-      summary: promotionStatus === 'verified'
-        ? `${promotedCandidates.length} promoted local candidate${promotedCandidates.length === 1 ? '' : 's'} already proved the promotion path.`
-        : promotionStatus === 'next'
-          ? 'Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path.'
-          : 'No verified candidate promotion path exists yet for local model bundles.',
-      unlockRule: 'Only benchmark-backed local candidates should become promoted defaults.',
-    },
-    {
-      id: 'self-improve',
-      label: 'Layer 4: Self-improvement',
-      status: selfImproveStatus,
-      summary: selfImproveStatus === 'verified'
-        ? 'Trusted self-improvement can stay gated behind approved runs while the local baseline remains green.'
-        : selfImproveStatus === 'next'
-          ? 'The repo is close to trusted self-improvement, but promotion or acceptance proof is still incomplete.'
-          : 'Keep self-improvement bounded until the lower local-first blocks are verified.',
-      unlockRule: 'Approved-run exports only, and only after local-first acceptance stays green.',
-    },
-  ];
-
-  const unlocks = [
-    {
-      id: 'chat',
-      label: 'Unlock local-first daily coding',
-      status: foundationStatus === 'verified' && routingStatus === 'verified' ? 'verified' : foundationStatus === 'next' || routingStatus === 'next' ? 'next' : 'locked',
-      summary: 'Daily planning and coding can default local-first once foundation and routing are verified.',
-    },
-    {
-      id: 'repair',
-      label: 'Unlock local repair and edit loop',
-      status: codingStatus === 'verified' ? 'verified' : codingStatus === 'next' ? 'next' : 'locked',
-      summary: 'Repair, edit, and rerun loops should widen only after benchmark plus acceptance proof is visible.',
-    },
-    {
-      id: 'promotion',
-      label: 'Unlock model promotion',
-      status: promotionStatus,
-      summary: 'Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe.',
-    },
-    {
-      id: 'self-improve',
-      label: 'Unlock trusted self-improvement',
-      status: selfImproveStatus,
-      summary: 'Training exports and self-improvement stay gated behind approved runs and a stable local baseline.',
-    },
-    {
-      id: 'remote-min',
-      label: 'Unlock remote-minimized operation',
-      status: selfImproveStatus === 'verified' && benchmarkLeaderIsLocal && !safeMode.active
-        ? 'verified'
-        : ((routingStatus === 'verified' || codingStatus === 'verified') && remoteFallbackReady ? 'next' : 'locked'),
-      summary: remoteFallbackReady
-        ? 'Remote models can stay as explicit compare or overflow helpers instead of the daily default.'
-        : 'Configure remote fallback only as backup, not as the primary coding path.',
-    },
-  ];
-
-  const nextLayer = layers.find((layer) => layer.status !== 'verified') || layers[layers.length - 1];
-  const verifiedCount = layers.filter((layer) => layer.status === 'verified').length;
-
-  return {
-    verifiedCount,
+  return buildLocalModelProgram({
     localModelCount: localModels.length,
+    localRuntimeReady,
+    routePolicy,
+    activeRouteOverrideCount: activeLaneOverrideCount,
+    localCodingProofSummary: String(localCodingProof?.summary || '').trim(),
+    acceptanceStatus,
+    benchmarkSummaryCount: benchmarkSummary.length,
     benchmarkLeaderIsLocal,
-    nextLayer,
-    summary: nextLayer.status === 'verified'
-      ? 'All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison.'
-      : `Next focus: ${nextLayer.label}. ${nextLayer.summary}`,
-    layers,
-    unlocks,
-  };
+    promotedCandidateCount: promotedCandidates.length,
+    candidateCount: candidates.length,
+    modelFoundryCandidateCount: Number(modelFoundry.candidateCount || 0),
+    remoteFallbackReady,
+    safeModeActive: safeMode.active === true,
+  });
 }
 
 function App() {
@@ -2202,7 +2170,7 @@ function App() {
             quickPrompts={[
               'Plan the next safe coding task in this repo.',
               'Review the current repo and tell me what needs fixing first.',
-              'Set up the coding model and verify the engine is ready.',
+              AI_ROUTE_COPY.modelSetupPrompt,
             ]}
             onUpdateSetting={onUpdateSetting}
             onQuickChat={onQuickChat}
@@ -2342,7 +2310,7 @@ function WorkbenchPanel(props: {
   const promptCards = [
     `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'this repo'}.`,
     'Review the current repo and tell me what needs fixing first.',
-    'Set up the coding model and verify the engine is ready.',
+    AI_ROUTE_COPY.modelSetupPrompt,
   ];
   const launcherActions = [
     { label: 'Agent', icon: 'agents' as UiIconName, onClick: () => void props.onUpdateSetting('chatMode', 'agent') },
@@ -2739,7 +2707,7 @@ function EnginePanel(props: {
       <div className="panel-header">
         <div>
           <div className="eyebrow">Models + execution engine</div>
-          <h2>Chat is routed through the current coding model</h2>
+          <h2>{AI_ROUTE_COPY.enginePanelTitle}</h2>
           <p>{props.snapshot?.settings?.model || 'Local model'} • {props.snapshot?.settings?.runtime || 'runtime'} • {props.tuning?.telemetry?.ollama?.running ? 'Ollama ready' : 'Ollama idle'}</p>
         </div>
         <div className="row-actions">
@@ -2991,6 +2959,9 @@ function SettingsPanel(props: {
   const groupedAutomations = settings.automations || {};
   const updates = props.snapshot?.updates && typeof props.snapshot.updates === 'object' ? props.snapshot.updates : {};
   const binaryUpdates = updates.binary && typeof updates.binary === 'object' ? updates.binary : {};
+  const updateRecovery = updates.workspace?.recovery && typeof updates.workspace.recovery === 'object'
+    ? updates.workspace.recovery
+    : (updates.recovery && typeof updates.recovery === 'object' ? updates.recovery : {});
   const resourcePolicy = props.aiStatus?.resourcePolicy || {};
   const aiTelemetry = props.aiStatus?.telemetry || {};
   const aiProfiles = Array.isArray(props.aiStatus?.profiles) ? props.aiStatus.profiles : [];
@@ -3010,6 +2981,7 @@ function SettingsPanel(props: {
   const installedIntegrations = Array.isArray(integrations?.installed) ? integrations.installed : [];
   const appRollbacks = props.snapshot?.appRollbacks || {};
   const archivedAppBackups = Array.isArray(appRollbacks?.backups) ? appRollbacks.backups : [];
+  const appRollbackSummary = String(appRollbacks?.summary || '').trim();
   const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
   const activeLaneOverrideCount = Object.keys(aiLaneOverrides).length;
   const aiManualMode = settings.aiManualMode === true || props.aiStatus?.current?.manualMode === true;
@@ -3120,6 +3092,104 @@ function SettingsPanel(props: {
   const binaryConfigured = binaryUpdates.configured === true || binaryFeedUrl.length > 0 || binaryDownloaded;
   const binaryInstallLabel = String(binaryUpdates.localArtifactPath || '').trim() ? 'Open staged installer' : 'Install update';
   const autoInstallEnabled = settings.autoUpdateEnabled === true && settings.autoUpdateAutoApply === true;
+  const activeTabMeta = SETTINGS_TAB_META[props.activeTab];
+  const labsList = Array.isArray(props.labs?.labs) ? props.labs.labs : [];
+  const learningEntries = Array.isArray(props.learningChanges?.entries) ? props.learningChanges.entries : [];
+  const styleProfileSummary = String(props.learningStatus?.styleProfile?.summary || '').trim();
+  const safeToolCount = props.tools.filter((tool: JsonMap) => String(tool?.safetyLevel || 'safe') === 'safe').length;
+  const settingsHeroStats = [
+    {
+      label: 'Target workspace',
+      value: shortPath(groupedWorkspace.currentTargetRoot) || 'No target selected',
+      detail: groupedWorkspace.selectedLabRoot ? `Lab active: ${shortPath(groupedWorkspace.selectedLabRoot)}` : 'Real workspace is active.',
+    },
+    {
+      label: 'Routing profile',
+      value: String(props.aiStatus?.profileId || settings.aiProfile || 'hybrid-default'),
+      detail: `${currentProvider} runtime${aiManualMode ? ' • custom mode' : ' • selector mode'}`,
+    },
+    {
+      label: 'Safety level',
+      value: String(activeSafetyLevel?.label || selectedSafetyLevel),
+      detail: `${String(groupedAutonomy.profileId || 'supervised-auto')} autonomy profile`,
+    },
+    {
+      label: 'Learning state',
+      value: styleProfileSummary ? 'Profile active' : 'Warming up',
+      detail: `${Number(props.learningStatus?.reusablePrompts?.length || 0)} reusable prompt${Number(props.learningStatus?.reusablePrompts?.length || 0) === 1 ? '' : 's'}`,
+    },
+  ];
+  const activeTabHighlights = (() => {
+    switch (props.activeTab) {
+      case 'general':
+        return [
+          { label: 'Chat mode', value: String(settings.chatMode || 'auto') },
+          { label: 'Theme', value: String(['codex', 'obsidian'].includes(settings.theme || '') ? settings.theme : 'codex') },
+          { label: 'Updates', value: binaryDownloaded ? 'Ready to install' : (binaryUpdateState || 'idle') },
+        ];
+      case 'workspace':
+        return [
+          { label: 'Current target', value: shortPath(groupedWorkspace.currentTargetRoot) || 'None' },
+          { label: 'VS Code', value: vscodeSetup?.ok ? 'Connected' : 'Needs setup' },
+          { label: 'Runs', value: String(props.taskRuns.length) },
+        ];
+      case 'ai':
+        return [
+          { label: 'Provider', value: currentProvider },
+          { label: 'Ready models', value: String(readyModelCount) },
+          { label: 'Overrides', value: String(activeLaneOverrideCount) },
+        ];
+      case 'autonomy':
+        return [
+          { label: 'Safety', value: String(activeSafetyLevel?.label || selectedSafetyLevel) },
+          { label: 'Mode', value: String(groupedAutonomy.profileId || 'supervised-auto') },
+          { label: 'Retries', value: String(groupedAutonomy.maxRetryRounds || 2) },
+        ];
+      case 'skills':
+        return [
+          { label: 'Installed skills', value: String(props.skills.length) },
+          { label: 'Guidance', value: styleProfileSummary ? 'Learning active' : 'No style profile yet' },
+          { label: 'Prompts', value: String(Number(props.learningStatus?.reusablePrompts?.length || 0)) },
+        ];
+      case 'extensions':
+        return [
+          { label: 'Starter items', value: String(integrationLibrary.length) },
+          { label: 'Installed', value: String(installedIntegrations.length) },
+          { label: 'Rollbacks', value: String(archivedAppBackups.length) },
+        ];
+      case 'tools':
+        return [
+          { label: 'Catalog size', value: String(props.tools.length) },
+          { label: 'Safe tools', value: String(safeToolCount) },
+          { label: 'Needs review', value: String(Math.max(props.tools.length - safeToolCount, 0)) },
+        ];
+      case 'automations':
+        return [
+          { label: 'Jobs', value: String(props.automations.length) },
+          { label: 'Action', value: String(groupedAutomations.action || 'implement') },
+          { label: 'Self improve', value: groupedAutomations.selfImprove ? 'Enabled' : 'Off' },
+        ];
+      case 'labs':
+        return [
+          { label: 'Known labs', value: String(labsList.length) },
+          { label: 'Active target', value: shortPath(groupedWorkspace.selectedLabRoot) || 'Workspace' },
+          { label: 'Benchmarks', value: String(Array.isArray(props.benchmarks?.runs) ? props.benchmarks.runs.length : 0) },
+        ];
+      case 'learning':
+        return [
+          { label: 'Style profile', value: styleProfileSummary ? 'Active' : 'Pending' },
+          { label: 'Journal entries', value: String(learningEntries.length) },
+          { label: 'Prompts', value: String(Number(props.learningStatus?.reusablePrompts?.length || 0)) },
+        ];
+      case 'storage':
+      default:
+        return [
+          { label: 'Runs root', value: shortPath(groupedStorage.runsDir) || 'Unset' },
+          { label: 'Labs root', value: shortPath(groupedStorage.labsRoot) || 'Unset' },
+          { label: 'Benchmarks', value: shortPath(groupedStorage.benchmarkRoot) || 'Unset' },
+        ];
+    }
+  })();
 
   const refreshKeyPanelPresence = useEffectEvent(async () => {
     const entries = keyPanelEntries.filter((entry: JsonMap) => String(entry?.secretName || '').trim());
@@ -3213,30 +3283,82 @@ function SettingsPanel(props: {
 
   return (
     <section className="module-panel settings-panel-v2" data-panel="settings">
-      <div className="panel-header">
-        <div>
-          <div className="eyebrow">Unified settings center</div>
-          <h2>Keep chat clean and move the system controls here</h2>
-          <p>AI, autonomy, workspace targeting, tools, labs, learning, and diagnostics all live behind one modular settings surface.</p>
-        </div>
-        <div className="row-actions">
-          <button className="ghost" onClick={props.onRefresh}>Refresh</button>
-          <button className="primary" onClick={props.onPickWorkspace}>Pick workspace</button>
-        </div>
-      </div>
+      <div className="settings-shell">
+        <section className="settings-hero">
+          <div className="settings-hero-main">
+            <div>
+              <div className="eyebrow">Unified settings center</div>
+              <h2>Keep chat clean and move the system controls here</h2>
+              <p>AI, autonomy, workspace targeting, tools, labs, learning, and diagnostics all live behind one modular settings surface.</p>
+            </div>
+            <div className="row-actions settings-hero-actions">
+              <button className="ghost" onClick={props.onRefresh}>Refresh</button>
+              <button className="primary" onClick={props.onPickWorkspace}>Pick workspace</button>
+            </div>
+          </div>
+          <div className="settings-hero-grid">
+            {settingsHeroStats.map((item) => (
+              <article key={item.label} className="settings-hero-card">
+                <div className="eyebrow">{item.label}</div>
+                <strong>{item.value}</strong>
+                <p>{item.detail}</p>
+              </article>
+            ))}
+          </div>
+        </section>
 
-      <div className="settings-tabs" data-settings-tabs="true">
-        {SETTINGS_TABS.map((tab) => (
-          <button
-            key={tab}
-            className={props.activeTab === tab ? 'active' : ''}
-            data-settings-tab={tab}
-            onClick={() => props.onSetActiveTab(tab)}
-          >
-            {tab === 'ai' ? 'AI' : tab === 'labs' ? 'Labs' : tab === 'tools' ? 'Tools' : tab === 'extensions' ? 'Extensions' : tab === 'storage' ? 'Storage & Diagnostics' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
-      </div>
+        <div className="settings-layout">
+          <aside className="settings-sidebar" aria-label="Settings sections">
+            {SETTINGS_NAV_GROUPS.map((group) => (
+              <section key={group.id} className="settings-nav-group">
+                <div className="settings-nav-group-label">{group.label}</div>
+                <div className="settings-nav-list">
+                  {group.tabs.map((tab) => {
+                    const meta = SETTINGS_TAB_META[tab];
+                    return (
+                      <button
+                        key={tab}
+                        className={`settings-nav-button${props.activeTab === tab ? ' active' : ''}`}
+                        data-settings-tab={tab}
+                        aria-pressed={props.activeTab === tab}
+                        onClick={() => props.onSetActiveTab(tab)}
+                      >
+                        <UiIcon name={meta.icon} className="settings-nav-icon" />
+                        <div className="settings-nav-copy">
+                          <strong>{meta.navLabel}</strong>
+                          <span>{meta.eyebrow}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </aside>
+
+          <div className="settings-main">
+            <section className="settings-focus-card">
+              <div className="settings-focus-copy">
+                <div className="settings-focus-heading">
+                  <div className="settings-focus-icon-wrap">
+                    <UiIcon name={activeTabMeta.icon} className="settings-focus-icon" />
+                  </div>
+                  <div>
+                    <div className="eyebrow">{activeTabMeta.eyebrow}</div>
+                    <h3>{activeTabMeta.title}</h3>
+                    <p>{activeTabMeta.description}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="settings-highlight-grid">
+                {activeTabHighlights.map((item) => (
+                  <article key={item.label} className="settings-highlight-card">
+                    <div className="eyebrow">{item.label}</div>
+                    <strong>{item.value}</strong>
+                  </article>
+                ))}
+              </div>
+            </section>
 
       {props.activeTab === 'general' ? (
         <section className="settings-section">
@@ -3394,6 +3516,11 @@ function SettingsPanel(props: {
                 <div className="eyebrow">Download state</div>
                 <strong>{binaryDownloaded ? 'Ready to install' : (binaryUpdateState === 'downloading' ? `${binaryProgressPercent}%` : 'Waiting')}</strong>
                 <p>{String(binaryUpdates.localArtifactPath || '').trim() ? 'A staged local installer is ready.' : 'Feed-downloaded releases can install directly from the app once they are ready.'}</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Rollback readiness</div>
+                <strong>{updateRecovery.rollbackReady ? (shortPath(String(updateRecovery.latestBackupId || '')) || 'Ready') : 'Not staged'}</strong>
+                <p>{String(updateRecovery.summary || 'No workspace update rollback snapshot is recorded yet.')}</p>
               </article>
             </div>
             <div className="row-actions">
@@ -3581,9 +3708,9 @@ function SettingsPanel(props: {
               <p>{benchmarkLeader ? `${benchmarkLeader.passRate || 0}% pass • ${benchmarkLeader.averageLatencyMs || 0}ms avg latency` : 'Run a benchmark to seed smarter lane routing.'}</p>
             </article>
             <article className="metric-card">
-              <div className="eyebrow">Lane overrides</div>
+              <div className="eyebrow">{AI_ROUTE_COPY.overrideMetricLabel}</div>
               <strong>{activeLaneOverrideCount}</strong>
-              <p>{activeLaneOverrideCount > 0 ? 'Manual lane overrides are active.' : 'All lanes currently inherit the profile and routing policy.'}</p>
+              <p>{activeLaneOverrideCount > 0 ? AI_ROUTE_COPY.overrideMetricActiveSummary : AI_ROUTE_COPY.overrideMetricIdleSummary}</p>
             </article>
             <article className="metric-card">
               <div className="eyebrow">Selector catalog</div>
@@ -3653,7 +3780,7 @@ function SettingsPanel(props: {
               </select>
             </label>
             <label>
-              <span>Routing policy</span>
+              <span>Route plan</span>
               <select data-setting="ai-routing-policy" value={settings.aiRoutingPolicy || settings.aiProfile || 'hybrid-default'} onChange={(event) => void props.onUpdateSetting('aiRoutingPolicy', event.target.value)}>
                 {(aiRoutingPolicies.length ? aiRoutingPolicies : ['local-fast', 'balanced-local', 'hybrid-default', 'best-available', 'custom']).map((policy: JsonMap | string) => {
                   const policyId = typeof policy === 'string' ? policy : String(policy.id || '');
@@ -3761,7 +3888,7 @@ function SettingsPanel(props: {
                 Seed next candidate
               </button>
             ) : null}
-            {activeLaneOverrideCount > 0 ? <button className="ghost" onClick={() => void props.onUpdateSetting('aiLaneOverrides', {})}>Reset lane overrides</button> : null}
+            {activeLaneOverrideCount > 0 ? <button className="ghost" onClick={() => void props.onUpdateSetting('aiLaneOverrides', {})}>{AI_ROUTE_COPY.resetOverridesLabel}</button> : null}
           </div>
           <div className="card-grid">
             <article className="metric-card">
@@ -4007,24 +4134,24 @@ function SettingsPanel(props: {
           <section className="queue-card">
             <div className="panel-header">
               <div>
-                <div className="eyebrow">Capability lanes</div>
-                <h2>Tune each lane without hand-editing routing rules</h2>
-                <p>Leave a lane on inherit to follow the active profile, or pin it to the benchmark leader or a specific model.</p>
+                <div className="eyebrow">{AI_ROUTE_COPY.capabilityRoutesEyebrow}</div>
+                <h2>{AI_ROUTE_COPY.capabilityRoutesTitle}</h2>
+                <p>{AI_ROUTE_COPY.capabilityRoutesSummary}</p>
               </div>
             </div>
             <div className="card-grid lane-grid">
               {capabilityLanes.map((lane: JsonMap) => (
                 <article key={String(lane.id)} className="metric-card lane-card">
-                  <div className="eyebrow">Lane</div>
+                  <div className="eyebrow">{AI_ROUTE_COPY.routeCardEyebrow}</div>
                   <strong>{lane.label || lane.id}</strong>
                   <p>{lane.summary}</p>
                   <div className="lane-summary">
                     <span>{lane.provider || 'provider'} • {lane.preferredModel || 'model pending'}</span>
-                    <span>{lane.sourceLabel || (lane.source === 'override' ? 'Manual override' : 'Inherited route')}</span>
+                    <span>{lane.sourceLabel || (lane.source === 'override' ? AI_ROUTE_COPY.routeSourceOverride : AI_ROUTE_COPY.routeSourceInherited)}</span>
                     <span>Default: {lane.defaultProvider || 'provider'} • {lane.defaultModel || 'model pending'}</span>
                   </div>
                   <label className="lane-select-row">
-                    <span>Route this lane</span>
+                    <span>{AI_ROUTE_COPY.routeSelectLabel}</span>
                     <select
                       data-lane-select={String(lane.id)}
                       value={encodeLaneOverrideValue((lane.override as JsonMap) || aiLaneOverrides[String(lane.id)] || null)}
@@ -4056,7 +4183,7 @@ function SettingsPanel(props: {
                         delete nextOverrides[String(lane.id)];
                         void props.onUpdateSetting('aiLaneOverrides', nextOverrides);
                       }}>
-                        Reset lane
+                        {AI_ROUTE_COPY.routeResetLabel}
                       </button>
                     </div>
                   ) : null}
@@ -4165,7 +4292,7 @@ function SettingsPanel(props: {
             <article className="metric-card">
               <div className="eyebrow">Rollback archive</div>
               <strong>{archivedAppBackups.length} archived app backup{archivedAppBackups.length === 1 ? '' : 's'}</strong>
-              <p>{String(props.snapshot?.settings?.storage?.appRollbackRoot || appRollbacks.root || 'Desktop app rollbacks will be archived outside /Applications so the live install stays clean.')}</p>
+              <p>{appRollbackSummary || String(props.snapshot?.settings?.storage?.appRollbackRoot || appRollbacks.root || 'Desktop app rollbacks will be archived outside /Applications so the live install stays clean.')}</p>
             </article>
           </div>
 
@@ -4309,6 +4436,9 @@ function SettingsPanel(props: {
           </div>
         </section>
       ) : null}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -4366,6 +4496,9 @@ function MonitorPanel(props: {
   const promotionGate = promotions.promotionGate && typeof promotions.promotionGate === 'object'
     ? promotions.promotionGate
     : {};
+  const promotionRecoverySummary = backups[0]?.id
+    ? `Rollback backup ${String(backups[0].id || '')} is ready if the current promotion needs to unwind.`
+    : 'No promotion backup is recorded yet.';
   const selectedLabRoot = String(props.snapshot?.selectedLabRoot || '').trim();
   const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
   const modelProvisioning = props.aiStatus?.provisioning && typeof props.aiStatus.provisioning === 'object'
@@ -4388,7 +4521,7 @@ function MonitorPanel(props: {
   const operatorSupervision = props.learningStatus?.operatorSupervision && typeof props.learningStatus.operatorSupervision === 'object'
     ? props.learningStatus.operatorSupervision
     : {};
-  const localModelProgram = buildLocalModelProgram(props.snapshot, props.aiStatus, props.tuning);
+  const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
   const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
   const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
   const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === 'object'
@@ -4612,7 +4745,7 @@ function MonitorPanel(props: {
             </section>
           ) : null}
           <section className="queue-card">
-            <div className="eyebrow">Local model MVP ladder</div>
+            <div className="eyebrow">{AI_ROUTE_COPY.ladderEyebrow}</div>
             <div className="run-item">
               <strong>{`${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified`}</strong>
               <span>{localModelProgram.summary}</span>
@@ -4620,17 +4753,17 @@ function MonitorPanel(props: {
             {localModelProgram.layers.map((layer: { id: string; label: string; status: string; summary: string; unlockRule: string }) => (
               <div key={layer.id} className="run-item">
                 <strong>{layer.label}</strong>
-                <span>{`${modelProgramStatusLabel(layer.status)} • ${layer.summary}`}</span>
+                <span>{`${localModelProgramStatusLabel(layer.status)} • ${layer.summary}`}</span>
                 <div className="chip-row">
-                  <span className="chip">{modelProgramStatusLabel(layer.status)}</span>
+                  <span className="chip">{localModelProgramStatusLabel(layer.status)}</span>
                   <span className="chip">{layer.unlockRule}</span>
                 </div>
               </div>
             ))}
-            <p className="empty-copy">This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof.</p>
+            <p className="empty-copy">{AI_ROUTE_COPY.ladderSummary}</p>
           </section>
           <section className="queue-card">
-            <div className="eyebrow">Capability unlock ladder</div>
+            <div className="eyebrow">{AI_ROUTE_COPY.unlockEyebrow}</div>
             <div className="run-item">
               <strong>{localModelProgram.nextLayer.label}</strong>
               <span>{localModelProgram.nextLayer.unlockRule}</span>
@@ -4638,10 +4771,10 @@ function MonitorPanel(props: {
             {localModelProgram.unlocks.map((unlock: { id: string; label: string; status: string; summary: string }) => (
               <div key={unlock.id} className="run-item">
                 <strong>{unlock.label}</strong>
-                <span>{`${modelProgramStatusLabel(unlock.status)} • ${unlock.summary}`}</span>
+                <span>{`${localModelProgramStatusLabel(unlock.status)} • ${unlock.summary}`}</span>
               </div>
             ))}
-            <p className="empty-copy">Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block.</p>
+            <p className="empty-copy">{AI_ROUTE_COPY.unlockSummary}</p>
           </section>
           <section className="queue-card">
             <div className="eyebrow">Hard safe-mode controller</div>
@@ -4662,6 +4795,10 @@ function MonitorPanel(props: {
             <div className="run-item">
               <strong>{String(promotionGate.status || 'blocked').toUpperCase()}</strong>
               <span>{String(promotionGate.summary || 'Create a verified candidate and run acceptance before promoting live.')}</span>
+            </div>
+            <div className="run-item">
+              <strong>Recovery state</strong>
+              <span>{promotionRecoverySummary}</span>
             </div>
             {String(promotionGate.acceptanceSummary || '').trim() ? (
               <div className="run-item">
@@ -5031,7 +5168,7 @@ function MonitorPanel(props: {
             <article className="metric-card">
               <div className="eyebrow">Backups</div>
               <strong>{backups.length}</strong>
-              <p>{backups[0]?.id ? `Last known good ${shortPath(backups[0].id)}` : 'No promotion backups yet.'}</p>
+              <p>{promotionRecoverySummary}</p>
             </article>
             <article className="metric-card">
               <div className="eyebrow">Gate</div>

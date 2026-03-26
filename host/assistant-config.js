@@ -40,6 +40,8 @@ const ASSISTANT_MODEL_PROFILE_KEY_MAP = {
   engineProviderSource: 'assistant_engine_model_provider_source',
   plannerProvider: 'assistant_task_mode_planner_provider',
   plannerModel: 'assistant_task_mode_planner_model',
+  repairProvider: 'assistant_task_mode_repair_provider',
+  repairModel: 'assistant_task_mode_repair_model',
   coderProvider: 'assistant_task_mode_coder_provider',
   coderModel: 'assistant_task_mode_coder_model',
   validatorProvider: 'assistant_task_mode_validator_provider',
@@ -130,6 +132,7 @@ function readAssistantConfig(workspaceRoot, options = {}) {
     engineProviderSource: '',
     taskModeRoutes: {
       planner: { provider: '', model: '' },
+      repair: { provider: '', model: '' },
       coder: { provider: '', model: '' },
       validator: { provider: '', model: '' },
       summarizer: { provider: '', model: '' },
@@ -254,6 +257,10 @@ function readAssistantConfig(workspaceRoot, options = {}) {
           config.taskModeRoutes.planner.provider = String(value || '').trim().toLowerCase();
         } else if (key === 'assistant_task_mode_planner_model') {
           config.taskModeRoutes.planner.model = String(value || '').trim();
+        } else if (key === 'assistant_task_mode_repair_provider') {
+          config.taskModeRoutes.repair.provider = String(value || '').trim().toLowerCase();
+        } else if (key === 'assistant_task_mode_repair_model') {
+          config.taskModeRoutes.repair.model = String(value || '').trim();
         } else if (key === 'assistant_task_mode_coder_provider') {
           config.taskModeRoutes.coder.provider = String(value || '').trim().toLowerCase();
         } else if (key === 'assistant_task_mode_coder_model') {

@@ -1,7 +1,9 @@
 'use strict';
 
+const childProcess = require('child_process');
 const path = require('path');
 
+const { RUNTIME_ROOT } = require('../core/app-roots');
 const { getGitDiff, getGitStatus, getGitSummary, stagePaths, unstagePaths, stageAll, unstageAll, discardPaths, commitStaged, pullTrackedBranch, pushTrackedBranch, publishBranch, listBranches, createBranch, switchBranch } = require('../core/git-service');
 const {
   buildHumanPromptInstruction,
@@ -35,7 +37,7 @@ const {
   WORKER_FAMILY_OPTIONS,
 } = require('../core/training-tuning');
 const { readAssistantConfig } = require('../host/assistant-config');
-const { AgentRuntimeClient } = require('../shared-runtime/agent-runtime-client');
+const { AgentRuntimeClient, resolvePythonCommand } = require('../shared-runtime/agent-runtime-client');
 const { SharedAgentRuntime, buildOperatorExecutionSnapshot } = require('../shared-runtime/runtime');
 
 function clipText(value, maxLength = 220) {
@@ -52,6 +54,7 @@ function parseCliArgs(argv = []) {
     command: String(args.shift() || 'status').trim().toLowerCase() || 'status',
     workspaceRoot: path.resolve(process.cwd()),
     labRoot: '',
+    validationCommands: [],
     yes: false,
     message: '',
     area: '',
@@ -78,6 +81,13 @@ function parseCliArgs(argv = []) {
     }
     if (token === '--lab') {
       parsed.labRoot = path.resolve(String(args.shift() || '').trim());
+      continue;
+    }
+    if (token === '--validation-command' || token === '--validation') {
+      const validationCommand = String(args.shift() || '').trim();
+      if (validationCommand) {
+        parsed.validationCommands.push(validationCommand);
+      }
       continue;
     }
     if (token === '--yes' || token === '-y') {
@@ -145,7 +155,7 @@ function buildSyntheticTicketId(seed = '') {
   return `9${digits}`;
 }
 
-function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '' } = {}) {
+function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '', validationCommands = [] } = {}) {
   const chatMode = command === 'plan'
     ? 'plan'
     : command === 'edit'
@@ -153,6 +163,9 @@ function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '' } =
       : command === 'agent'
         ? 'agent'
         : 'ask';
+  const normalizedValidationCommands = Array.isArray(validationCommands)
+    ? validationCommands.map((commandText) => String(commandText || '').trim()).filter(Boolean)
+    : [];
   const targetWorkspaceRoot = String(labRoot || workspaceRoot || '').trim() || String(workspaceRoot || '').trim();
   const routing = buildTerminalRoutingSummary({ chatMode, message: prompt });
   const lane = resolveTaskLoopLane(routing.suggestedLaneId);
@@ -196,6 +209,7 @@ function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '' } =
       modelDisplayName: String(modelSelection.active.modelDisplayName || '').trim(),
       baseModel: String(modelSelection.active.baseModel || '').trim(),
       providerSource: String(modelSelection.active.providerSource || modelSelection.active.baseProvider || '').trim(),
+      validationCommands: normalizedValidationCommands,
       metadata: {
         surface: 'terminal-cli',
         chatMode,
@@ -211,6 +225,18 @@ function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '' } =
       },
     },
   };
+}
+
+function buildAuditScriptArgs(workspaceRoot, { json = false } = {}) {
+  const args = [
+    path.join(RUNTIME_ROOT, 'backend', 'scripts', 'engine_daily_report.py'),
+    '--project-root',
+    workspaceRoot,
+  ];
+  if (json) {
+    args.push('--json');
+  }
+  return args;
 }
 
 function buildSnapshotFromResult(request, result = {}, chatMode = 'ask') {
@@ -331,6 +357,7 @@ function renderGitStatus(status = {}) {
 
 function renderModelLifecycleStatus(status = {}) {
   const lifecycle = status.lifecycle && typeof status.lifecycle === 'object' ? status.lifecycle : {};
+  const routeCoverage = lifecycle.routeCoverage && typeof lifecycle.routeCoverage === 'object' ? lifecycle.routeCoverage : {};
   const benchmarkLeader = status.benchmarkLeader && typeof status.benchmarkLeader === 'object' ? status.benchmarkLeader : {};
   const workerFamilies = lifecycle.workerFamilies && typeof lifecycle.workerFamilies === 'object' ? lifecycle.workerFamilies : {};
   const entries = Array.isArray(lifecycle.entries) ? lifecycle.entries : [];
@@ -340,6 +367,9 @@ function renderModelLifecycleStatus(status = {}) {
     `Worker families: primary ${workerFamilies.primary || 'qwen'} | backup ${workerFamilies.backup || 'deepseek-coder'} | reasoning ${workerFamilies.reasoningFallback || 'qwen3'}`,
     `Lifecycle: ${String(lifecycle.summary || 'No local worker lifecycle artifacts discovered yet.').trim()}`,
   ];
+  if (routeCoverage.summary) {
+    lines.push(`Route coverage: ${routeCoverage.summary}`);
+  }
   if (benchmarkLeader?.model) {
     lines.push(`Benchmark leader: ${benchmarkLeader.model}${benchmarkLeader.providerSource ? ` via ${benchmarkLeader.providerSource}` : ''}`);
   }
@@ -348,7 +378,10 @@ function renderModelLifecycleStatus(status = {}) {
   lines.push(`Worker families available: ${WORKER_FAMILY_OPTIONS.map((item) => item.label).join(', ')}`);
   entries.slice(0, 8).forEach((entry) => {
     const variant = [entry.workerFamily, entry.workerVariantType].filter(Boolean).join('/');
-    const readiness = String(entry.promotionReadiness || entry.readiness || entry.tuningState || '').trim();
+    const readiness = [
+      String(entry.installState || '').trim(),
+      String(entry.promotionReadiness || entry.readiness || entry.tuningState || '').trim(),
+    ].filter(Boolean).join(' | ');
     lines.push(`- ${entry.label || entry.wrappedProfileId || entry.workerVariantId || entry.baseModel || 'Local worker'} :: ${variant || 'variant'}${readiness ? ` :: ${readiness}` : ''}`);
   });
   if (entries.length > 8) {
@@ -404,6 +437,15 @@ function extractChatReply(result = {}) {
   return String(result.reply || result.summary || result.message || '').trim();
 }
 
+async function executeTrackedRuntimeRun(runtime, request, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 0);
+  const run = runtime.run(request);
+  if (!run || !run.runId) {
+    throw new Error('Engine run did not start.');
+  }
+  return runtime.waitForRun(run.runId, { timeoutMs });
+}
+
 async function runChatCommand(parsed) {
   const prompt = parsed.trailing.join(' ').trim();
   if (!prompt) {
@@ -412,7 +454,6 @@ async function runChatCommand(parsed) {
   const workspaceRoot = parsed.workspaceRoot;
   const targetWorkspaceRoot = parsed.labRoot || workspaceRoot;
   const runtime = new SharedAgentRuntime({ workspaceRoot });
-  const client = new AgentRuntimeClient({ workspaceRoot });
   const context = await buildSystemCheckContext(workspaceRoot);
   const report = buildSystemCheck({
     workspaceRoot,
@@ -423,6 +464,7 @@ async function runChatCommand(parsed) {
     workspaceRoot,
     labRoot: parsed.labRoot,
     prompt,
+    validationCommands: parsed.validationCommands,
   });
   const modeConfig = getChatModeConfig(built.chatMode);
 
@@ -488,18 +530,17 @@ async function runChatCommand(parsed) {
     };
   }
 
-  const response = await client.invoke('action', {
-    request: built.request,
+  const trackedRun = await executeTrackedRuntimeRun(runtime, {
+    ...built.request,
     workspaceRoot,
     targetWorkspaceRoot,
     workspace: targetWorkspaceRoot,
     projectRoot: targetWorkspaceRoot,
   });
-  const result = response.result || { ok: response.ok };
-  const snapshot = buildSnapshotFromResult(built.request, result, built.chatMode);
+  const snapshot = trackedRun?.operatorExecution || buildOperatorExecutionSnapshot(trackedRun || {}, {});
   console.log(`${modeConfig.label} mode completed.`);
   console.log(renderSnapshot(snapshot));
-  return response.ok && result.ok !== false ? 0 : 1;
+  return trackedRun?.state === 'pass' || trackedRun?.state === 'skipped' ? 0 : 1;
 }
 
 async function runStatusCommand(parsed) {
@@ -533,6 +574,40 @@ async function runDoctorCommand(parsed) {
   return preflight.ready === true && report.areas?.acceptance?.status !== 'fail' ? 0 : 1;
 }
 
+async function runAuditCommand(parsed) {
+  const python = resolvePythonCommand(parsed.workspaceRoot, '', RUNTIME_ROOT);
+  if (!python) {
+    console.error('Python runtime is not available. Install Python or configure the repo virtual environment before running the daily audit.');
+    return 1;
+  }
+  const args = buildAuditScriptArgs(parsed.workspaceRoot, { json: parsed.json === true });
+  try {
+    const output = childProcess.execFileSync(python, args, {
+      cwd: parsed.workspaceRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    const text = String(output || '').trimEnd();
+    if (text) {
+      console.log(text);
+    }
+    return 0;
+  } catch (error) {
+    const stdout = String(error?.stdout || '').trim();
+    const stderr = String(error?.stderr || '').trim();
+    if (stdout) {
+      console.log(stdout);
+    }
+    if (stderr) {
+      console.error(stderr);
+    } else {
+      console.error(String(error?.message || error));
+    }
+    return 1;
+  }
+}
+
 async function runReviewCommand(parsed) {
   const runtime = new SharedAgentRuntime({ workspaceRoot: parsed.workspaceRoot });
   const latest = Array.isArray(runtime.getStatus().latest) ? runtime.getStatus().latest[0] : null;
@@ -552,28 +627,37 @@ async function runRepairCommand(parsed) {
     workspaceRoot: parsed.workspaceRoot,
     labRoot: parsed.labRoot,
     prompt,
+    validationCommands: parsed.validationCommands,
   });
-  built.request.action = 'repair';
   built.request.taskMode = 'repair';
   built.request.laneId = 'repair-fast';
   built.request.laneLabel = 'Repair fast';
   built.request.modelRole = resolveExecutionModelRole({
     taskMode: 'repair',
-    action: 'repair',
+    action: built.request.action,
     laneId: 'repair-fast',
   });
-  const client = new AgentRuntimeClient({ workspaceRoot: parsed.workspaceRoot });
-  const response = await client.invoke('action', {
-    request: built.request,
+  const runtime = new SharedAgentRuntime({ workspaceRoot: parsed.workspaceRoot });
+  const targetWorkspaceRoot = parsed.labRoot || parsed.workspaceRoot;
+  if (targetWorkspaceRoot && targetWorkspaceRoot !== parsed.workspaceRoot) {
+    built.request.approvalGated = false;
+    built.request.approvalProtectedOnly = false;
+    built.request.metadata = {
+      ...(built.request.metadata || {}),
+      executionBoundary: 'clone-lab-confirmed',
+      approvalMode: 'auto-approved-in-clone',
+    };
+  }
+  const trackedRun = await executeTrackedRuntimeRun(runtime, {
+    ...built.request,
     workspaceRoot: parsed.workspaceRoot,
-    targetWorkspaceRoot: parsed.labRoot || parsed.workspaceRoot,
-    workspace: parsed.labRoot || parsed.workspaceRoot,
-    projectRoot: parsed.labRoot || parsed.workspaceRoot,
+    targetWorkspaceRoot,
+    workspace: targetWorkspaceRoot,
+    projectRoot: targetWorkspaceRoot,
   });
-  const result = response.result || { ok: response.ok };
-  const snapshot = buildSnapshotFromResult(built.request, result, 'agent');
+  const snapshot = trackedRun?.operatorExecution || buildOperatorExecutionSnapshot(trackedRun || {}, {});
   console.log(renderSnapshot(snapshot));
-  return response.ok && result.ok !== false ? 0 : 1;
+  return trackedRun?.state === 'pass' || trackedRun?.state === 'skipped' ? 0 : 1;
 }
 
 async function runSelfImproveCommand(parsed) {
@@ -770,6 +854,8 @@ async function dispatch(parsed) {
       return runStatusCommand(parsed);
     case 'review':
       return runReviewCommand(parsed);
+    case 'audit':
+      return runAuditCommand(parsed);
     case 'repair':
       return runRepairCommand(parsed);
     case 'self-improve':
@@ -807,6 +893,7 @@ if (require.main === module) {
 module.exports = {
   buildDirectAskReply,
   buildDirectPlanReply,
+  buildAuditScriptArgs,
   buildGroundedChatPrompt,
   buildLiveStateSummary,
   buildTerminalRequest,

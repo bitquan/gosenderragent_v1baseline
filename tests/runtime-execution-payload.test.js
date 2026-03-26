@@ -40,6 +40,9 @@ test('shared runtime normalizes operator execution snapshots for the task loop',
       changed_files: [
         { path: 'src/app.js', status: 'modified' },
       ],
+      validation_scope: {
+        commands: ['npm run test:ui-shell', 'node --test tests/system-check.test.js'],
+      },
     },
     reviewSummary: { summary: 'Review is still pending.' },
     trustSummary: { trust_state: 'needs_review' },
@@ -107,6 +110,7 @@ test('shared runtime normalizes operator execution snapshots for the task loop',
   assert.equal(payload.retryAvailable, true);
   assert.equal(payload.repairAvailable, true);
   assert.equal(payload.changedFileCount, 1);
+  assert.deepEqual(payload.validationCommands, ['npm run test:ui-shell', 'node --test tests/system-check.test.js']);
   assert.deepEqual(payload.changedFiles, [
     { path: 'src/app.js', status: 'modified' },
   ]);
@@ -253,7 +257,7 @@ test('runtime api exposes one normalized operator execution payload family for p
     '        model_display_name="GSE-1 Engine" if action in ("plan", "run") else "Workspace Coding Model",',
     '        base_model="gpt-5.4" if action in ("plan", "run") else "qwen2.5-coder:14b",',
     '        provider_source="openai" if action in ("plan", "run") else "ollama",',
-    '        runtime_context={"changed_files": [{"path": "src/app.js", "status": "modified"}]},',
+    '        runtime_context={"changed_files": [{"path": "src/app.js", "status": "modified"}], "validation_scope": {"commands": ["npm run test:ui-shell"]}},',
     '        review_summary={"summary": "review summary"},',
     '        trust_summary={"trust_state": "trusted"},',
     '        run_summary={"summary": "run summary"},',
@@ -286,6 +290,7 @@ test('runtime api exposes one normalized operator execution payload family for p
   assert.ok(payloads.every((item) => item.stageSummary && item.stageSummary.currentStage));
   assert.ok(payloads.every((item) => item.outputTail && Object.prototype.hasOwnProperty.call(item.outputTail, 'combined')));
   assert.ok(payloads.every((item) => Array.isArray(item.changedFiles) && item.changedFiles.length === 1));
+  assert.ok(payloads.every((item) => Array.isArray(item.validationCommands) && item.validationCommands[0] === 'npm run test:ui-shell'));
   assert.equal(payloads[0].modelRole, 'engine');
   assert.equal(payloads[1].laneId, 'review-verify');
   assert.equal(payloads[2].modelProfileId, 'gs-dev-1-default');
@@ -391,6 +396,36 @@ test('tool-loop contracts classify invalid step sets and expose checkpoint plus 
   assert.equal(payload.recovery_ladder.next_step, 'bridge-plan-retry');
   assert.equal(payload.interrupt_request.requested_action, 'bridge-plan-retry');
   assert.equal(payload.checkpoint_ref.label, 'tool-loop-checkpoint');
+});
+
+test('tool-loop result summary falls back to the last failed trace summary', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const runtimeRoot = path.join(repoRoot, 'runtime');
+  const script = [
+    'import json',
+    'import sys',
+    `sys.path.insert(0, r"${runtimeRoot.replace(/\\/g, '\\\\')}")`,
+    'from backend.agent.core.tool_loop import _tool_loop_result_summary',
+    'result = {',
+    '  "status": "failed",',
+    '  "trace": [',
+    '    {"agent": "planner", "status": "completed", "summary": "Prepared 3 tool-loop step(s)."},',
+    '    {"agent": "implementer", "status": "failed", "summary": "Ollama request failed (500): model requires more system memory (47.8 GiB) than is available (18.7 GiB)"},',
+    '  ],',
+    '}',
+    'print(json.dumps({"summary": _tool_loop_result_summary(result)}))',
+  ].join('\n');
+  const raw = execFileSync('python', ['-c', script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PYTHONPATH: runtimeRoot,
+    },
+    encoding: 'utf8',
+  });
+  const payload = JSON.parse(raw);
+
+  assert.match(String(payload.summary || ''), /requires more system memory/i);
 });
 
 test('backend runtime memory hints summarize recurring reject patterns and phase relevance', () => {
@@ -549,4 +584,37 @@ test('runtime api marks no-op coding orchestrations as failures instead of appro
   assert.equal(payload.runtime_failure.kind, 'no-op-edit');
   assert.equal(payload.runtime_result.status, 'failed');
   assert.match(String(payload.review_summary.summary || ''), /did not apply any file changes/i);
+});
+
+test('runtime api ignores lab metadata files when checking for orchestration file changes', () => {
+  const repoRoot = path.join(__dirname, '..');
+  const runtimeRoot = path.join(repoRoot, 'runtime');
+  const python = resolvePythonCommand();
+  const script = [
+    'import json',
+    'import sys',
+    `sys.path.insert(0, r"${runtimeRoot.replace(/\\/g, '\\\\')}")`,
+    'from backend.agent.runtime.runtime_api import _orchestration_changed_paths',
+    'payload = _orchestration_changed_paths({',
+    '    "runtime_context": {',
+    '        "changed_files": [',
+    '            {"path": ".gos-lab.json", "status": "??"},',
+    '            {"path": ".gos-lab-recipes/benchmark-self-host.json", "status": "??"},',
+    '            {"path": "README.md", "status": "M"},',
+    '        ]',
+    '    }',
+    '})',
+    'print(json.dumps(payload))',
+  ].join('\n');
+  const raw = execFileSync(python, ['-c', script], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PYTHONPATH: runtimeRoot,
+    },
+    encoding: 'utf8',
+  });
+  const payload = JSON.parse(raw);
+
+  assert.deepEqual(payload, ['README.md']);
 });

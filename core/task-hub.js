@@ -1196,6 +1196,9 @@ function inferAcceptanceChecks(prompt = '', payload = {}) {
   if (/(test|fix|repair|debug|refactor|implement|code|build|create|update|config|setting|workflow|provider|model|extension|vscode|ui|screen)/.test(lower)) {
     checks.push('Update or generate operator-facing docs when commands, settings, flows, or visible behavior change, or explain why no docs update is needed.');
   }
+  if (/(route|routing|repair|validation|operator wording|wording drift|ui shell|lane|chat-fast|repair-fast|review-verify)/.test(lower)) {
+    checks.push('Run npm run proof:route-quality when routing, repair, validation, or operator wording changes.');
+  }
   if (checks.length === 0) {
     checks.push('Return a concise implementation or analysis summary.');
   }

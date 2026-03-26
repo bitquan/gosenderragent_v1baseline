@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const {
+  buildAuditScriptArgs,
   buildDirectAskReply,
   buildDirectPlanReply,
   buildGroundedChatPrompt,
@@ -33,6 +34,38 @@ test('engine CLI parses workspace, mode, and git flags without losing trailing a
   assert.equal(parsed.workspaceRoot, path.resolve('E:\\dev\\projects\\gosenderr-desktop-agent-PC'));
   assert.equal(parsed.message, 'feat: tighten engine contract');
   assert.deepEqual(parsed.trailing, ['commit']);
+});
+
+test('engine CLI parses repeated validation commands for bounded repair proofs', () => {
+  const parsed = parseCliArgs([
+    'repair',
+    '--lab',
+    'E:\\dev\\projects\\gosenderr_dev_offload\\assistant_labs\\scratch\\acceptance-self-host-fresh',
+    '--validation-command',
+    'node --test tests/training-tuning.test.js',
+    '--validation',
+    'node --test tests/ai-center.test.js',
+    'Repair',
+    'the',
+    'local',
+    'readiness',
+    'wording.',
+  ]);
+
+  assert.equal(parsed.command, 'repair');
+  assert.deepEqual(parsed.validationCommands, [
+    'node --test tests/training-tuning.test.js',
+    'node --test tests/ai-center.test.js',
+  ]);
+  assert.deepEqual(parsed.trailing, ['Repair', 'the', 'local', 'readiness', 'wording.']);
+});
+
+test('engine CLI builds the daily audit script invocation for the active workspace', () => {
+  const workspaceRoot = path.resolve('E:\\dev\\projects\\gosenderr-desktop-agent-PC');
+  const args = buildAuditScriptArgs(workspaceRoot, { json: true });
+
+  assert.match(args[0], /engine_daily_report\.py$/);
+  assert.deepEqual(args.slice(1), ['--project-root', workspaceRoot, '--json']);
 });
 
 test('engine CLI parses checkpoint merge arguments without dropping paths', () => {
@@ -78,6 +111,7 @@ test('engine CLI builds edit requests that reuse the canonical terminal routing 
   });
 
   assert.equal(repairBuilt.chatMode, 'edit');
+  assert.equal(repairBuilt.request.action, 'orchestrate');
   assert.equal(repairBuilt.request.laneId, 'repair-fast');
   assert.equal(repairBuilt.request.taskMode, 'repair');
   assert.equal(repairBuilt.request.metadata.chatMode, 'edit');
@@ -88,6 +122,26 @@ test('engine CLI builds edit requests that reuse the canonical terminal routing 
   assert.equal(implementBuilt.request.taskMode, 'coder');
   assert.match(String(implementBuilt.request.ticket || ''), /^9\d{9}$/);
   assert.equal(implementBuilt.request.desc, 'Add a brief comment to renderer/app.js and keep behavior unchanged.');
+});
+
+test('engine CLI forwards bounded validation commands into execution requests', () => {
+  const workspaceRoot = path.resolve('E:\\dev\\projects\\gosenderr-desktop-agent-PC');
+  const built = buildTerminalRequest({
+    command: 'edit',
+    workspaceRoot,
+    labRoot: 'E:\\dev\\projects\\gosenderr_dev_offload\\assistant_labs\\scratch\\acceptance-self-host-fresh',
+    prompt: 'Repair the remaining BAT<MODEL-BASE-007> wording drift in core/training-tuning.js only.',
+    validationCommands: [
+      'node --test tests/training-tuning.test.js',
+      'node --test tests/ai-center.test.js',
+    ],
+  });
+
+  assert.equal(built.request.workspace, path.resolve('E:\\dev\\projects\\gosenderr_dev_offload\\assistant_labs\\scratch\\acceptance-self-host-fresh'));
+  assert.deepEqual(built.request.validationCommands, [
+    'node --test tests/training-tuning.test.js',
+    'node --test tests/ai-center.test.js',
+  ]);
 });
 
 test('engine CLI render helpers keep status readable in the terminal', () => {
@@ -246,7 +300,7 @@ test('engine CLI builds grounded ask and plan prompts from live repo state', () 
           },
         },
         models: {
-          summary: 'Workspace model and engine model are provisioned.',
+          summary: 'Workspace coding and engine control roles are provisioned.',
         },
         autonomy: {
           nextSafeAction: 'Keep the next run bounded.',

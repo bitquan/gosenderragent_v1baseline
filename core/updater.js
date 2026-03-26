@@ -33,10 +33,14 @@ function historyPath(workspaceRoot) {
 
 function appendHistory(workspaceRoot, item) {
   const file = historyPath(workspaceRoot);
-  const current = readJsonFile(file, []);
-  const next = Array.isArray(current) ? current : [];
+  const next = readUpdateHistory(workspaceRoot);
   next.unshift(item);
   writeJsonFileAtomic(file, next.slice(0, 30));
+}
+
+function readUpdateHistory(workspaceRoot) {
+  const current = readJsonFile(historyPath(workspaceRoot), []);
+  return Array.isArray(current) ? current : [];
 }
 
 function defaultBackupTargets() {
@@ -370,12 +374,39 @@ function listBackups(workspaceRoot) {
     .sort((a, b) => b.localeCompare(a));
 }
 
+function summarizeUpdateRecoveryState(workspaceRoot) {
+  const backups = listBackups(workspaceRoot);
+  const history = readUpdateHistory(workspaceRoot);
+  const latest = history[0] && typeof history[0] === 'object' ? history[0] : null;
+  const latestBackupId = String(latest?.backupId || backups[0] || '').trim();
+  let summary = latestBackupId
+    ? `Rollback is ready from backup ${latestBackupId}.`
+    : 'No update backup is recorded yet.';
+  if (latest?.rollback === true && latest?.ok === true) {
+    summary = `Last update recovery restored backup ${latestBackupId || 'latest'} and re-ran preflight.`;
+  } else if (latest?.rollback === true && latest?.ok === false) {
+    summary = `Last update attempt rolled back after verification failed${latestBackupId ? ` using backup ${latestBackupId}` : ''}.`;
+  } else if (latest?.ok === true && latest?.afterHead) {
+    summary = `Last update advanced the workspace safely${latestBackupId ? ` with rollback backup ${latestBackupId}` : ''}.`;
+  }
+  return {
+    backupCount: backups.length,
+    latestBackupId,
+    rollbackReady: backups.length > 0,
+    historyCount: history.length,
+    lastEvent: latest,
+    summary,
+  };
+}
+
 module.exports = {
   checkForUpdates,
   buildUpdatePlan,
   applyUpdate,
   rollbackUpdate,
   listBackups,
+  readUpdateHistory,
+  summarizeUpdateRecoveryState,
   defaultBackupTargets,
   isLowRiskAutoUpdatePath,
   isProtectedAutoUpdatePath,

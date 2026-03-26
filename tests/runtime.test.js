@@ -458,6 +458,48 @@ test('runtime surfaces owner, experiment, and automation summaries from result p
   }
 });
 
+test('runtime waitForRun resolves the persisted final snapshot', async () => {
+  const workspaceRoot = makeWorkspace();
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = (_command, args) => {
+    const proc = new events.EventEmitter();
+    proc.stdout = new events.EventEmitter();
+    proc.stderr = new events.EventEmitter();
+    proc.kill = () => true;
+    process.nextTick(() => {
+      const resultFile = String(args[args.indexOf('--result-file') + 1] || '');
+      fs.writeFileSync(resultFile, JSON.stringify({
+        ok: true,
+        label: 'TRACKED REPAIR',
+        runSummary: { summary: 'Repair completed.' },
+      }));
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+
+  try {
+    const runtime = new SharedAgentRuntime({
+      workspaceRoot,
+      pythonRelative: 'backend/.venv/bin/python',
+    });
+    const run = runtime.run({
+      action: 'repair',
+      workspace: workspaceRoot,
+      task: 'Repair the failing validation path.',
+    });
+    const finalRun = await runtime.waitForRun(run.runId, { timeoutMs: 2000 });
+
+    assert.equal(finalRun.state, 'pass');
+    assert.equal(finalRun.label, 'TRACKED REPAIR');
+    assert.equal(finalRun.runSummary.summary, 'Repair completed.');
+    assert.equal(runtime.getStatus(run.runId).state, 'pass');
+  } finally {
+    childProcess.spawn = originalSpawn;
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('recovery state normalizes skipped BAT failures to skipped', () => {
   const workspaceRoot = makeWorkspace();
   const runtimeStatePath = path.join(workspaceRoot, 'docs', 'assistant_runs', 'runtime_state.json');

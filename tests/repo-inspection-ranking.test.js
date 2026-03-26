@@ -84,3 +84,138 @@ test('rank_related_files promotes JS and TS implementation imports from tests', 
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test('build_runtime_context seeds repair targets from failing validation output', () => {
+  const pythonExecutable = resolvePythonExecutable();
+  if (!pythonExecutable) {
+    test.skip('Python runtime is unavailable for runtime context regression coverage.');
+    return;
+  }
+
+  const repoRoot = path.join(__dirname, '..');
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-context-ranking-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(fixtureRoot, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(fixtureRoot, 'src', 'calculator.js'),
+      "'use strict';\n\nfunction sum(left, right) {\n  return left - right;\n}\n\nmodule.exports = { sum };\n",
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(fixtureRoot, 'test', 'calculator.test.js'),
+      "'use strict';\n\nconst test = require('node:test');\nconst assert = require('node:assert/strict');\nconst { sum } = require('../src/calculator');\n\ntest('sum adds numbers together', () => {\n  assert.equal(sum(2, 3), 5);\n});\n",
+      'utf8',
+    );
+
+    const script = [
+      'from pathlib import Path',
+      'import importlib.util',
+      'import json',
+      'import sys',
+      'repo_root = Path(sys.argv[1])',
+      'project_root = Path(sys.argv[2])',
+      'sys.path.insert(0, str(repo_root / "runtime"))',
+      'module_path = repo_root / "runtime" / "backend" / "agent" / "core" / "runtime_context.py"',
+      'spec = importlib.util.spec_from_file_location("runtime_context", module_path)',
+      'module = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(module)',
+      'stdout = "\\n".join([',
+      '    "> gosenderr-dummy-broken-lab@0.0.1 test",',
+      '    "> node --test",',
+      '    "",',
+      '    "test at test\\\\calculator.test.js:6:1",',
+      '    f"      at TestContext.<anonymous> ({project_root / \'test\' / \'calculator.test.js\'}:7:10)",',
+      '])',
+      'context = module.build_runtime_context(',
+      '    project_root,',
+      '    desc="Repair the latest failed bounded run and rerun the smallest relevant validation.",',
+      '    validation={',
+      '        "results": [',
+      '            {',
+      '                "ok": False,',
+      '                "command": "npm test",',
+      '                "returncode": 1,',
+      '                "stdout": stdout,',
+      '                "stderr": "",',
+      '            }',
+      '        ]',
+      '    },',
+      ')',
+      'print(json.dumps({"related_files": context["related_files"], "related_details": context["related_file_details"]}))',
+    ].join('\n');
+
+    const result = childProcess.spawnSync(pythonExecutable, ['-c', script, repoRoot, fixtureRoot], {
+      encoding: 'utf8',
+      cwd: repoRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout || 'runtime context regression script failed');
+    const payload = JSON.parse(String(result.stdout || '{}').trim() || '{}');
+    const relatedFiles = Array.isArray(payload.related_files) ? payload.related_files : [];
+    const sourceEntry = (Array.isArray(payload.related_details) ? payload.related_details : []).find((item) => item.path === 'src/calculator.js');
+
+    assert.ok(relatedFiles.includes('test/calculator.test.js'), 'expected failing test file to seed related files');
+    assert.ok(relatedFiles.includes('src/calculator.js'), 'expected imported implementation file to be inferred from the failing test');
+    assert.ok(sourceEntry, 'expected runtime context details for the imported implementation file');
+    assert.match(String((sourceEntry.reasons || []).join(' ')), /imported-by-test:test\/calculator\.test\.js/);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('build_runtime_context reuses stable baseline sections from the previous context', () => {
+  const pythonExecutable = resolvePythonExecutable();
+  if (!pythonExecutable) {
+    test.skip('Python runtime is unavailable for runtime context caching coverage.');
+    return;
+  }
+
+  const repoRoot = path.join(__dirname, '..');
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-context-cache-'));
+  try {
+    const script = [
+      'from pathlib import Path',
+      'import importlib.util',
+      'import json',
+      'import sys',
+      'repo_root = Path(sys.argv[1])',
+      'project_root = Path(sys.argv[2])',
+      'sys.path.insert(0, str(repo_root / "runtime"))',
+      'module_path = repo_root / "runtime" / "backend" / "agent" / "core" / "runtime_context.py"',
+      'spec = importlib.util.spec_from_file_location("runtime_context", module_path)',
+      'module = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(module)',
+      'calls = {"baseline": 0, "docs": 0, "config": 0}',
+      'def fake_baseline(_root):',
+      '    calls["baseline"] += 1',
+      '    return {"state": "green", "recent_failure_count": 0}',
+      'def fake_docs(_root):',
+      '    calls["docs"] += 1',
+      '    return {"queue_count": 0}',
+      'def fake_config(_root):',
+      '    calls["config"] += 1',
+      '    return {"ok": True}',
+      'module._normalize_baseline_state = fake_baseline',
+      'module._normalize_docs_state = fake_docs',
+      'module._normalize_config_state = fake_config',
+      'first = module.build_runtime_context(project_root, desc="First pass")',
+      'second = module.build_runtime_context(project_root, desc="Second pass", previous_context=first)',
+      'print(json.dumps({"calls": calls, "first": first["baseline_state"], "second": second["baseline_state"]}))',
+    ].join('\n');
+
+    const result = childProcess.spawnSync(pythonExecutable, ['-c', script, repoRoot, fixtureRoot], {
+      encoding: 'utf8',
+      cwd: repoRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout || 'runtime context caching script failed');
+    const payload = JSON.parse(String(result.stdout || '{}').trim() || '{}');
+    assert.equal(payload.calls.baseline, 1);
+    assert.equal(payload.calls.docs, 1);
+    assert.equal(payload.calls.config, 1);
+    assert.deepEqual(payload.first, payload.second);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});

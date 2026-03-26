@@ -932,6 +932,10 @@ test('parseAssistantDashboard exposes compact engine baseline and daily report s
           reason: 'Review queue pressure is rising.',
           operator_actions: ['Resolve pending review queue'],
         },
+        maintenance_checklist: {
+          open_today: [{ label: 'Unify readiness wording', category: 'fix' }, { label: 'Shrink route latency', category: 'tune' }],
+          missing_today: [{ label: 'Auto-rescope overscoped objectives', category: 'implement' }],
+        },
         top_blockers: [{ label: 'review queue pressure', count: 2 }],
         common_recommended_actions: [{ label: 'Resolve pending review queue', count: 2 }],
       }),
@@ -949,8 +953,11 @@ test('parseAssistantDashboard exposes compact engine baseline and daily report s
     assert.equal(dashboard.engineBaselineSummary.canonicalMarkdownPath, 'docs/ENGINE_BASELINE.md');
     assert.equal(dashboard.engineDailyReport.suggestedWorkstream, 'review-and-triage');
     assert.equal(dashboard.engineDailyReport.recommendedFocus, 'Review queue pressure is rising.');
+    assert.equal(dashboard.engineDailyReport.openChecklistCount, 2);
+    assert.equal(dashboard.engineDailyReport.missingCapabilityCount, 1);
     assert.equal(dashboard.engineDailyReport.topIssues[0].label, 'review queue pressure');
     assert.match(dashboard.engineDailyReport.summary, /review-and-triage/i);
+    assert.match(dashboard.engineDailyReport.summary, /2 open audit items/i);
     assert.equal(dashboard.engineDailyReport.canonicalMarkdownPath, 'docs/ENGINE_DAILY_REPORT.md');
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });

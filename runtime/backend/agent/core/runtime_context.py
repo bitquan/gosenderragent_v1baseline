@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,12 @@ MAX_FAILURE_CHECKS = 5
 MAX_FAILURE_SUMMARY_CHARS = 1200
 RUNTIME_CONTEXT_SCHEMA_VERSION = "2026-03-12"
 
+_FAILURE_PATH_PATTERNS = (
+    re.compile(r"([A-Za-z]:[\\/][^\s:\"'<>|]+\.[A-Za-z0-9]+)(?::\d+(?::\d+)?)?"),
+    re.compile(r"(/[^\s:\"'<>|]+\.[A-Za-z0-9]+)(?::\d+(?::\d+)?)?"),
+    re.compile(r"((?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(?::\d+(?::\d+)?)?"),
+)
+
 
 def _empty_runtime_context() -> dict[str, Any]:
     return {
@@ -30,6 +37,7 @@ def _empty_runtime_context() -> dict[str, Any]:
         "related_file_details": [],
         "changed_files": [],
         "failure_output": {},
+        "validation_scope": {},
         "artifact_context": {},
         "baseline_state": {},
         "approval_state": {},
@@ -82,24 +90,119 @@ def _normalize_changed_files(project_root: Path) -> list[dict[str, str]]:
     return changed
 
 
-def _candidate_related_files(plan: dict[str, Any] | None, editor_context: dict[str, Any]) -> list[str]:
+def _normalize_candidate_repo_path(project_root: Path, raw_path: Any) -> str:
+    text = str(raw_path or "").strip().rstrip(")]},;.")
+    if not text:
+        return ""
+    normalized = text.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if re.match(r"^[A-Za-z]:/", normalized) or normalized.startswith("/"):
+        try:
+            return str(Path(normalized).resolve().relative_to(project_root.resolve())).replace("\\", "/")
+        except Exception:
+            return ""
+    candidate = (project_root / normalized).resolve()
+    try:
+        relative = candidate.relative_to(project_root.resolve())
+    except Exception:
+        return ""
+    return str(relative).replace("\\", "/") if candidate.exists() else ""
+
+
+def _failure_output_candidates(project_root: Path, validation: dict[str, Any] | None = None, repair: dict[str, Any] | None = None) -> list[str]:
     candidates: list[str] = []
+    seen: set[str] = set()
+    payloads = [dict(validation or {}), dict(repair or {})]
+    texts: list[str] = []
+
+    for payload in payloads:
+        for item in list(payload.get("results", []) or []):
+            if not isinstance(item, dict) or item.get("ok", False):
+                continue
+            texts.append(str(item.get("stdout") or ""))
+            texts.append(str(item.get("stderr") or ""))
+        failure_output = dict(payload.get("failure_output") or payload.get("failureOutput") or {})
+        if failure_output:
+            texts.append(str(failure_output.get("summary") or ""))
+            for item in list(failure_output.get("checks", []) or []):
+                if not isinstance(item, dict):
+                    continue
+                texts.append(str(item.get("stdout") or ""))
+                texts.append(str(item.get("stderr") or ""))
+        for item in list(payload.get("repairs", []) or []):
+            if not isinstance(item, dict):
+                continue
+            normalized = _normalize_candidate_repo_path(project_root, item.get("path"))
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                candidates.append(normalized)
+
+    for text in texts:
+        for pattern in _FAILURE_PATH_PATTERNS:
+            for match in pattern.findall(text):
+                normalized = _normalize_candidate_repo_path(project_root, match)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                candidates.append(normalized)
+    return candidates
+
+
+def _repair_focused_editor_context(
+    project_root: Path,
+    editor_context: dict[str, Any] | None,
+    *,
+    validation: dict[str, Any] | None = None,
+    repair: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    normalized = normalize_editor_context(editor_context)
+    failure_candidates = _failure_output_candidates(project_root, validation=validation, repair=repair)
+    if not failure_candidates or str(normalized.get("active_file_path") or "").strip():
+        return normalized, failure_candidates
+
+    focused = dict(normalized)
+    focused["active_file_path"] = failure_candidates[0]
+    open_files = [str(item).strip() for item in list(focused.get("open_files") or []) if str(item).strip()]
+    focused["open_files"] = [failure_candidates[0], *[item for item in open_files if item != failure_candidates[0]]]
+    return focused, failure_candidates
+
+
+def _candidate_related_files(
+    project_root: Path,
+    plan: dict[str, Any] | None,
+    editor_context: dict[str, Any],
+    *,
+    validation: dict[str, Any] | None = None,
+    repair: dict[str, Any] | None = None,
+) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
     payload = dict(plan or {})
-    for path in payload.get("existing_targets", []) or []:
-        text = str(path or "").strip()
-        if text and text not in candidates:
+
+    def add_candidate(raw_path: Any, *, front: bool = False) -> None:
+        text = _normalize_candidate_repo_path(project_root, raw_path)
+        if not text or text in seen:
+            return
+        seen.add(text)
+        if front:
+            candidates.insert(0, text)
+        else:
             candidates.append(text)
+
+    for path in payload.get("existing_targets", []) or []:
+        add_candidate(path)
     for path in payload.get("proposed_files", []) or []:
         text = str(path or "").strip()
-        if text and "*" not in text and text not in candidates:
-            candidates.append(text)
+        if text and "*" not in text:
+            add_candidate(text)
     for item in payload.get("new_files", []) or []:
-        text = str(item.get("path") if isinstance(item, dict) else item or "").strip()
-        if text and text not in candidates:
-            candidates.append(text)
+        add_candidate(item.get("path") if isinstance(item, dict) else item)
+    for path in _failure_output_candidates(project_root, validation=validation, repair=repair):
+        add_candidate(path, front=True)
     active_file = str(editor_context.get("active_file_path") or "").strip()
-    if active_file and active_file not in candidates:
-        candidates.insert(0, active_file)
+    if active_file:
+        add_candidate(active_file, front=True)
     return candidates
 
 
@@ -110,9 +213,22 @@ def _normalize_related_files(
     desc: str = "",
     editor_context: dict[str, Any] | None = None,
     plan: dict[str, Any] | None = None,
+    validation: dict[str, Any] | None = None,
+    repair: dict[str, Any] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    normalized_editor = normalize_editor_context(editor_context)
-    candidates = _candidate_related_files(plan, normalized_editor)
+    normalized_editor, _ = _repair_focused_editor_context(
+        project_root,
+        editor_context,
+        validation=validation,
+        repair=repair,
+    )
+    candidates = _candidate_related_files(
+        project_root,
+        plan,
+        normalized_editor,
+        validation=validation,
+        repair=repair,
+    )
     ranked = rank_related_files(
         project_root,
         candidates=candidates or None,
@@ -169,6 +285,45 @@ def _normalize_failure_output(validation: dict[str, Any] | None, repair: dict[st
         "retry_policy": dict(payload.get("retry_policy") or repair_payload.get("retry_policy") or {}),
         "repair_skipped": bool(repair_payload.get("skipped", False)),
         "skip_reason": str(repair_payload.get("skip_reason") or ""),
+    }
+
+
+def _normalize_validation_scope(
+    validation: dict[str, Any] | None,
+    repair: dict[str, Any] | None,
+    *,
+    previous_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = dict(validation or {})
+    repair_payload = dict(repair or {})
+    previous = dict(previous_scope or {})
+    commands = [str(item).strip() for item in list(payload.get("commands", []) or []) if str(item).strip()]
+    if not commands:
+        commands = [str(item).strip() for item in list((repair_payload.get("validation") or {}).get("commands", []) or []) if str(item).strip()]
+    scope = [str(item).strip() for item in list(payload.get("scope", []) or []) if str(item).strip()]
+    if not scope:
+        scope = [str(item).strip() for item in list((repair_payload.get("validation") or {}).get("scope", []) or []) if str(item).strip()]
+    related_targets = [str(item).strip() for item in list(payload.get("related_targets", []) or payload.get("relatedTargets", []) or []) if str(item).strip()]
+    if not related_targets:
+        related_targets = [str(item).strip() for item in list((repair_payload.get("validation") or {}).get("related_targets", []) or (repair_payload.get("validation") or {}).get("relatedTargets", []) or []) if str(item).strip()]
+    full_verify = bool(payload.get("full_verify") or payload.get("fullVerify"))
+    if not commands and previous:
+        commands = [str(item).strip() for item in list(previous.get("commands", []) or []) if str(item).strip()]
+        if not scope:
+            scope = [str(item).strip() for item in list(previous.get("scope", []) or []) if str(item).strip()]
+        if not related_targets:
+            related_targets = [str(item).strip() for item in list(previous.get("related_targets", []) or previous.get("relatedTargets", []) or []) if str(item).strip()]
+        full_verify = bool(previous.get("full_verify") or previous.get("fullVerify") or full_verify)
+    source = "none"
+    if commands:
+        source = "full-verify" if full_verify else "targeted"
+    return {
+        "commands": commands,
+        "command_count": len(commands),
+        "scope": scope,
+        "related_targets": related_targets,
+        "full_verify": full_verify,
+        "source": source,
     }
 
 
@@ -243,6 +398,18 @@ def _normalize_docs_state(project_root: Path) -> dict[str, Any]:
 def _normalize_config_state(project_root: Path) -> dict[str, Any]:
     return dict(assistant_config_validation(project_root) or {})
 
+
+def _stable_runtime_sections(project_root: Path, previous_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    previous = normalize_runtime_context(previous_context)
+    baseline_state = dict(previous.get("baseline_state") or previous.get("baselineState") or {})
+    docs_state = dict(previous.get("docs_state") or previous.get("docsState") or {})
+    config_state = dict(previous.get("config_state") or previous.get("configState") or {})
+    return {
+        "baseline_state": baseline_state or _normalize_baseline_state(project_root),
+        "docs_state": docs_state or _normalize_docs_state(project_root),
+        "config_state": config_state or _normalize_config_state(project_root),
+    }
+
 def normalize_runtime_context(raw: dict[str, Any] | None) -> dict[str, Any]:
     payload = dict(raw or {})
     editor_context = normalize_editor_context(payload.get("editor_context") or payload.get("editorContext") or payload.get("editor") or {})
@@ -278,6 +445,7 @@ def normalize_runtime_context(raw: dict[str, Any] | None) -> dict[str, Any]:
         "related_file_details": related_details,
         "changed_files": changed_files,
         "failure_output": dict(payload.get("failure_output") or payload.get("failureOutput") or {}),
+        "validation_scope": dict(payload.get("validation_scope") or payload.get("validationScope") or {}),
         "artifact_context": dict(payload.get("artifact_context") or payload.get("artifactContext") or {}),
         "baseline_state": dict(payload.get("baseline_state") or payload.get("baselineState") or {}),
         "approval_state": dict(payload.get("approval_state") or payload.get("approvalState") or {}),
@@ -306,14 +474,24 @@ def build_runtime_context(
     memory_state: dict[str, Any] | None = None,
     host_boundary: dict[str, Any] | None = None,
     self_heal_policy: dict[str, Any] | None = None,
+    previous_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    normalized_editor = normalize_editor_context(editor_context)
+    previous = normalize_runtime_context(previous_context)
+    stable_sections = _stable_runtime_sections(project_root, previous)
+    normalized_editor, failure_candidates = _repair_focused_editor_context(
+        project_root,
+        editor_context,
+        validation=validation,
+        repair=repair,
+    )
     related_files, related_details = _normalize_related_files(
         project_root,
         ticket_id=ticket_id,
         desc=desc,
         editor_context=normalized_editor,
         plan=plan,
+        validation=validation,
+        repair=repair,
     )
     return normalize_runtime_context(
         {
@@ -322,18 +500,19 @@ def build_runtime_context(
             "desc": desc,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "editor_context": normalized_editor,
-            "active_file_path": normalized_editor.get("active_file_path", ""),
+            "active_file_path": normalized_editor.get("active_file_path", "") or (failure_candidates[0] if failure_candidates else ""),
             "related_files": related_files,
             "related_file_details": related_details,
             "changed_files": _normalize_changed_files(project_root),
             "failure_output": _normalize_failure_output(validation, repair),
+            "validation_scope": _normalize_validation_scope(validation, repair, previous_scope=previous.get("validation_scope") or previous.get("validationScope") or {}),
             "artifact_context": _normalize_artifact_context(project_root, artifact_paths=artifact_paths),
-            "baseline_state": _normalize_baseline_state(project_root),
+            "baseline_state": stable_sections["baseline_state"],
             "approval_state": dict(approval_state or {}),
             "permission_state": dict(permission_state or {}),
             "memory_state": dict(memory_state or {}),
-            "docs_state": _normalize_docs_state(project_root),
-            "config_state": _normalize_config_state(project_root),
+            "docs_state": stable_sections["docs_state"],
+            "config_state": stable_sections["config_state"],
             "host_boundary": dict(host_boundary or {}),
             "self_heal_policy": dict(self_heal_policy or {}),
         }

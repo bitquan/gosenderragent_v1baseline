@@ -119,6 +119,7 @@ def generate_patch_candidates(
 	target_path: str = "",
 	active_file_path: str = "",
 	memory_hints: dict[str, Any] | None = None,
+	include_patch_text: bool = False,
 ) -> dict[str, Any]:
 	approved = [str(path).strip() for path in list(approved_targets or []) if str(path).strip()]
 	hints = dict(memory_hints or {})
@@ -183,6 +184,7 @@ def generate_patch_candidates(
 				"score": row.get("score"),
 				"reasons": row.get("reasons", []),
 				"preview": row.get("preview", ""),
+				**({"patch": row.get("patch", "")} if include_patch_text else {}),
 			}
 			for row in ranked
 		],
@@ -355,6 +357,63 @@ def _build_write_gate_review_request(
 	return request, artifacts
 
 
+def _build_synthesized_edit_failure_artifacts(
+	*,
+	source: str,
+	path: str,
+	selection: dict[str, Any],
+	reason: str,
+	runtime_context: dict[str, Any] | None = None,
+	runtime_task: dict[str, Any] | None = None,
+	runtime_run: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+	scope = _runtime_scope(runtime_context=runtime_context, runtime_task=runtime_task, runtime_run=runtime_run)
+	payload = dict(selection or {})
+	best = dict(payload.get("best_candidate") or {})
+	candidates = []
+	for item in list(payload.get("candidates") or []):
+		if not isinstance(item, dict):
+			continue
+		candidates.append(
+			{
+				"label": str(item.get("label") or ""),
+				"score": float(item.get("score") or 0),
+				"reasons": [str(reason) for reason in list(item.get("reasons") or []) if str(reason)],
+				"preview": str(item.get("preview") or ""),
+				"patch": str(item.get("patch") or ""),
+			}
+		)
+	if not path and not candidates and not str(reason or "").strip():
+		return []
+	review_id = f"synthesized-edit-failure:{source}:{path or str(best.get('label') or 'unknown')}"
+	return [
+		build_review_artifact(
+			run_id=scope["run_id"],
+			task_id=scope["task_id"],
+			ticket_id=scope["ticket"],
+			review_id=review_id,
+			kind="synthesized-edit-failure",
+			label=str(best.get("label") or "selection-failure"),
+			path=path,
+			format="json",
+			summary=f"Synthesized edit failure evidence for {path or 'unknown path'}",
+			metadata={
+				"source": source,
+				"reason": str(reason or "synthesized edit failed"),
+				"best_candidate": {
+					"label": str(best.get("label") or ""),
+					"score": float(best.get("score") or 0),
+					"reasons": [str(item) for item in list(best.get("reasons") or []) if str(item)],
+					"preview": str(best.get("preview") or ""),
+				},
+				"candidate_count": len(candidates),
+				"candidates": candidates,
+				"recovered_candidate": dict(payload.get("recovered_candidate") or {}),
+			},
+		),
+	]
+
+
 def build_review_summary(
 	*,
 	execution_results: list[dict[str, Any]] | None = None,
@@ -370,6 +429,7 @@ def build_review_summary(
 	repair_rows = list(repair_entries or [])
 	pending = list(pending_approvals or [])
 	low_confidence: list[dict[str, Any]] = []
+	synthesized_edit_failures: list[dict[str, Any]] = []
 	review_requests = [
 		dict(item.get("review_request") or item)
 		for item in pending
@@ -382,6 +442,28 @@ def build_review_summary(
 		if isinstance(row, dict) and isinstance(row.get("review_request"), dict):
 			review_requests.append(dict(row.get("review_request") or {}))
 			review_artifacts.extend([dict(item) for item in list(row.get("review_artifacts", []) or []) if isinstance(item, dict)])
+		if isinstance(row, dict) and not bool(row.get("ok")) and isinstance(row.get("selection"), dict):
+			selection = dict(row.get("selection") or {})
+			artifacts = _build_synthesized_edit_failure_artifacts(
+				source="execution",
+				path=str(row.get("path") or ""),
+				selection=selection,
+				reason=str(row.get("error") or "synthesized edit failed"),
+				runtime_context=runtime_scope,
+				runtime_task=runtime_task,
+				runtime_run=runtime_run,
+			)
+			if artifacts:
+				review_artifacts.extend(artifacts)
+				best = dict(selection.get("best_candidate") or {})
+				synthesized_edit_failures.append(
+					{
+						"path": str(row.get("path") or ""),
+						"reason": str(row.get("error") or "synthesized edit failed"),
+						"selected_label": str(best.get("label") or ""),
+						"selected_score": float(best.get("score") or 0),
+					}
+				)
 		review = row.get("ai_patch_review") if isinstance(row, dict) else None
 		if not isinstance(review, dict):
 			continue
@@ -477,6 +559,7 @@ def build_review_summary(
 		"review_request_count": len(review_requests),
 		"pending_review_count": int(review_state.get("pending_review_count") or 0),
 		"low_confidence_patch_count": len(low_confidence),
+		"synthesized_edit_failure_count": len(synthesized_edit_failures),
 		"summary": "; ".join(summary_parts),
 		"pending_approvals": pending,
 		"review_requests": review_requests,
@@ -486,6 +569,7 @@ def build_review_summary(
 		},
 		"review_artifacts": review_artifacts,
 		"low_confidence_patches": low_confidence,
+		"synthesized_edit_failures": synthesized_edit_failures,
 		"handoff_history": list(handoff_history or []),
 		"runtime_context": dict(runtime_context or {}),
 	}

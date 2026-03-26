@@ -41,6 +41,13 @@ function isNoEligibleTicketsLog(text) {
   return /No tickets matched sprint filters/i.test(String(text || ''));
 }
 
+function isFinalRunState(state) {
+  return state === RUN_STATES.PASS
+    || state === RUN_STATES.FAIL
+    || state === RUN_STATES.SKIPPED
+    || state === RUN_STATES.CANCELLED;
+}
+
 function normalizeReviewSummary(value) {
   const summary = value && typeof value === 'object' ? value : {};
   const reviewedPaths = Array.isArray(summary.reviewed_paths)
@@ -644,6 +651,16 @@ function buildOperatorExecutionSnapshot(run = {}, overrides = {}) {
   const runtimeResult = normalizeSummaryObject(run.runtimeResult || {});
   const runtimeFailure = normalizeSummaryObject(run.runtimeFailure || {});
   const seed = overrides.seed && typeof overrides.seed === 'object' ? overrides.seed : {};
+  const validationCommands = normalizeArray(
+    seed.validationCommands
+    || seed.validation_commands
+    || run.validationCommands
+    || run.validation_commands
+    || runtimeResult.validationCommands
+    || runtimeResult.validation_commands
+    || runtimeContext.validationScope?.commands
+    || runtimeContext.validation_scope?.commands,
+  ).map((item) => String(item || '').trim()).filter(Boolean);
   const changedFiles = normalizeChangedFiles(
     seed.changedFiles
     || seed.changed_files
@@ -888,6 +905,7 @@ function buildOperatorExecutionSnapshot(run = {}, overrides = {}) {
     diffSummary: String(seed.diffSummary || seed.diff_summary || '').trim(),
     changedFiles,
     changedFileCount: Number(seed.changedFileCount ?? seed.changed_file_count ?? changedFiles.length),
+    validationCommands,
     outputTail: {
       combined: clipTail(overrides.logTail !== undefined ? overrides.logTail : (seed.outputTail?.combined || seed.output_tail?.combined || run.logTail || '')),
       stdout: clipTail(overrides.stdoutTail !== undefined ? overrides.stdoutTail : (seed.outputTail?.stdout || seed.output_tail?.stdout || run.stdoutTail || '')),
@@ -1035,6 +1053,38 @@ class SharedAgentRuntime extends EventEmitter {
       runs: this.history.slice(0, 30),
       activeRuns: Array.from(this.processes.keys()),
     };
+  }
+
+  waitForRun(runId, options = {}) {
+    const timeoutMs = Number(options.timeoutMs || 0);
+    const current = runId ? this.getStatus(runId) : null;
+    if (current && isFinalRunState(current.state)) {
+      return Promise.resolve(current);
+    }
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const cleanup = () => {
+        this.off('run-event', onRunEvent);
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      };
+      const onRunEvent = (event) => {
+        if (!event || event.runId !== runId || !isFinalRunState(event.state)) {
+          return;
+        }
+        cleanup();
+        resolve(this.getStatus(runId) || null);
+      };
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Timed out waiting for engine run ${runId}.`));
+        }, timeoutMs);
+      }
+      this.on('run-event', onRunEvent);
+    });
   }
 
   cancel(runId) {

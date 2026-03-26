@@ -280,6 +280,42 @@ function createWorkspaceFixture() {
         },
       ],
     },
+    modelParity: {
+      status: 'pass',
+      capabilityCount: 5,
+      readyCount: 5,
+      widenReady: true,
+      summary: 'Local-vs-remote parity is PROVEN across 5/5 core coding capabilities.',
+      nextAction: 'Keep the local stack aligned with the remote helper path as the bounded loop changes.',
+      entries: [
+        {
+          id: 'plan',
+          label: 'Plan',
+          status: 'pass',
+          proofStatus: 'pass',
+          local: { role: 'workspace', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama' },
+          remote: { role: 'engine', modelProfileId: 'gse-1-engine', baseModel: 'gpt-5.4', providerSource: 'openai' },
+        },
+      ],
+    },
+    modelParity: {
+      status: 'pass',
+      capabilityCount: 5,
+      readyCount: 5,
+      widenReady: true,
+      summary: 'Local-vs-remote parity is PROVEN across 5/5 core coding capabilities.',
+      nextAction: 'Keep the local stack aligned with the remote helper path as the bounded loop changes.',
+      entries: [
+        {
+          id: 'plan',
+          label: 'Plan',
+          status: 'pass',
+          proofStatus: 'pass',
+          local: { role: 'workspace', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama' },
+          remote: { role: 'engine', modelProfileId: 'gse-1-engine', baseModel: 'gpt-5.4', providerSource: 'openai' },
+        },
+      ],
+    },
     checks: [
       {
         id: 'tests',
@@ -561,6 +597,24 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
         },
       ],
     },
+    modelParity: {
+      status: 'pass',
+      capabilityCount: 5,
+      readyCount: 5,
+      widenReady: true,
+      summary: 'Local-vs-remote parity is PROVEN across 5/5 core coding capabilities.',
+      nextAction: 'Keep the local stack aligned with the remote helper path as the bounded loop changes.',
+      entries: [
+        {
+          id: 'plan',
+          label: 'Plan',
+          status: 'pass',
+          proofStatus: 'pass',
+          local: { role: 'workspace', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama' },
+          remote: { role: 'engine', modelProfileId: 'gse-1-engine', baseModel: 'gpt-5.4', providerSource: 'openai' },
+        },
+      ],
+    },
     checks: [
       {
         id: 'tests',
@@ -633,6 +687,18 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
         topPaths: [{ value: 'renderer/app.js', count: 2 }],
       },
     },
+    vscodeSetup: {
+      companionInstall: {
+        available: true,
+        installed: true,
+      },
+    },
+    extensionHealth: {
+      exists: true,
+      status: 'ready',
+      summary: 'GoSenderr VS Code Companion is aligned enough for the current desktop baseline.',
+      nextStep: 'Keep the extension aligned with the desktop contracts as you tune the engine.',
+    },
     tuningStatus: {
       telemetry: {
         ollama: {
@@ -655,6 +721,7 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.equal(report.areas.models.roles.find((role) => role.id === 'worker').wrappedProfileId, 'gs-dev-1-default');
   assert.equal(report.areas.models.roles.find((role) => role.id === 'reviewer').wrappedProfileId, 'gse-1-engine');
   assert.deepEqual(report.areas.models.roles.find((role) => role.id === 'orchestrator').laneIds, ['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary']);
+  assert.equal(report.areas.models.laneAssignments.find((lane) => lane.laneId === 'chat-fast').role, 'engine');
   assert.equal(report.areas.models.localInventory.status, 'ready');
   assert.equal(report.areas.models.localInventory.entries.some((entry) => entry.wrappedProfileId === 'gs-dev-1-default'), true);
   assert.equal(report.areas.models.localInventory.entries.some((entry) => entry.kind === 'foundry-candidate'), true);
@@ -695,6 +762,7 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.match(report.areas.roadmap.dailyQuotaProof.doNotWidenYetBecause, /blocked or need rescope/i);
   assert.equal(report.areas.roadmap.selfImprovementProof.label, 'PROVEN');
   assert.equal(report.areas.roadmap.companionParity.label, 'PROVEN');
+  assert.equal(report.areas.roadmap.modelParity.label, 'PROVEN');
   assert.equal(report.areas.roadmap.autonomyProof.safeCount, 5);
   assert.equal(report.areas.roadmap.autonomyProof.workspaceScoped, true);
   assert.match(report.areas.roadmap.engineProof.summary, /Patch renderer status cards/i);
@@ -705,6 +773,7 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.match(report.areas.acceptance.blockerSummary, /Renderer smoke failed/i);
   assert.equal(report.areas.acceptance.autonomyProof.safeCount, 5);
   assert.equal(report.areas.acceptance.builderProof.safeCount, 1);
+  assert.equal(report.areas.acceptance.modelParity.readyCount, 5);
   assert.match(report.areas.acceptance.nextSafeAction, /Repair the failing smoke check/i);
   assert.equal(report.areas.models.provisioning.status, 'ready');
   assert.match(report.areas.models.provisioning.summary, /provisioned|routing/i);
@@ -727,6 +796,7 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Self-host expansion outcome:/);
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Self-improvement proof:/);
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Companion parity:/);
+  assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Model parity:/);
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Autonomy proof:/);
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Phase closeout:/);
   assert.match(renderSystemCheck(report, { area: 'roadmap', compact: true }), /Closeout blockers:/);
@@ -847,6 +917,98 @@ test('system-check infers GS-Dev-1 export and training proof from accepted bench
   assert.match(augmented.gsDev1ExportReadiness.summary, /approved or trusted gs-dev-1 training handoff is ready/i);
   assert.equal(augmented.trainingReadiness.status, 'ready');
   assert.match(augmented.trainingReadiness.summary, /training handoff is ready/i);
+});
+
+test('system-check models area surfaces missing live routed local tags from ai status provisioning', () => {
+  const workspaceRoot = createWorkspaceFixture();
+  try {
+    const tuningStatus = {
+      telemetry: {
+        ollama: {
+          running: true,
+          reachable: true,
+          modelCount: 1,
+          selectedModel: 'qwen2.5-coder:14b',
+          selectedModelReady: true,
+          models: ['qwen2.5-coder:14b'],
+        },
+        models: {
+          availableOptions: [
+            { value: 'qwen2.5-coder:14b', label: 'Qwen2.5 Coder 14B', source: 'ollama', ready: true },
+          ],
+          registered: [
+            { value: 'qwen2.5-coder:7b', label: 'Qwen2.5 Coder 7B', source: 'ollama-store', ready: true },
+          ],
+        },
+        memory: { usedPercent: 42 },
+        cpuUsagePercent: 21,
+        thermal: { state: 'nominal' },
+        runtime: { activeRuns: 0, schedulerRunning: false },
+      },
+    };
+    const aiStatus = buildAiStatus({
+      workspaceRoot,
+      settings: {
+        runtime: 'ollama',
+        trainingOllamaModel: 'qwen2.5-coder:14b',
+        aiProfile: 'hybrid-default',
+        aiRoutingPolicy: 'hybrid-default',
+        aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+        aiEngineWrappedProfileId: 'gse-1-engine',
+        aiWrappedProfiles: [
+          {
+            id: 'gs-dev-1-default',
+            displayName: 'Workspace Coding Model',
+            role: 'workspace',
+            baseModel: 'qwen2.5-coder:14b',
+            baseProvider: 'ollama',
+            providerSource: 'ollama',
+          },
+          {
+            id: 'gse-1-engine',
+            displayName: 'GSE-1 Engine',
+            role: 'engine',
+            baseModel: 'qwen2.5-coder:7b',
+            baseProvider: 'ollama',
+            providerSource: 'ollama',
+          },
+        ],
+      },
+      tuningStatus,
+      benchmarkRuns: [
+        { id: 'bench-plan', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'planner', status: 'pass', ok: true, completedAt: '2026-03-25T10:00:00Z' },
+        { id: 'bench-code', model: 'qwen2.5-coder:14b', modelProfileId: 'gs-dev-1-default', baseModel: 'qwen2.5-coder:14b', providerSource: 'ollama', taskMode: 'coder', status: 'pass', ok: true, completedAt: '2026-03-25T10:05:00Z' },
+        { id: 'bench-validate', model: 'qwen2.5-coder:7b', modelProfileId: 'gse-1-engine', baseModel: 'qwen2.5-coder:7b', providerSource: 'ollama', taskMode: 'validator', status: 'pass', ok: true, completedAt: '2026-03-25T10:10:00Z' },
+      ],
+      acceptance: {
+        exists: true,
+        report: {
+          overallStatus: 'pass',
+          summary: 'Acceptance passed.',
+        },
+        controlSummary: {
+          acceptanceStatus: 'pass',
+          safeForNextDay: true,
+          nextDaySummary: 'Acceptance is healthy.',
+          nextSafeAction: 'Keep the next slice bounded.',
+        },
+      },
+    });
+
+    const report = buildSystemCheck({
+      workspaceRoot,
+      aiStatus,
+      tuningStatus,
+    });
+    const modelsView = renderSystemCheck(report, { area: 'models', compact: true });
+
+    assert.equal(report.areas.models.provisioning.status, 'warn');
+    assert.deepEqual(report.areas.models.provisioning.routeCoverage.missingLiveModels, ['qwen2.5-coder:7b']);
+    assert.match(modelsView, /Missing live tags:/);
+    assert.match(modelsView, /qwen2.5-coder:7b/);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
 });
 
 test('system-check keeps GS-Dev-1 export blocked when acceptance is not green', () => {
@@ -1035,6 +1197,15 @@ test('system-check derives rollback and update evidence from the current workspa
     `assistant_promotions_root: ${promotionsRoot}\n`,
     'utf8',
   );
+  fs.mkdirSync(path.join(workspaceRoot, '.assistant_backups', 'proof-backup-1'), { recursive: true });
+  writeJson(path.join(workspaceRoot, '.assistant_backups', 'history.json'), [
+    {
+      backupId: 'proof-backup-1',
+      timestamp: '2026-03-18T10:00:00.000Z',
+      ok: true,
+      afterHead: 'abc1234def',
+    },
+  ]);
   writeJson(path.join(backupRoot, 'manifest.json'), {
     id: 'desktop-app-proof-1',
     platform: 'darwin',
@@ -1050,7 +1221,56 @@ test('system-check derives rollback and update evidence from the current workspa
   assert.equal(appRollbacks.backupCount, 1);
   assert.equal(appRollbacks.latestBackupId, 'desktop-app-proof-1');
   assert.equal(appRollbacks.latestBackupPlatform, 'darwin');
+  assert.equal(appRollbacks.rollbackReady, true);
+  assert.match(String(appRollbacks.summary || ''), /desktop-app-proof-1/);
   assert.equal(updates.workspace.state, 'no-upstream');
   assert.equal(updates.workspace.ok, true);
   assert.equal(updates.workspace.hasUpdates, false);
+  assert.equal(updates.workspace.recovery.rollbackReady, true);
+  assert.equal(updates.workspace.recovery.latestBackupId, 'proof-backup-1');
+  assert.match(String(updates.workspace.recovery.summary || ''), /rollback backup proof-backup-1/i);
+});
+
+test('buildSystemCheck falls back chat-fast to the engine route when lane role metadata is missing', () => {
+  const workspaceRoot = createWorkspaceFixture();
+  const report = buildSystemCheck(workspaceRoot, {
+    assistantConfig: {
+      workspaceModelProfileId: 'gs-dev-1-default',
+      workspaceModelDisplayName: 'Workspace Coding Model',
+      workspaceBaseModel: 'qwen2.5-coder:14b',
+      workspaceBaseProvider: 'ollama',
+      workspaceProviderSource: 'ollama',
+      engineModelProfileId: 'gse-1-engine',
+      engineModelDisplayName: 'GSE-1 Engine',
+      engineBaseModel: 'qwen2.5-coder:7b',
+      engineBaseProvider: 'ollama',
+      engineProviderSource: 'ollama',
+      dailySafeAutonomousTarget: 5,
+      dailySelfImprovementTarget: 5,
+    },
+    aiStatus: {
+      capabilityLanes: [
+        { id: 'chat-fast', label: 'Chat fast' },
+      ],
+    },
+    tuningSettings: {},
+    tuningStatus: { telemetry: {} },
+    runtimeState: { runs: [], activeRuns: [] },
+    learningJournal: {},
+    acceptance: { exists: false, report: { checks: [] } },
+    benchmarks: { runs: [] },
+    promotions: { candidates: [], readyCandidates: [], promotionGate: { status: 'blocked', summary: '' } },
+    taskHub: { tasks: [], recipes: [], runs: [] },
+    vscodeSetup: {},
+    extensionHealth: {},
+    integrations: {},
+    modelFoundry: {},
+    approvedDocsVault: { exists: false, domains: [] },
+    updates: {},
+    appBackups: { backups: [] },
+  });
+
+  const chatLane = report.areas.models.laneAssignments.find((lane) => lane.laneId === 'chat-fast');
+  assert.equal(chatLane.role, 'engine');
+  assert.equal(chatLane.modelRoleId, 'orchestrator');
 });

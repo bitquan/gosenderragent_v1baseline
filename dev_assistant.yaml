@@ -77,6 +77,10 @@ assistant_task_mode_planner_provider: ollama
 
 assistant_task_mode_planner_model: "qwen2.5-coder:7b"
 
+assistant_task_mode_repair_provider: ollama
+
+assistant_task_mode_repair_model: "qwen2.5-coder:7b"
+
 assistant_task_mode_coder_provider: ollama
 
 assistant_task_mode_coder_model: "qwen2.5-coder:14b"

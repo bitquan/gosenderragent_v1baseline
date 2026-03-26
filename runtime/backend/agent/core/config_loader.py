@@ -136,7 +136,7 @@ def validate_config_coherence(project_root: Path) -> dict[str, Any]:
     ):
         _check_path(key)
 
-    for lane in ('planner', 'coder', 'validator', 'summarizer'):
+    for lane in ('planner', 'repair', 'coder', 'validator', 'summarizer'):
         _check_route(lane)
 
     base_provider = _as_trimmed_text(cfg.get('assistant_model_base_provider')).lower()

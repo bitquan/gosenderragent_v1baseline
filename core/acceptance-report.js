@@ -8,6 +8,7 @@ const { ensureDirectory, readJsonFile, writeJsonFileAtomic } = require('./utils'
 
 const LATEST_REPORT_FILE = 'latest.json';
 const SMOKE_CHECK_IDS = new Set(['smoke', 'smoke-ui', 'self-host-smoke']);
+const LOCAL_PROVIDER_SOURCES = new Set(['huggingface-local', 'lmstudio', 'local', 'ollama']);
 
 function normalizeWorkspacePath(value) {
   return String(value || '').trim().replace(/\\/g, '/').toLowerCase();
@@ -274,6 +275,71 @@ function buildBuilderProofSummary(report = {}) {
   });
 }
 
+function buildModelParitySummary(report = {}) {
+  const parity = report?.modelParity && typeof report.modelParity === 'object' ? report.modelParity : {};
+  const entries = Array.isArray(parity.entries) ? parity.entries : [];
+  const capabilityCount = Math.max(0, Number(parity.capabilityCount ?? entries.length) || 0);
+  const readyCount = Math.max(
+    0,
+    Number(parity.readyCount ?? entries.filter((entry) => String(entry?.status || '').trim().toLowerCase() === 'pass').length) || 0,
+  );
+  const status = String(parity.status || '').trim().toLowerCase()
+    || (capabilityCount === 0
+      ? 'missing'
+      : readyCount >= capabilityCount
+        ? 'pass'
+        : readyCount > 0
+          ? 'warn'
+          : 'fail');
+  const summary = String(parity.summary || '').trim()
+    || (status === 'missing'
+      ? 'No local-vs-remote model parity pack is recorded yet.'
+      : status === 'pass'
+        ? `Local-vs-remote parity is PROVEN across ${readyCount}/${capabilityCount} core coding capabilities.`
+        : `Local-vs-remote parity is only ${readyCount}/${capabilityCount} across the core coding capabilities.`);
+  const nextAction = String(parity.nextAction || '').trim()
+    || (status === 'pass'
+      ? 'Keep local and remote helper routes aligned as the bounded coding loop changes.'
+      : 'Finish the missing local-vs-remote parity checks before widening the local default path.');
+  return {
+    status,
+    label: status === 'pass'
+      ? 'PROVEN'
+      : status === 'warn'
+        ? 'PARTIAL'
+        : status === 'fail'
+          ? 'BLOCKED'
+          : 'NOT READY',
+    proven: status === 'pass',
+    widenReady: parity.widenReady === true || status === 'pass',
+    capabilityCount,
+    readyCount,
+    summary,
+    nextAction,
+    entries: entries.map((entry) => ({
+      id: String(entry?.id || '').trim(),
+      label: String(entry?.label || entry?.id || 'capability').trim(),
+      status: String(entry?.status || '').trim().toLowerCase(),
+      summary: String(entry?.summary || '').trim(),
+      proofStatus: String(entry?.proofStatus || '').trim().toLowerCase(),
+      local: entry?.local && typeof entry.local === 'object' ? {
+        role: String(entry.local.role || '').trim().toLowerCase(),
+        modelProfileId: String(entry.local.modelProfileId || '').trim(),
+        baseModel: String(entry.local.baseModel || '').trim(),
+        providerSource: String(entry.local.providerSource || '').trim().toLowerCase(),
+        localProvider: LOCAL_PROVIDER_SOURCES.has(String(entry.local.providerSource || '').trim().toLowerCase()),
+      } : {},
+      remote: entry?.remote && typeof entry.remote === 'object' ? {
+        role: String(entry.remote.role || '').trim().toLowerCase(),
+        modelProfileId: String(entry.remote.modelProfileId || '').trim(),
+        baseModel: String(entry.remote.baseModel || '').trim(),
+        providerSource: String(entry.remote.providerSource || '').trim().toLowerCase(),
+        remoteProvider: !LOCAL_PROVIDER_SOURCES.has(String(entry.remote.providerSource || '').trim().toLowerCase()),
+      } : {},
+    })),
+  };
+}
+
 function buildRepoScopedProofSummary(report = {}, proofKey = '', options = {}) {
   const proof = report?.[proofKey] && typeof report[proofKey] === 'object' ? report[proofKey] : {};
   const actions = Array.isArray(proof.actions) ? proof.actions : [];
@@ -359,6 +425,7 @@ function buildAcceptanceControlSummary(report = null, state = {}) {
   const autonomyProof = buildAutonomyProofSummary(safeReport);
   const selfImprovementProof = buildSelfImprovementProofSummary(safeReport);
   const builderProof = buildBuilderProofSummary(safeReport);
+  const modelParity = buildModelParitySummary(safeReport);
   const acceptanceStatus = String(
     safeReport.overallStatus
     || baseSummary.overallStatus
@@ -422,6 +489,7 @@ function buildAcceptanceControlSummary(report = null, state = {}) {
     autonomyProof,
     selfImprovementProof,
     builderProof,
+    modelParity,
     nextDayStatus,
     nextDayLabel: formatStatusLabel(nextDayStatus, 'BLOCKED'),
     nextDaySummary,
