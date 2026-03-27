@@ -19,6 +19,23 @@ export type ChatMessage = {
   }>;
 };
 
+export type AssistantChatEvent = {
+  requestId: string;
+  type: 'progress' | 'reply-delta' | 'complete' | 'error';
+  title?: string;
+  detail?: string;
+  delta?: string;
+  message?: string;
+  createdAt?: string;
+};
+
+export type AssistantChatProgress = {
+  requestId: string;
+  title: string;
+  detail: string;
+  createdAt?: string;
+};
+
 export type ChatThread = {
   id: string;
   title: string;

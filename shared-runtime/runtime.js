@@ -1030,6 +1030,10 @@ class SharedAgentRuntime extends EventEmitter {
     this.emit('scheduler-event', event);
   }
 
+  _emitChatEvent(event) {
+    this.emit('chat-event', event);
+  }
+
   cancelLatest() {
     const activeRuns = Array.from(this.processes.keys());
     if (activeRuns.length === 0) {
@@ -1103,7 +1107,11 @@ class SharedAgentRuntime extends EventEmitter {
 
   chat(prompt, context = {}) {
     this.client.setWorkspaceRoot(this.workspaceRoot);
-    return this.client.chat(prompt, context);
+    return this.client.chat(prompt, context, {
+      onEvent: (event) => {
+        this._emitChatEvent(event);
+      },
+    });
   }
 
   startScheduler(options = {}) {

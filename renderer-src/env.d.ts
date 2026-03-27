@@ -39,6 +39,8 @@ declare global {
       stopOllama: (payload?: LooseRecord) => Promise<LooseRecord>;
       getWorkspaceVsCodeStatus: (payload?: LooseRecord) => Promise<LooseRecord>;
       bootstrapWorkspaceVsCode: (payload?: LooseRecord) => Promise<LooseRecord>;
+      installWorkspaceVsCodeCompanion: (payload?: LooseRecord) => Promise<LooseRecord>;
+      openWorkspaceInVsCode: (payload?: LooseRecord) => Promise<LooseRecord>;
       getModelFoundryStatus: (payload?: LooseRecord) => Promise<LooseRecord>;
       seedModelFoundryCandidate: (payload?: LooseRecord) => Promise<LooseRecord>;
       getLearningChanges: (payload?: LooseRecord) => Promise<LooseRecord>;
@@ -90,6 +92,8 @@ declare global {
       workspace: {
         vscodeStatus: (payload?: LooseRecord) => Promise<LooseRecord>;
         vscodeBootstrap: (payload?: LooseRecord) => Promise<LooseRecord>;
+        vscodeInstallCompanion: (payload?: LooseRecord) => Promise<LooseRecord>;
+        vscodeOpen: (payload?: LooseRecord) => Promise<LooseRecord>;
       };
       integrations: {
         list: (payload?: LooseRecord) => Promise<LooseRecord>;
@@ -127,6 +131,7 @@ declare global {
       onLearningEvent: (handler: (payload: LooseRecord) => void) => () => void;
       onLabEvent: (handler: (payload: LooseRecord) => void) => () => void;
       onBenchmarkEvent: (handler: (payload: LooseRecord) => void) => () => void;
+      onAssistantChatEvent: (handler: (payload: LooseRecord) => void) => () => void;
     };
   }
 }

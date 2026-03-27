@@ -18,10 +18,16 @@ const {
   buildWorkspaceUpdateStatus,
   renderSystemCheck,
 } = require('../core/system-check');
+const { readHub } = require('../core/task-hub');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function localDayStamp(value = Date.now()) {
+  const moment = new Date(value);
+  return `${moment.getFullYear()}-${String(moment.getMonth() + 1).padStart(2, '0')}-${String(moment.getDate()).padStart(2, '0')}`;
 }
 
 function createWorkspaceFixture() {
@@ -29,7 +35,7 @@ function createWorkspaceFixture() {
   const otherWorkspaceRoot = path.join(root, '..', 'other-workspace');
   const artifactsRoot = path.join(root, 'artifacts');
   const companionRoot = path.join(root, 'integration-library', 'extensions', 'vscode-companion');
-  const roadmapDay = new Date().toISOString().slice(0, 10);
+  const roadmapDay = localDayStamp();
   fs.mkdirSync(artifactsRoot, { recursive: true });
   fs.mkdirSync(companionRoot, { recursive: true });
   fs.writeFileSync(path.join(root, 'dev_assistant.yaml'), [
@@ -658,7 +664,7 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
     workspaceRoot,
     targetWorkspaceRoot: workspaceRoot,
     path: 'renderer/app.js',
-    now: `${new Date().toISOString().slice(0, 10)}T18:00:00.000Z`,
+    now: `${localDayStamp()}T18:00:00.000Z`,
     acceptance: {
       ok: true,
       exists: true,
@@ -738,6 +744,8 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.equal(report.areas.autonomy.currentWorkspaceActionCount, 1);
   assert.equal(report.areas.autonomy.latestActions.some((item) => item.runId === 'run-foreign'), false);
   assert.equal(report.areas.autonomy.highestRiskAction.runId, 'run-123');
+  assert.equal(report.areas.autonomy.blockers.total, 1);
+  assert.equal(report.areas.autonomy.unlockPlan.status, 'hold');
   assert.match(report.areas.autonomy.summary, /daily progress|review|overscoped/i);
   assert.match(report.areas.autonomy.recommendedNextSafeAction, /Repair|Rescope/i);
   assert.match(report.areas.engine.nextSafeAction, /Repair|Rescope/i);
@@ -828,9 +836,28 @@ test('buildSystemCheck aggregates runtime, model roles, and self-improvement que
   assert.match(renderSystemCheck(report, { area: 'learning', compact: true }), /Self-improvement proof:/);
   assert.match(renderSystemCheck(report, { area: 'autonomy', compact: true }), /Workspace scoped:/);
   assert.match(renderSystemCheck(report, { area: 'autonomy', compact: true }), /Current workspace:/);
+  assert.match(renderSystemCheck(report, { area: 'autonomy', compact: true }), /Blockers:/);
+  assert.match(renderSystemCheck(report, { area: 'autonomy', compact: true }), /Unlock path:/);
   assert.match(renderSystemCheck(report, { area: 'autonomy', compact: true }), /Autonomy proof:/);
   assert.match(renderSystemCheck(report, { area: 'acceptance', compact: true }), /Autonomy proof:/);
   assert.match(renderSystemCheck(report, { area: 'acceptance', compact: true }), /Builder proof:/);
+});
+
+test('system-check falls back daily quota focus to a blocked rescope slice when no explicit daily focus task exists', () => {
+  const workspaceRoot = createWorkspaceFixture();
+  const taskHub = readHub(workspaceRoot);
+
+  taskHub.tasks = taskHub.tasks.filter((task) => String(task?.id || '').trim() !== 'task-daily-1');
+
+  const report = buildSystemCheck({
+    workspaceRoot,
+    targetWorkspaceRoot: workspaceRoot,
+    taskHub,
+  });
+
+  assert.equal(report.areas.roadmap.dailyQuotaProof.focusTask.title, 'Rescope the blocked autonomous patch slice');
+  assert.equal(report.areas.roadmap.dailyQuotaProof.focusTask.focusSourceType, 'blocked-rescope');
+  assert.equal(report.areas.roadmap.dailyQuotaProof.focusTask.blockedBy, 'model-fit');
 });
 
 test('system-check infers GS-Dev-1 export and training proof from accepted benchmark and promotion evidence', () => {
@@ -1114,7 +1141,7 @@ test('system-check CLI supports filtered JSON output', () => {
 
 test('buildSelfImprovementSummary counts repo-scoped proof actions toward today when acceptance is healthy', () => {
   const workspaceRoot = createWorkspaceFixture();
-  const now = `${new Date().toISOString().slice(0, 10)}T22:30:00.000Z`;
+  const now = `${localDayStamp()}T22:30:00.000Z`;
   const historyPath = path.join(getAssistantArtifactsRoot(workspaceRoot), 'dev_data', '.dev_agent_runs', 'self_improvement', 'execution_history.jsonl');
   fs.writeFileSync(
     historyPath,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,11 @@ class ModelProvider(ABC):
     @abstractmethod
     def generate(self, *, prompt: str | None = None, messages: list[ProviderMessage] | None = None) -> str:
         raise NotImplementedError
+
+    def stream_generate(self, *, prompt: str | None = None, messages: list[ProviderMessage] | None = None, **kwargs: Any) -> Iterator[str]:
+        generated = self.generate(prompt=prompt, messages=messages, **kwargs)
+        if generated:
+            yield generated
 
     def chat(self, messages: list[ProviderMessage], **kwargs: Any) -> str:
         return self.generate(messages=messages, **kwargs)

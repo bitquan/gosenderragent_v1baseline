@@ -111,6 +111,7 @@ const workspaceApi = {
   vscodeStatus: wrapInvoke('workspace:vscodeStatus'),
   vscodeBootstrap: wrapInvoke('workspace:vscodeBootstrap'),
   vscodeInstallCompanion: wrapInvoke('workspace:vscodeInstallCompanion'),
+  vscodeOpen: wrapInvoke('workspace:vscodeOpen'),
 };
 
 const automationsApi = {
@@ -262,6 +263,11 @@ const eventsApi = {
     ipcRenderer.on('engine:benchmark-event', wrapped);
     return () => ipcRenderer.removeListener('engine:benchmark-event', wrapped);
   },
+  onAssistantChatEvent: (handler) => {
+    const wrapped = (_event, payload) => handler(payload);
+    ipcRenderer.on('assistant:chat-event', wrapped);
+    return () => ipcRenderer.removeListener('assistant:chat-event', wrapped);
+  },
 };
 
 contextBridge.exposeInMainWorld('gosAgent', {
@@ -374,6 +380,7 @@ contextBridge.exposeInMainWorld('gosAgent', {
   getWorkspaceVsCodeStatus: workspaceApi.vscodeStatus,
   bootstrapWorkspaceVsCode: workspaceApi.vscodeBootstrap,
   installWorkspaceVsCodeCompanion: workspaceApi.vscodeInstallCompanion,
+  openWorkspaceInVsCode: workspaceApi.vscodeOpen,
 
   listAutomations: automationsApi.list,
   getAutomationSettings: automationsApi.getSettings,
@@ -443,4 +450,5 @@ contextBridge.exposeInMainWorld('gosAgent', {
   onLearningEvent: eventsApi.onLearningEvent,
   onLabEvent: eventsApi.onLabEvent,
   onBenchmarkEvent: eventsApi.onBenchmarkEvent,
+  onAssistantChatEvent: eventsApi.onAssistantChatEvent,
 });

@@ -21726,24 +21726,27 @@
   // renderer-src/lib/ai-route-copy.ts
   var AI_ROUTE_COPY = Object.freeze({
     settingsTabDescription: "Manage selector-driven routing, bridge profiles, local model inventory, remote providers, and per-route overrides from one place.",
-    modelSetupPrompt: "Set up the workspace coding model, engine control model, and verify the route plan is ready.",
-    enginePanelTitle: "Chat follows the current route plan",
-    overrideMetricLabel: "Route overrides",
-    overrideMetricActiveSummary: "Manual route overrides are active.",
-    overrideMetricIdleSummary: "All capability routes currently follow the active profile and route plan.",
-    resetOverridesLabel: "Reset route overrides",
-    capabilityRoutesEyebrow: "Capability routes",
-    capabilityRoutesTitle: "Tune each capability route without hand-editing routing rules",
-    capabilityRoutesSummary: "Leave a route on inherit to follow the active profile and route plan, or pin that route to the benchmark leader or a specific model.",
-    routeCardEyebrow: "Route",
-    routeSourceOverride: "Manual route override",
-    routeSourceInherited: "Inherited from route plan",
-    routeSelectLabel: "Route selection",
-    routeResetLabel: "Reset route",
-    ladderEyebrow: "Local model MVP ladder",
-    ladderSummary: "This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof.",
-    unlockEyebrow: "Capability unlock ladder",
-    unlockSummary: "Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block."
+    modelSetupPrompt: "Open Tune Pod to finish model setup for this workspace.",
+    tunePodFitPrompt: "Open Tune Pod to see which local models fit this PC.",
+    tunePodRoutePrompt: "Open Tune Pod to see what still needs setup for local coding.",
+    tunePodActionLabel: "Open Tune Pod",
+    enginePanelTitle: "Chat uses your current model setup",
+    overrideMetricLabel: "Manual model choices",
+    overrideMetricActiveSummary: "Manual model choices are active.",
+    overrideMetricIdleSummary: "Task model choices follow the current setup.",
+    resetOverridesLabel: "Reset manual choices",
+    capabilityRoutesEyebrow: "Task model choices",
+    capabilityRoutesTitle: "Choose which model handles each kind of work",
+    capabilityRoutesSummary: "Leave a task on automatic to use the current setup, or choose a specific model when you need a manual choice.",
+    routeCardEyebrow: "Task",
+    routeSourceOverride: "Manual choice",
+    routeSourceInherited: "Using the current workspace setup",
+    routeSelectLabel: "Model choice",
+    routeResetLabel: "Reset choice",
+    ladderEyebrow: "Advanced readiness ladder",
+    ladderSummary: "Advanced: deeper setup progress and checks for people tuning the full local model stack.",
+    unlockEyebrow: "Advanced setup steps",
+    unlockSummary: "Advanced: use these steps when you need to tune the full local model stack beyond the default setup view."
   });
   function localModelProgramStatusLabel(value) {
     if (value === "verified") {
@@ -21900,10 +21903,11 @@
   var import_jsx_runtime = __toESM(require_jsx_runtime());
   var THREADS_KEY = "gosenderr.desktop.workbench.threads.v3";
   var ACTIVE_THREAD_KEY = "gosenderr.desktop.workbench.active-thread.v3";
-  var MONITOR_TABS = ["overview", "runs", "learning", "promotions", "debug"];
+  var IDE_PANEL_PROMPT = "Open Workbench IDE tools.";
+  var MONITOR_TABS = ["overview", "runs", "learning", "promotions", "debug", "ide"];
   var INSPECTOR_TABS = ["manager", "inbox", "file", "diff", "learning"];
   var INSPECTOR_TAB_LABELS = {
-    manager: "Manager",
+    manager: "Context",
     inbox: "Inbox",
     file: "File",
     diff: "Diff",
@@ -21934,6 +21938,13 @@
       title: "AI routing and model selection",
       eyebrow: "Profiles + providers",
       description: AI_ROUTE_COPY.settingsTabDescription,
+      icon: "spark"
+    },
+    tunepod: {
+      navLabel: "Tune Pod",
+      title: "Tune Pod",
+      eyebrow: "Machine fit + model setup",
+      description: "See what this machine can run, which local models are ready, and what setup step comes next.",
       icon: "spark"
     },
     autonomy: {
@@ -22019,6 +22030,10 @@
     composerText: "",
     pendingAttachments: [],
     busyChat: false,
+    activeChatRequestId: "",
+    activeChatThreadId: "",
+    activeChatMessageId: "",
+    liveChatProgress: null,
     busyBinaryUpdate: false,
     busyAcceptance: false,
     busySafetyController: false,
@@ -22039,6 +22054,16 @@
     rightRailOpen: false
   };
   var store = createStore(initialState);
+  function upsertThreadMessage(messages, nextMessage) {
+    const messageIndex = messages.findIndex((message) => message.id === nextMessage.id);
+    if (messageIndex === -1) {
+      return [...messages, nextMessage];
+    }
+    return messages.map((message) => message.id === nextMessage.id ? { ...message, ...nextMessage } : message);
+  }
+  function updateThreadMessages(threads, threadId, updater, updatedAt) {
+    return threads.map((thread) => thread.id === threadId ? { ...thread, updatedAt, messages: updater(thread.messages) } : thread);
+  }
   function createThread(title) {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
     return {
@@ -22098,6 +22123,8 @@
         return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0V11a2 2 0 0 0 2 2h2M11 4a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 4Zm0 0v7.5" }) });
       case "pull-request":
         return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0v8.5m6-8.5a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 3.75Zm0 0V8a3 3 0 0 1-3 3H6.25" }) });
+      case "terminal":
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M3.25 4.25h9.5a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-4.5a1.5 1.5 0 0 1 1.5-1.5Zm1.5 2 1.75 1.75-1.75 1.75M8.25 10h2.75" }) });
       case "session":
       default:
         return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("svg", { className: classes, viewBox: "0 0 16 16", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M4 4.75h8M4 8h8M4 11.25h5.5" }) });
@@ -22118,6 +22145,58 @@
     const messages = Array.isArray(thread?.messages) ? thread.messages : [];
     const latest = [...messages].reverse().find((message) => message.role === "assistant" || message.role === "system");
     return String(latest?.id || "").trim();
+  }
+  function renderChatInlineText(value, keyPrefix) {
+    return String(value || "").split("\n").map((line, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_react2.default.Fragment, { children: [
+      index > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("br", {}) : null,
+      line
+    ] }, `${keyPrefix}-${index}`));
+  }
+  function renderChatMessageBody(text, keyPrefix) {
+    const blocks = String(text || "").replace(/\r/g, "").split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+    if (blocks.length === 0) {
+      return null;
+    }
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-message-body", children: blocks.map((block, blockIndex) => {
+      const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+      if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line))) {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { children: lines.map((line, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(line.replace(/^[-*]\s+/, ""), `${keyPrefix}-ul-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ul-${blockIndex}`);
+      }
+      if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line))) {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ol", { children: lines.map((line, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(line.replace(/^\d+\.\s+/, ""), `${keyPrefix}-ol-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ol-${blockIndex}`);
+      }
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: renderChatInlineText(block, `${keyPrefix}-p-${blockIndex}`) }, `${keyPrefix}-p-${blockIndex}`);
+    }) });
+  }
+  function buildAssistantProgressState(input) {
+    if (input.activeTaskRun) {
+      const runLabel = String(
+        input.activeTaskRun.runtimeLabel || input.activeTaskRun.label || input.activeTaskRun.title || input.activeTaskRun.task || "Current task"
+      ).trim() || "Current task";
+      const runState = String(
+        input.activeTaskRun.runtimeState || input.activeTaskRun.state || input.activeTaskRun.status || "running"
+      ).trim().toLowerCase().replace(/_/g, " ");
+      return {
+        title: `Working on ${runLabel}`,
+        detail: `${runLabel} is ${runState || "running"}. Chat keeps the summary here while Workbench holds files, diffs, and validation.`,
+        showWorkbenchAction: true
+      };
+    }
+    if (input.chatProgress && input.busyChat) {
+      return {
+        title: String(input.chatProgress.title || "Reviewing the workspace"),
+        detail: String(input.chatProgress.detail || "Checking the current repo context before drafting the reply."),
+        showWorkbenchAction: false
+      };
+    }
+    if (input.busyChat) {
+      return {
+        title: "Reviewing the workspace",
+        detail: "Checking the current repo context before drafting the reply.",
+        showWorkbenchAction: false
+      };
+    }
+    return null;
   }
   function readChangedFileItems(snapshot) {
     const review = snapshot?.review || {};
@@ -22220,7 +22299,7 @@
         id: "reviewer-summary",
         severity: reviewerStatus === "needs-revision" ? "warn" : "info",
         title: reviewerStatus === "needs-revision" ? "Reviewer wants a revision pass" : "Reviewer wants a manual review pass",
-        detail: String(reviewer.summary || reviewer.nextAction || "Open Monitor to inspect the Test Bench review results."),
+        detail: String(reviewer.summary || reviewer.nextAction || "Open Workbench to inspect the Test Bench review results."),
         openModule: "monitor",
         targetTab: "runs",
         actionLabel: "Open Test Bench"
@@ -22232,7 +22311,7 @@
         id: "regression-candidates",
         severity: "info",
         title: `${regressionCount} regression candidate${regressionCount === 1 ? "" : "s"} ready`,
-        detail: String(regression.summary || "Open Monitor to turn the latest fix into replayable coverage."),
+        detail: String(regression.summary || "Open Workbench to turn the latest fix into replayable coverage."),
         openModule: "monitor",
         targetTab: "runs",
         actionLabel: "Open Test Bench"
@@ -22262,7 +22341,7 @@
         detail: `${newestCandidate.name || newestCandidate.id || "Candidate"} is ready for monitored promotion.`,
         openModule: "monitor",
         targetTab: "inbox",
-        actionLabel: "Open monitor"
+        actionLabel: "Open Workbench"
       });
     }
     const updateState = String(updates?.workspace?.state || updates?.state || "").trim().toLowerCase();
@@ -22282,10 +22361,10 @@
         id: "engine-acceptance-status",
         severity: acceptanceStatus === "fail" ? "critical" : "warn",
         title: acceptanceStatus === "fail" ? "Engine acceptance needs review" : "Engine acceptance raised warnings",
-        detail: String(acceptance?.summary || acceptance?.nextAction || "Open Monitor to review the latest engine acceptance report."),
+        detail: String(acceptance?.summary || acceptance?.nextAction || "Open Workbench to review the latest engine acceptance report."),
         openModule: "monitor",
         targetTab: "overview",
-        actionLabel: "Open monitor"
+        actionLabel: "Open Workbench"
       });
     }
     input.benchmarkEvents.filter((item) => ["fail", "failed", "warn", "warning"].includes(String(item.state || item.status || "").toLowerCase())).slice(0, 2).forEach((item, index) => {
@@ -22328,6 +22407,7 @@
     const safeRecipePrompt = String(
       input.safeRecipe?.prompt || input.safeRecipe?.summary || ""
     ).trim();
+    const tunePodPrompt = String(input.tunePodPrompt || "").trim();
     if (!lower && safeRecipePrompt) {
       pushUniqueSuggestion(suggestions, summarizeText(safeRecipePrompt, 120));
     }
@@ -22340,6 +22420,9 @@
     if (!lower) {
       pushUniqueSuggestion(suggestions, "Plan the next safe coding task.");
       pushUniqueSuggestion(suggestions, "Review the current repo and tell me what needs fixing first.");
+      if (tunePodPrompt) {
+        pushUniqueSuggestion(suggestions, tunePodPrompt);
+      }
     }
     if (lower.includes("/")) {
       pushUniqueSuggestion(suggestions, "/health");
@@ -22361,6 +22444,9 @@
     if (/(plan|roadmap|next step|next task|scope)/.test(lower)) {
       pushUniqueSuggestion(suggestions, "Plan the next safe coding task.");
     }
+    if (tunePodPrompt && /(local|model|ollama|route|routing|proof|benchmark|acceptance|fit|gpu|vram|ram|hardware|tunepod|tune pod)/.test(lower)) {
+      pushUniqueSuggestion(suggestions, tunePodPrompt);
+    }
     if (/(doc|docs|documentation|guide|reference)/.test(lower)) {
       const topDoc = docsRecommendations[0] && typeof docsRecommendations[0] === "object" ? docsRecommendations[0] : null;
       if (topDoc?.label && topDoc?.domain) {
@@ -22373,6 +22459,7 @@
       }
     }
     if (/(vscode|vs code|extension|editor|ide)/.test(lower)) {
+      pushUniqueSuggestion(suggestions, IDE_PANEL_PROMPT);
       pushUniqueSuggestion(suggestions, "Set up VS Code support for this workspace and summarize what changed.");
     }
     if (input.safeMode?.active) {
@@ -22648,6 +22735,66 @@
       safeModeActive: safeMode.active === true
     });
   }
+  function readPositiveNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  }
+  function readTunePodCapabilities(target, machineProfile, fallbackTarget = null) {
+    const targetCapabilities = target?.capabilities && typeof target.capabilities === "object" ? target.capabilities : fallbackTarget?.capabilities && typeof fallbackTarget.capabilities === "object" ? fallbackTarget.capabilities : {};
+    return {
+      systemRamGb: readPositiveNumber(machineProfile?.totalMemoryGiB) || readPositiveNumber(targetCapabilities?.systemRamGb),
+      cpuThreads: readPositiveNumber(machineProfile?.cpuCount) || readPositiveNumber(targetCapabilities?.cpuThreads),
+      gpuVramGb: readPositiveNumber(machineProfile?.gpuVramGb) || readPositiveNumber(targetCapabilities?.gpuVramGb),
+      dedicatedGpu: typeof machineProfile?.hasDedicatedGpu === "boolean" ? machineProfile.hasDedicatedGpu === true : typeof targetCapabilities?.dedicatedGpu === "boolean" ? targetCapabilities.dedicatedGpu === true : null
+    };
+  }
+  function evaluateTunePodRequirementFit(preset, capabilities) {
+    const requirements = preset?.requirements && typeof preset.requirements === "object" ? preset.requirements : {};
+    const blockers = [];
+    if (Number(requirements.minimumSystemRamGb || 0) > 0 && capabilities.systemRamGb !== null && capabilities.systemRamGb < Number(requirements.minimumSystemRamGb)) {
+      blockers.push(`${Number(requirements.minimumSystemRamGb)} GB RAM minimum`);
+    }
+    if (Number(requirements.minimumCpuThreads || 0) > 0 && capabilities.cpuThreads !== null && capabilities.cpuThreads < Number(requirements.minimumCpuThreads)) {
+      blockers.push(`${Number(requirements.minimumCpuThreads)} CPU threads minimum`);
+    }
+    if (requirements.requiresDedicatedGpu === true && capabilities.dedicatedGpu === false) {
+      blockers.push("dedicated GPU required");
+    }
+    if (Number(requirements.minimumGpuVramGb || 0) > 0 && capabilities.gpuVramGb !== null && capabilities.gpuVramGb < Number(requirements.minimumGpuVramGb)) {
+      blockers.push(`${Number(requirements.minimumGpuVramGb)} GB VRAM minimum`);
+    }
+    return {
+      fits: blockers.length === 0,
+      blockers
+    };
+  }
+  function buildTunePodGuidance(snapshot, aiStatus, tuning) {
+    const settings = snapshot?.settings || {};
+    const targetHardwareOptions = Array.isArray(tuning?.hardwareTargets) ? tuning.hardwareTargets : [];
+    const installPresets = Array.isArray(tuning?.installPresets) ? tuning.installPresets : [];
+    const selectedHardwareTarget = String(settings.trainingHardwareTarget || tuning?.settings?.trainingHardwareTarget || "auto");
+    const machineProfile = tuning?.telemetry?.machine && typeof tuning.telemetry.machine === "object" ? tuning.telemetry.machine : {};
+    const selectedTarget = targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget) || null;
+    const fallbackTarget = targetHardwareOptions.find((item) => String(item?.id || "") === String(machineProfile.id || "")) || null;
+    const capabilities = readTunePodCapabilities(selectedTarget, machineProfile, fallbackTarget);
+    const compatiblePresets = installPresets.filter((preset) => evaluateTunePodRequirementFit(preset, capabilities).fits);
+    const localModelProgram = buildLocalModelProgramView(snapshot, aiStatus, tuning);
+    const nextLayerId = String(localModelProgram.nextLayer?.id || "").trim().toLowerCase();
+    const fitBlocked = nextLayerId === "foundation" || compatiblePresets.length === 0;
+    const routeProofBlocked = ["routing", "coding"].includes(nextLayerId);
+    if (!fitBlocked && !routeProofBlocked) {
+      return {
+        blocked: false,
+        prompt: "",
+        reason: ""
+      };
+    }
+    return {
+      blocked: true,
+      prompt: fitBlocked ? AI_ROUTE_COPY.tunePodFitPrompt : AI_ROUTE_COPY.tunePodRoutePrompt,
+      reason: fitBlocked ? "Tune Pod has the machine-fit and compatible-model view for the current blocker." : "Tune Pod has the local-first route proof ladder for the current blocker."
+    };
+  }
   function App() {
     const state = useStoreValue(store);
     const reportRendererError = window.gosAgent.reportRendererError;
@@ -22764,6 +22911,67 @@
         appendRuntimeEvent("benchmarkEvents", payload);
         scheduleRefresh(500);
       });
+      const offAssistantChat = window.gosAgent.onAssistantChatEvent((payload) => {
+        const event = payload;
+        store.update((current) => {
+          const requestId = String(event?.requestId || "").trim();
+          if (!requestId || requestId !== current.activeChatRequestId || !current.activeChatThreadId || !current.activeChatMessageId) {
+            return current;
+          }
+          const eventAt = String(event?.createdAt || (/* @__PURE__ */ new Date()).toISOString());
+          const activeThread2 = current.threads.find((thread2) => thread2.id === current.activeChatThreadId) || null;
+          const activeMessage = activeThread2?.messages.find((message) => message.id === current.activeChatMessageId) || null;
+          const hasStartedReply = String(activeMessage?.text || "").length > 0;
+          if (event.type === "progress") {
+            if (hasStartedReply) {
+              return current;
+            }
+            return {
+              ...current,
+              liveChatProgress: {
+                requestId,
+                title: String(event.title || "Reviewing the workspace"),
+                detail: String(event.detail || "Checking the current repo context before drafting the reply."),
+                createdAt: eventAt
+              }
+            };
+          }
+          if (event.type === "reply-delta") {
+            const delta = String(event.delta || "");
+            if (!delta) {
+              return current;
+            }
+            return {
+              ...current,
+              liveChatProgress: null,
+              threads: updateThreadMessages(
+                current.threads,
+                current.activeChatThreadId,
+                (messages) => messages.map((message) => message.id === current.activeChatMessageId ? { ...message, text: `${message.text || ""}${delta}` } : message),
+                eventAt
+              )
+            };
+          }
+          if (event.type === "complete") {
+            return {
+              ...current,
+              liveChatProgress: null
+            };
+          }
+          if (event.type === "error") {
+            return {
+              ...current,
+              liveChatProgress: {
+                requestId,
+                title: "Reply interrupted",
+                detail: String(event.message || "The assistant could not finish the reply."),
+                createdAt: eventAt
+              }
+            };
+          }
+          return current;
+        });
+      });
       return () => {
         if (refreshTimerRef.current !== null) {
           window.clearTimeout(refreshTimerRef.current);
@@ -22775,6 +22983,7 @@
         offLearning();
         offLab();
         offBenchmark();
+        offAssistantChat();
       };
     }, []);
     (0, import_react2.useEffect)(() => {
@@ -22896,16 +23105,34 @@
         createdAt,
         attachments
       };
+      const requestId = makeId("chatreq");
+      const assistantMessageId = makeId("msg");
+      const assistantPlaceholder = {
+        id: assistantMessageId,
+        role: "assistant",
+        text: "",
+        createdAt
+      };
       store.update((current) => ({
         ...current,
         busyChat: true,
+        activeChatRequestId: requestId,
+        activeChatThreadId: currentThread.id,
+        activeChatMessageId: assistantMessageId,
+        liveChatProgress: {
+          requestId,
+          title: "Reviewing the workspace",
+          detail: "Checking the current repo context before drafting the reply.",
+          createdAt
+        },
         composerText: "",
         pendingAttachments: [],
         error: "",
-        threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, updatedAt: createdAt, messages: [...entry.messages, userMessage] } : entry)
+        threads: updateThreadMessages(current.threads, currentThread.id, (messages) => [...messages, userMessage, assistantPlaceholder], createdAt)
       }));
       try {
         const reply = await window.gosAgent.chatMessage(text, snapshot.targetWorkspaceRoot || snapshot.workspaceRoot, {
+          requestId,
           workspaceRoot: snapshot.workspaceRoot,
           targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
           labRoot: snapshot.selectedLabRoot || "",
@@ -22925,39 +23152,51 @@
             modelProvisioning: store.getState().aiStatus?.provisioning || {}
           }
         });
-        const assistantMessage = {
-          id: makeId("msg"),
-          role: "assistant",
-          text: String(reply?.reply || reply?.message || "No response."),
-          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-          suggestions: Array.isArray(reply?.suggestions) ? reply.suggestions : [],
-          refs: Array.isArray(reply?.refs) ? reply.refs : []
-        };
+        const completedAt = (/* @__PURE__ */ new Date()).toISOString();
         store.update((current) => ({
           ...current,
           busyChat: false,
-          threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, updatedAt: assistantMessage.createdAt, messages: [...entry.messages, assistantMessage] } : entry),
+          activeChatRequestId: current.activeChatRequestId === requestId ? "" : current.activeChatRequestId,
+          activeChatThreadId: current.activeChatRequestId === requestId ? "" : current.activeChatThreadId,
+          activeChatMessageId: current.activeChatRequestId === requestId ? "" : current.activeChatMessageId,
+          liveChatProgress: current.activeChatRequestId === requestId ? null : current.liveChatProgress,
+          threads: updateThreadMessages(current.threads, currentThread.id, (messages) => {
+            const existingMessage = messages.find((message) => message.id === assistantMessageId) || null;
+            const nextMessage = {
+              id: assistantMessageId,
+              role: "assistant",
+              text: String(reply?.reply || reply?.message || "").trim() || String(existingMessage?.text || "").trim() || "No response.",
+              createdAt: completedAt,
+              suggestions: Array.isArray(reply?.suggestions) ? reply.suggestions : [],
+              refs: Array.isArray(reply?.refs) ? reply.refs : []
+            };
+            return upsertThreadMessage(messages, nextMessage);
+          }, completedAt),
           threadReadMarkers: current.activeModuleId === "workbench" ? {
             ...current.threadReadMarkers,
-            [currentThread.id]: assistantMessage.id
+            [currentThread.id]: assistantMessageId
           } : current.threadReadMarkers
         }));
-        if (assistantMessage.refs?.[0]?.path) {
-          void onLoadInspectorPath(String(assistantMessage.refs[0].path || ""), "chat-ref");
+        if (reply?.refs?.[0]?.path) {
+          void onLoadInspectorPath(String(reply.refs[0].path || ""), "chat-ref");
         }
         await refreshApp("lite");
       } catch (error) {
         const failureMessage = {
-          id: makeId("msg"),
-          role: "system",
+          id: assistantMessageId,
+          role: "assistant",
           text: error instanceof Error ? error.message : "Chat failed.",
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         };
         store.update((current) => ({
           ...current,
           busyChat: false,
+          activeChatRequestId: current.activeChatRequestId === requestId ? "" : current.activeChatRequestId,
+          activeChatThreadId: current.activeChatRequestId === requestId ? "" : current.activeChatThreadId,
+          activeChatMessageId: current.activeChatRequestId === requestId ? "" : current.activeChatMessageId,
+          liveChatProgress: current.activeChatRequestId === requestId ? null : current.liveChatProgress,
           error: failureMessage.text,
-          threads: current.threads.map((entry) => entry.id === currentThread.id ? { ...entry, updatedAt: failureMessage.createdAt, messages: [...entry.messages, failureMessage] } : entry),
+          threads: updateThreadMessages(current.threads, currentThread.id, (messages) => upsertThreadMessage(messages, failureMessage), failureMessage.createdAt),
           threadReadMarkers: current.activeModuleId === "workbench" ? {
             ...current.threadReadMarkers,
             [currentThread.id]: failureMessage.id
@@ -22966,6 +23205,10 @@
       }
     };
     const onQuickChat = (command) => {
+      if (command === IDE_PANEL_PROMPT) {
+        onOpenIdeModule();
+        return;
+      }
       store.update((current) => ({
         ...current,
         activeModuleId: "workbench",
@@ -22981,6 +23224,18 @@
       }));
       void refreshApp("full");
     };
+    const onOpenTunePod = () => {
+      store.update((current) => ({
+        ...current,
+        activeModuleId: "tunepod",
+        activeSettingsTab: "tunepod",
+        chatFocused: false
+      }));
+      void refreshApp("lite");
+    };
+    const onOpenIdeModule = () => {
+      onOpenMonitorTab("ide");
+    };
     const onStopRun = async () => {
       const runId = String(activeTaskRun?.runId || activeTaskRun?.id || "").trim();
       if (!runId) {
@@ -22994,6 +23249,10 @@
       await refreshApp("lite");
     };
     const onOpenSettingsTab = (tab) => {
+      if (tab === "tunepod") {
+        onOpenTunePod();
+        return;
+      }
       store.update((current) => ({
         ...current,
         activeModuleId: "settings",
@@ -23015,6 +23274,71 @@
       store.update((current) => ({
         ...current,
         error: result?.ok ? "" : String(result?.message || "Unable to open the handbook.")
+      }));
+    };
+    const onBootstrapWorkspaceVsCode = async () => {
+      const snapshot = store.getState().snapshot;
+      if (!snapshot) {
+        return;
+      }
+      const result = await window.gosAgent.bootstrapWorkspaceVsCode({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || ""
+      });
+      store.update((current) => ({
+        ...current,
+        error: result?.ok ? "" : String(result?.message || "Unable to bootstrap VS Code for this workspace.")
+      }));
+      await refreshApp("full");
+    };
+    const onInstallVsCodeCompanion = async () => {
+      const snapshot = store.getState().snapshot;
+      if (!snapshot) {
+        return;
+      }
+      const result = await window.gosAgent.installWorkspaceVsCodeCompanion({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || ""
+      });
+      store.update((current) => ({
+        ...current,
+        error: result?.ok ? "" : String(result?.message || "Unable to install the VS Code companion.")
+      }));
+      await refreshApp("full");
+    };
+    const onOpenWorkspaceInVsCode = async () => {
+      const snapshot = store.getState().snapshot;
+      if (!snapshot) {
+        return;
+      }
+      const result = await window.gosAgent.openWorkspaceInVsCode({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || ""
+      });
+      store.update((current) => ({
+        ...current,
+        error: result?.ok ? "" : String(result?.message || "Unable to open the current workspace in VS Code.")
+      }));
+    };
+    const onOpenActiveEditorFileInVsCode = async () => {
+      const snapshot = store.getState().snapshot;
+      const activeFilePath = String(snapshot?.editorContext?.active_file_path || "").trim();
+      if (!snapshot || !activeFilePath) {
+        return;
+      }
+      const result = await window.gosAgent.openInVsCode({
+        workspaceRoot: snapshot.workspaceRoot,
+        targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+        labRoot: snapshot.selectedLabRoot || "",
+        path: activeFilePath,
+        line: Number(snapshot?.editorContext?.selection_start_line || 1)
+      });
+      store.update((current) => ({
+        ...current,
+        error: result?.ok ? "" : String(result?.message || "Unable to open the active file in VS Code.")
       }));
     };
     const onRollbackLatestBackup = async (backupId = "") => {
@@ -23495,6 +23819,30 @@
         await refreshApp("full");
       }
     };
+    const activeScreenMeta = (() => {
+      if (state.activeModuleId === "monitor") {
+        return {
+          title: "Workbench",
+          subtitle: "Inspect active tasks, changes, validation, and execution proof."
+        };
+      }
+      if (state.activeModuleId === "tunepod") {
+        return {
+          title: "Tune Pod",
+          subtitle: "Machine fit, model readiness, and current setup for this workspace."
+        };
+      }
+      if (state.activeModuleId === "settings") {
+        return {
+          title: "Settings",
+          subtitle: "Preferences, updates, diagnostics, and workspace defaults."
+        };
+      }
+      return {
+        title: "Chat",
+        subtitle: "Ask, plan, and start coding work from one conversation."
+      };
+    })();
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: `workbench-shell${state.leftRailOpen ? " left-open" : ""}${state.rightRailOpen ? " right-open" : ""}`, "data-workbench-shell": "true", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: "left-rail app-nav-rail", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-brand-row", children: [
@@ -23510,26 +23858,13 @@
             "button",
             {
               className: `rail-nav-item${state.activeModuleId === "workbench" ? " active" : ""}`,
-              "data-module-nav": "workbench",
-              "data-route-tab": "workbench",
+              "data-module-nav": "chat",
+              "data-route-tab": "chat",
               onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "agents", className: "nav-icon" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Agents" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? "" : "s"}` : "Open the main workspace chat" })
-              ]
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-            "button",
-            {
-              className: `rail-nav-item${state.activeModuleId === "settings" && state.activeSettingsTab === "workspace" ? " active" : ""}`,
-              "data-route-tab": "settings",
-              onClick: () => onOpenSettingsTab("workspace"),
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "spaces", className: "nav-icon" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spaces" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Choose a workspace root" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Chat" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: unreadThreadCount > 0 ? `${unreadThreadCount} active conversation${unreadThreadCount === 1 ? "" : "s"}` : "Ask questions, plan work, and launch coding tasks" })
               ]
             }
           ),
@@ -23537,13 +23872,41 @@
             "button",
             {
               className: `rail-nav-item${state.activeModuleId === "monitor" ? " active" : ""}`,
-              "data-route-tab": "monitor",
-              onClick: () => onOpenMonitorTab("overview"),
+              "data-module-nav": "workbench",
+              "data-route-tab": "workbench",
+              onClick: () => onOpenMonitorTab(state.activeMonitorTab === "ide" ? "ide" : "runs"),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "spark", className: "nav-icon" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Spark" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeTaskRun ? "Live run status is available" : "Preview runs, learning, and promotions" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("em", { children: "Preview" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Workbench" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeTaskRun ? "Inspect the active run, files, and validation proof" : "Review execution history, blockers, and recovery evidence" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              className: `rail-nav-item${state.activeModuleId === "tunepod" ? " active" : ""}`,
+              "data-module-nav": "tunepod",
+              "data-route-tab": "tunepod",
+              onClick: onOpenTunePod,
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "terminal", className: "nav-icon" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Tune Pod" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: state.tuning ? "Check machine fit, ready local models, and current setup" : "Load machine fit and model readiness for this workspace" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              className: `rail-nav-item${state.activeModuleId === "settings" ? " active" : ""}`,
+              "data-module-nav": "settings",
+              "data-route-tab": "settings",
+              onClick: () => onOpenSettingsTab(state.activeSettingsTab === "tunepod" ? "general" : state.activeSettingsTab || "general"),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "spaces", className: "nav-icon" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Settings" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Preferences, updates, and diagnostics" })
               ]
             }
           )
@@ -23585,7 +23948,7 @@
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "rail-session-section secondary", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-section-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Chats" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Workspace" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", onClick: () => void onOpenHandbook(), children: "?" })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-mini-card", children: [
@@ -23603,8 +23966,8 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-left", children: [
             !state.leftRailOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "left", onClick: () => store.update((current) => ({ ...current, leftRailOpen: !current.leftRailOpen })), children: "Menu" }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-copy", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: threadIsFresh ? "New chat" : thread?.title || "New thread" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(status.target) || "Pick a workspace" })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: activeScreenMeta.title }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${activeScreenMeta.subtitle} \u2022 ${shortPath(status.target) || shortPath(status.workspace) || "Pick a workspace"}` })
             ] })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "topbar-actions", children: [
@@ -23616,16 +23979,16 @@
               "button",
               {
                 className: `toolbar-chip${state.activeModuleId === "monitor" ? " active" : ""}`,
-                "data-route-tab": "monitor",
-                onClick: () => onOpenMonitorTab(state.activeMonitorTab || "overview"),
-                children: "CLI"
+                "data-route-tab": "workbench",
+                onClick: () => onOpenMonitorTab(state.activeMonitorTab === "ide" ? "ide" : "runs"),
+                children: "Workbench"
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
               {
                 className: `toolbar-chip${state.activeModuleId === "workbench" ? " active" : ""}`,
-                "data-route-tab": "workbench",
+                "data-route-tab": "chat",
                 onClick: () => store.update((current) => ({ ...current, activeModuleId: "workbench" })),
                 children: "Chat"
               }
@@ -23633,10 +23996,19 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "button",
               {
+                className: `toolbar-chip${state.activeModuleId === "tunepod" ? " active" : ""}`,
+                "data-route-tab": "tunepod",
+                onClick: onOpenTunePod,
+                children: "Tune Pod"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
                 className: `toolbar-chip${state.activeModuleId === "settings" ? " active" : ""}`,
                 "data-route-tab": "settings",
-                onClick: () => onOpenSettingsTab(state.activeSettingsTab || "ai"),
-                children: "Download"
+                onClick: () => onOpenSettingsTab(state.activeSettingsTab === "tunepod" ? "general" : state.activeSettingsTab || "general"),
+                children: "Settings"
               }
             ),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "toolbar-chip", onClick: () => void refreshApp("full"), children: "Sync" }),
@@ -23649,8 +24021,15 @@
             {
               snapshot: state.snapshot,
               aiStatus: state.aiStatus,
+              tuning: state.tuning,
               learningStatus: state.learningStatus,
               thread,
+              threads: state.threads,
+              activeThreadId: state.activeThreadId,
+              threadReadMarkers: state.threadReadMarkers,
+              activeChatThreadId: state.activeChatThreadId,
+              activeChatMessageId: state.activeChatMessageId,
+              liveChatProgress: state.liveChatProgress,
               composerText: state.composerText,
               pendingAttachments: state.pendingAttachments,
               busyChat: state.busyChat,
@@ -23663,9 +24042,6 @@
               goalList,
               taskList,
               taskRuns,
-              threads: state.threads,
-              activeThreadId: state.activeThreadId,
-              threadReadMarkers: state.threadReadMarkers,
               onComposerChange: (value) => store.update((current) => ({ ...current, composerText: value })),
               onChatFocusChange: (focused) => store.update((current) => ({ ...current, chatFocused: focused })),
               onSendChat,
@@ -23674,6 +24050,7 @@
               onNewThread,
               onSelectThread,
               onUpdateSetting,
+              onOpenSettingsTab,
               onSelectPath: onLoadInspectorPath,
               onShowInspector: (tab) => {
                 store.update((current) => ({
@@ -23686,6 +24063,8 @@
                 }
               },
               onOpenInbox,
+              onOpenWorkbench: () => onOpenMonitorTab("runs"),
+              onOpenIdeModule,
               onRollbackLatestBackup
             }
           ) : null,
@@ -23732,6 +24111,18 @@
               }
             }
           ) : null,
+          state.activeModuleId === "tunepod" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            TunePodPanel,
+            {
+              snapshot: state.snapshot,
+              settings: state.settings,
+              aiStatus: state.aiStatus,
+              tuning: state.tuning,
+              onUpdateSetting,
+              onRunBenchmark,
+              onOpenSettingsTab
+            }
+          ) : null,
           state.activeModuleId === "monitor" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             MonitorPanel,
             {
@@ -23743,6 +24134,8 @@
               learningEvents: state.learningEvents,
               labEvents: state.labEvents,
               benchmarkEvents: state.benchmarkEvents,
+              tools: state.tools,
+              taskList,
               activeTab: state.activeMonitorTab,
               onSetActiveTab: (tab) => store.update((current) => ({ ...current, activeMonitorTab: tab, activeModuleId: "monitor" })),
               onCreateCandidate,
@@ -23753,9 +24146,15 @@
               onRunAcceptance,
               onExportDebugBundle: onExportMonitorBundle,
               onOpenReviewPath: onLoadInspectorPath,
+              onQuickChat,
               onCreateSuggestedTask,
               onQueueSuggestedRecipe,
               onRecordOperatorFeedback,
+              onOpenSettingsTab,
+              onBootstrapVsCode: onBootstrapWorkspaceVsCode,
+              onInstallVsCodeCompanion,
+              onOpenWorkspaceInVsCode,
+              onOpenActiveFileInVsCode: onOpenActiveEditorFileInVsCode,
               onRefresh: () => void refreshApp("full"),
               acceptanceBusy: state.busyAcceptance,
               safetyBusy: state.busySafetyController
@@ -23763,10 +24162,10 @@
           ) : null
         ] })
       ] }),
-      !state.rightRailOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "right-rail-toggle", "data-sidebar-toggle": "right", onClick: onToggleManagerInspector, children: "Manager" }) : null,
+      !state.rightRailOpen ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "right-rail-toggle", "data-sidebar-toggle": "right", onClick: onToggleManagerInspector, children: "Context" }) : null,
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: `inspector inspector-${state.activeInspectorTab}`, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "rail-header", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: state.activeInspectorTab === "manager" ? "Manager" : "Context" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Context" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "icon-button", "data-sidebar-toggle": "right", onClick: () => store.update((current) => ({ ...current, rightRailOpen: false })), children: "Close" })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "inspector-tabs", children: INSPECTOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -23785,13 +24184,19 @@
             snapshot: state.snapshot,
             safeMode,
             inboxCount: inboxItems.length,
-            quickPrompts: [
-              "Plan the next safe coding task in this repo.",
-              "Review the current repo and tell me what needs fixing first.",
-              AI_ROUTE_COPY.modelSetupPrompt
-            ],
+            quickPrompts: (() => {
+              const tunePodGuidance = buildTunePodGuidance(state.snapshot, state.aiStatus, state.tuning);
+              return [
+                { label: "Plan the next safe coding task in this repo.", action: "chat" },
+                { label: "Review the current repo and tell me what needs fixing first.", action: "chat" },
+                { label: IDE_PANEL_PROMPT, action: "ide" },
+                tunePodGuidance.blocked ? { label: tunePodGuidance.prompt, action: "tunepod" } : { label: AI_ROUTE_COPY.modelSetupPrompt, action: "chat" }
+              ];
+            })(),
             onUpdateSetting,
             onQuickChat,
+            onOpenIdeModule,
+            onOpenSettingsTab,
             onShowInspector: (tab) => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true }))
           }
         ) : null,
@@ -23838,31 +24243,30 @@
   function WorkbenchPanel(props) {
     const settings = props.snapshot?.settings || {};
     const chatModes = ["auto", "ask", "plan", "edit", "agent"];
+    const chatModeLabels = {
+      auto: "Auto",
+      ask: "Answer only",
+      plan: "Plan next step",
+      edit: "Prepare code changes",
+      agent: "Run with tool support"
+    };
     const messages = props.thread?.messages || [];
+    const visibleMessages = messages.filter((message) => message.role !== "system");
     const isFreshThread = !messages.some((message) => message.role !== "system");
     const chatMode = chatModes.includes(String(settings.chatMode || "").trim().toLowerCase()) ? String(settings.chatMode || "").trim().toLowerCase() : "auto";
-    const chatTransparencyLevel = String(settings.chatTransparencyLevel || "balanced");
-    const effectiveChatMode = chatMode;
-    const modeSummaryLabel = `effective ${effectiveChatMode}`;
     const modeRouteSummary = {
-      auto: "supervised engine loop",
-      ask: "answer directly without mutating the workspace",
-      plan: "shape the next safe slice before making edits",
-      edit: "focus on bounded repo edits and validation",
-      agent: "use auto manager to route the full operator loop"
+      auto: "I will choose whether to answer, plan, or work.",
+      ask: "Answer in chat without changing files.",
+      plan: "Work through the next step before editing.",
+      edit: "Prepare the code changes and what to touch.",
+      agent: "Use tools to carry the task forward safely."
     };
     const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || "workspace").trim() || "workspace";
     const safetyLabel = props.safeMode.active ? "Safe mode active" : props.safeMode.watchOnly ? "Safety watch active" : "Safety ready";
-    const openModule = props.inboxItems.length > 0 ? "monitor" : "workbench";
-    const latestGoal = props.goalList[0] || null;
-    const latestTask = props.taskList[0] || null;
-    const latestRun = props.taskRuns[0] || null;
-    const recentRuns = props.taskRuns.slice(0, 4);
-    const recentThreads = props.threads.slice(0, 4);
     const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "workspace";
-    const modelLabel = String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b");
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
     const docsContext = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
+    const tunePodGuidance = buildTunePodGuidance(props.snapshot, props.aiStatus, props.tuning);
     const composerSuggestions = buildComposerSuggestions({
       composerText: props.composerText,
       learningStatus: props.learningStatus,
@@ -23870,40 +24274,70 @@
       safeMode: props.safeMode,
       docsContext,
       nextSafeAction: testBench?.nextSafeAction && typeof testBench.nextSafeAction === "object" ? testBench.nextSafeAction : {},
-      safeRecipe: testBench?.safeRecipe && typeof testBench.safeRecipe === "object" ? testBench.safeRecipe : {}
+      safeRecipe: testBench?.safeRecipe && typeof testBench.safeRecipe === "object" ? testBench.safeRecipe : {},
+      tunePodPrompt: tunePodGuidance.prompt
     });
-    const promptCards = [
-      `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "this repo"}.`,
-      "Review the current repo and tell me what needs fixing first.",
-      AI_ROUTE_COPY.modelSetupPrompt
+    const freshThreadPromptCards = [
+      { label: "Explain this repo.", action: "chat" },
+      { label: "Find the next bug worth fixing.", action: "chat" },
+      { label: "Plan the next safe change.", action: "chat" },
+      { label: "Help me debug this failure.", action: "chat" }
     ];
-    const launcherActions = [
-      { label: "Agent", icon: "agents", onClick: () => void props.onUpdateSetting("chatMode", "agent") },
-      { label: "Create issue", icon: "issue", onClick: () => props.onQuickChat("Create a scoped issue list for the current workspace and rank it by impact.") },
-      { label: "Spark", icon: "spark", onClick: () => props.onQuickChat("Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.") },
-      { label: "Git", icon: "git", onClick: () => props.onShowInspector("file") },
-      { label: "Pull requests", icon: "pull-request", onClick: () => props.onShowInspector("inbox") }
+    const welcomeCards = [
+      {
+        title: "Explain this repo",
+        detail: "Get a quick read on the structure, main flows, and what matters first.",
+        icon: "repo",
+        onClick: () => props.onQuickChat("Explain this repo and call out the next safe change to make.")
+      },
+      {
+        title: "Plan the next change",
+        detail: "Turn the current repo state into one safe, concrete next step.",
+        icon: "mode",
+        onClick: () => props.onQuickChat("Plan the next safe change for this repo.")
+      },
+      {
+        title: "Debug a failure",
+        detail: "Start from an error, failing test, or broken flow and work toward a fix.",
+        icon: "issue",
+        onClick: () => props.onQuickChat("Help me debug this failure and suggest the safest fix first.")
+      }
     ];
-    const recentSessionItems = recentRuns.length > 0 ? recentRuns.map((item) => ({
-      id: String(item?.runId || item?.id || item?.runtimeLabel || Math.random()),
-      title: String(item?.runtimeLabel || item?.label || item?.title || "Session"),
-      status: String(item?.runtimeState || item?.status || item?.riskClass || "ready"),
-      detail: summarizeText(String(item?.blockedReason || item?.summary || item?.objective || "No extra detail recorded yet."), 120),
-      meta: String(item?.completedAt || item?.updatedAt || item?.createdAt || ""),
-      onClick: latestTask ? () => props.onQuickChat(`Summarize the current run state for ${String(item?.runtimeLabel || item?.label || "this session")}.`) : void 0
-    })) : recentThreads.map((entry) => {
-      const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
-      const unread = Boolean(latestSeenId && props.threadReadMarkers[entry.id] !== latestSeenId);
-      const preview = [...entry.messages].reverse().find((message) => message.role !== "system")?.text || "No reply recorded yet.";
-      return {
-        id: entry.id,
-        title: entry.title,
-        status: unread ? "unread" : "read",
-        detail: summarizeText(preview, 120),
-        meta: formatStamp(entry.updatedAt),
-        onClick: () => props.onSelectThread(entry.id)
-      };
+    const activeTaskRun = props.taskRuns.find((item) => ["running", "queued", "active", "in_progress", "starting"].includes(String(item?.runtimeState || item?.state || item?.status || "").toLowerCase())) || null;
+    const blockedTaskRun = props.taskRuns.find((item) => ["fail", "blocked", "cancelled"].includes(String(item?.runtimeState || item?.state || item?.status || "").toLowerCase())) || null;
+    const liveProgress = buildAssistantProgressState({
+      busyChat: props.busyChat,
+      activeTaskRun,
+      chatProgress: props.thread?.id === props.activeChatThreadId ? props.liveChatProgress : null
     });
+    const streamingMessageId = props.thread?.id === props.activeChatThreadId ? props.activeChatMessageId : "";
+    const workbenchHandoff = (() => {
+      if (blockedTaskRun) {
+        return {
+          title: "Run needs review",
+          detail: summarizeText(String(blockedTaskRun?.blockedReason || blockedTaskRun?.message || blockedTaskRun?.summary || "Open Workbench to inspect the latest blocked or failed run."), 140)
+        };
+      }
+      if (props.approvalItems.length > 0) {
+        return {
+          title: "Review needed",
+          detail: `${props.approvalItems.length} item${props.approvalItems.length === 1 ? "" : "s"} are waiting for review in Workbench.`
+        };
+      }
+      if (activeTaskRun) {
+        return {
+          title: "Work in progress",
+          detail: summarizeText(`${String(activeTaskRun?.runtimeLabel || activeTaskRun?.label || activeTaskRun?.title || "Current task")} is running. Open Workbench for detailed progress, files, and validation.`, 140)
+        };
+      }
+      if (props.changedItems.length > 0) {
+        return {
+          title: "Recent changes ready to inspect",
+          detail: `${props.changedItems.length} changed file${props.changedItems.length === 1 ? "" : "s"} are ready to inspect in Workbench.`
+        };
+      }
+      return null;
+    })();
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel workbench-panel", "data-panel": "workbench", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-home", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "div",
       {
@@ -23917,103 +24351,113 @@
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(props.safeMode.summary || "Safety guardrails are active for this workspace.") })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenInbox, children: "Open inbox" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkbench, children: "Open Workbench" }),
               props.safeMode.rollbackAvailable ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onRollbackLatestBackup(String(props.safeMode.latestBackupId || "")), children: "Restore latest backup" }) : null
             ] })
           ] }) : null,
+          workbenchHandoff ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card workbench-handoff-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workbench handoff" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: workbenchHandoff.title }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: workbenchHandoff.detail }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkbench, children: "Open Workbench" }) })
+          ] }) : null,
           isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-start-shell", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-hero-panel", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state compact start-hero-copy", "data-legacy-empty-title": "Let's build", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "chat-welcome-panel", "data-legacy-empty-title": "Let's build", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-empty-state compact start-hero-copy", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "start-hero-mark", children: "GS" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Ask anything" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
-                  workspaceLabel,
-                  " \u2022 ",
-                  modelLabel
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Welcome to GoSenderr" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Your chat is the front door to coding work." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "welcome-action-grid", children: welcomeCards.map((card) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "welcome-action-card", onClick: card.onClick, children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "welcome-action-icon", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: card.icon, className: "action-icon" }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: card.title }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: card.detail })
+              ] }, card.title)) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "workbench-hero-panel chat-entry-panel", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "mode", className: "toolbar-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: chatModeLabels[mode] }, mode)) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "repo", className: "toolbar-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Add" })
                 ] })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer chat-composer launch-composer", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-mode-bar launch-toolbar", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "mode", className: "toolbar-icon" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onNewThread, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "New chat" })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button workspace-button", onClick: () => props.onShowInspector("file"), children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "repo", className: "toolbar-icon" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "selector-chip selector-button", onClick: props.onPickAttachments, "aria-label": "Attach screenshot", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "plus", className: "toolbar-icon" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Add" })
-                  ] })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "textarea",
+                {
+                  id: "chatInput",
+                  "data-chat-input": "true",
+                  value: props.composerText,
+                  onChange: (event) => props.onComposerChange(event.target.value),
+                  onFocus: () => props.onChatFocusChange(true),
+                  onBlur: () => props.onChatFocusChange(false),
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      props.onSendChat();
+                    }
+                  },
+                  placeholder: "Ask anything"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip launch-status-row", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: workspaceLabel }),
+                  branchLabel && branchLabel !== "workspace" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }) : null,
+                  props.safeMode.active || props.safeMode.watchOnly ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel }) : null
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                  "textarea",
-                  {
-                    id: "chatInput",
-                    "data-chat-input": "true",
-                    value: props.composerText,
-                    onChange: (event) => props.onComposerChange(event.target.value),
-                    onFocus: () => props.onChatFocusChange(true),
-                    onBlur: () => props.onChatFocusChange(false),
-                    onKeyDown: (event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        props.onSendChat();
-                      }
-                    },
-                    placeholder: "Ask anything"
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip launch-status-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeSummaryLabel }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeRouteSummary[chatMode] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "launch-send-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "composer-model-tag", children: modelLabel }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
-                  ] })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-action-row", children: launcherActions.map((action) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost launch-action-pill", onClick: action.onClick, children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: action.icon, className: "action-icon" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: action.label })
-                ] }, action.label)) }),
-                !isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat(command), children: command }, command)) }) }) : null,
-                props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "recent-session-card recent-session-panel", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recent agent sessions" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: latestRun?.runtimeLabel || latestTask?.title || "Latest workspace activity" })
-              ] }) }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "recent-session-list", children: recentSessionItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("article", { className: `recent-session-item${item.id === props.activeThreadId ? " active" : ""}`, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "recent-session-button", onClick: item.onClick, disabled: !item.onClick, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-top", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "recent-session-title-row", children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "session", className: "recent-session-icon" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.title })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `recent-session-badge status-${String(item.status || "").toLowerCase()}`, children: item.status })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "recent-session-summary", children: item.detail }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { className: "recent-session-meta", children: item.meta || "Ready" })
-              ] }) }, item.id)) })
-            ] })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-send-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" }) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact manager-prompt-grid", children: freshThreadPromptCards.map((prompt) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "prompt-card compact",
+                  onClick: () => props.onQuickChat(prompt.label),
+                  children: prompt.label
+                },
+                prompt.label
+              )) }),
+              !isFreshThread ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "composer-toolbar compact", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row quick-command-row", children: composerSuggestions.map((command) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  className: "ghost",
+                  onClick: () => command === AI_ROUTE_COPY.tunePodFitPrompt || command === AI_ROUTE_COPY.tunePodRoutePrompt ? props.onOpenSettingsTab("tunepod") : command === IDE_PANEL_PROMPT ? props.onOpenIdeModule() : props.onQuickChat(command),
+                  children: command
+                },
+                command
+              )) }) }) : null,
+              props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null
+            ] }) })
           ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "active-thread-shell", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage active-thread-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: messages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}`, children: [
+            liveProgress ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card assistant-progress-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "assistant-progress-header", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Live progress" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: "Separate from reply text" })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: liveProgress.title }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: liveProgress.detail }),
+              liveProgress.showWorkbenchAction ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkbench, children: "Open Workbench" }) }) : null
+            ] }) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage active-thread-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: visibleMessages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}${message.id === streamingMessageId ? " is-streaming" : ""}`, children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: message.role === "assistant" ? "GoSenderr" : "You" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: formatStamp(message.createdAt) })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? "Attached screenshot context." : "") }),
+              renderChatMessageBody(message.text, message.id),
+              !message.text && Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Attached screenshot context." }) : null,
+              message.id === streamingMessageId ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "streaming-caret", "aria-hidden": "true" }) : null,
               Array.isArray(message.attachments) && message.attachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.attachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `attachment ${index + 1}` }, `${message.id}-attachment-${index}`)) }) : null,
               message.refs?.length ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row", children: message.refs.map((ref, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
                 "button",
@@ -24031,13 +24475,10 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)(UiIcon, { name: "mode", className: "toolbar-icon" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, mode)) })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: chatModeLabels[mode] }, mode)) })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onPickAttachments, children: "Attach screenshot" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
-                  "Inbox ",
-                  props.inboxItems.length ? `(${props.inboxItems.length})` : ""
-                ] })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkbench, children: "Open Workbench" })
               ] }),
               props.pendingAttachments.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chip-row attachment-row", children: props.pendingAttachments.map((attachment, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "attachment-chip", children: attachment.originalName || attachment.name || `image ${index + 1}` }, `${attachment.id || attachment.path || index}`)) }) : null,
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -24060,15 +24501,11 @@
               ),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-footer launch-footer", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-activity-strip", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeSummaryLabel }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel }),
+                  branchLabel && branchLabel !== "workspace" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: branchLabel }) : null,
+                  props.safeMode.active || props.safeMode.watchOnly ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: safetyLabel }) : null
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "launch-send-row", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "composer-model-tag", children: modelLabel }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" })
-                ] })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "launch-send-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary send-icon-button", id: "chatSend", "data-chat-send": "true", onClick: props.onSendChat, disabled: props.busyChat, children: props.busyChat ? "Working\u2026" : "Send" }) })
               ] })
             ] })
           ] })
@@ -24079,70 +24516,521 @@
   function ManagerInspector(props) {
     const settings = props.snapshot?.settings || {};
     const chatModes = ["auto", "ask", "plan", "edit", "agent"];
+    const chatModeLabels = {
+      auto: "Auto",
+      ask: "Answer only",
+      plan: "Plan next step",
+      edit: "Prepare code changes",
+      agent: "Run with tool support"
+    };
     const chatMode = chatModes.includes(String(settings.chatMode || "").trim().toLowerCase()) ? String(settings.chatMode || "").trim().toLowerCase() : "auto";
-    const chatTransparencyLevel = String(settings.chatTransparencyLevel || "balanced");
     const modeRouteSummary = {
-      auto: "supervised engine loop",
-      ask: "answer directly without mutating the workspace",
-      plan: "shape the next safe slice before making edits",
-      edit: "focus on bounded repo edits and validation",
-      agent: "use auto manager to route the full operator loop"
+      auto: "Let Chat choose the best help mode.",
+      ask: "Answer in chat only.",
+      plan: "Talk through the next step before editing.",
+      edit: "Prepare the next code change safely.",
+      agent: "Use tools when the task needs them."
     };
     const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "workspace";
-    const modelLabel = String(settings.model || settings.trainingOllamaModel || "qwen2.5-coder:7b");
     const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || "workspace").trim() || "workspace";
     const safetyLabel = props.safeMode.active ? "Safe mode active" : props.safeMode.watchOnly ? "Safety watch active" : "Safety ready";
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "inspector-body manager-inspector-body", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "manager-drawer manager-drawer-rail", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-copy", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Operator rail" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use auto manager" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Talk to the engine like a teammate and only open the heavier control surface when you need it." })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Context" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Use this rail only when you need extra detail" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Keep the main conversation clean, then open context when you want files, inbox items, or supporting detail." })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "composer-selector-row manager-control-row", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Manager" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "auto" })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Worker" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "workspace" })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Mode" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Manager mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: mode }, `manager-${mode}`)) })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: String(settings.chatMode || "auto"), onChange: (event) => void props.onUpdateSetting("chatMode", event.target.value), "aria-label": "Chat mode", children: chatModes.map((mode) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: mode, children: chatModeLabels[mode] }, `manager-${mode}`)) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "selector-chip", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Workspace" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: workspaceLabel })
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-status-strip manager-status-strip", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: modeRouteSummary[chatMode] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: chatModeLabels[chatMode] }),
+          branchLabel && branchLabel !== "workspace" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: branchLabel }) : null,
+          props.safeMode.active || props.safeMode.watchOnly ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: safetyLabel }) : null
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chat-compact-strip manager-compact-strip", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Auto-run queued tasks" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-            modeRouteSummary[chatMode],
-            " \u2022 ",
-            chatTransparencyLevel
-          ] })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Optional details" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modeRouteSummary[chatMode] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "manager-quick-grid", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Run hygiene" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onQuickChat("/health"), children: "Check status" }),
+          props.quickPrompts.some((prompt) => prompt.action === "tunepod") ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("tunepod"), children: AI_ROUTE_COPY.tunePodActionLabel }) : null,
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "ghost", onClick: () => props.onShowInspector("inbox"), children: [
             "Open inbox ",
             props.inboxCount ? `(${props.inboxCount})` : ""
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onShowInspector("file"), children: "Open workspace files" })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onShowInspector("file"), children: "Open files" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact manager-prompt-grid", children: props.quickPrompts.map((prompt) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "prompt-card compact", onClick: () => props.onQuickChat(prompt), children: prompt }, prompt)) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "prompt-grid compact manager-prompt-grid", children: props.quickPrompts.map((prompt) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            className: "prompt-card compact",
+            onClick: () => prompt.action === "tunepod" ? props.onOpenSettingsTab("tunepod") : prompt.action === "ide" ? props.onOpenIdeModule() : props.onQuickChat(prompt.label),
+            children: prompt.label
+          },
+          prompt.label
+        )) })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card manager-summary-card", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: workspaceLabel }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: modelLabel }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: props.inboxCount > 0 ? `${props.inboxCount} inbox item${props.inboxCount === 1 ? "" : "s"} pending review` : "Inbox is clear" })
       ] })
     ] });
+  }
+  function IDEPanel(props) {
+    const vscodeSetup = props.snapshot?.vscodeSetup || {};
+    const extensionHealth = props.snapshot?.extensionHealth || {};
+    const editorContext = props.snapshot?.editorContext || {};
+    const activeFilePath = String(editorContext?.active_file_path || "").trim();
+    const openFiles = Array.isArray(editorContext?.open_files) ? editorContext.open_files : [];
+    const missingBootstrapCount = Number(vscodeSetup?.missingFiles?.length || 0) + Number(vscodeSetup?.missingRecommendations?.length || 0) + Number(vscodeSetup?.missingTaskLabels?.length || 0);
+    const companionInstalled = Boolean(vscodeSetup?.companionInstall?.installed || extensionHealth?.exists);
+    const activeTask = props.taskList[0] || null;
+    const activeRun = props.taskRuns[0] || null;
+    const toolKinds = props.tools.reduce((accumulator, item) => {
+      const kind = String(item?.kind || "other").trim() || "other";
+      accumulator[kind] = Number(accumulator[kind] || 0) + 1;
+      return accumulator;
+    }, {});
+    const terminalLanes = [
+      {
+        id: "plan",
+        title: "Plan next safe slice",
+        detail: "Keep chat and the tool loop scoped before the engine mutates the workspace.",
+        actionLabel: "Open in chat",
+        onClick: () => props.onQuickChat("Plan the next safe coding task in this repo.")
+      },
+      {
+        id: "implement",
+        title: "Implement with tools",
+        detail: "Push the bounded file/search/edit/test tool loop through the next concrete repo task.",
+        actionLabel: "Run through chat",
+        onClick: () => props.onQuickChat("Implement the next safe coding task using the bounded tool loop and summarize the touched files.")
+      },
+      {
+        id: "repair",
+        title: "Repair latest blocker",
+        detail: "Route the engine into the smallest failing slice instead of widening the request.",
+        actionLabel: "Repair in chat",
+        onClick: () => props.onQuickChat("Repair the latest failed run and summarize the fix.")
+      },
+      {
+        id: "monitor",
+        title: "Inspect blockers",
+        detail: "Stay in Workbench when the tool route is blocked by acceptance, safety, or queued run debt.",
+        actionLabel: "Open Workbench",
+        onClick: () => props.onOpenMonitorTab("overview")
+      }
+    ];
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel ide-panel", "data-panel": "ide", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "ide-hero", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ide-hero-main", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workbench IDE lanes" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Tool use, editor handoff, and terminal lanes stay attached to execution work" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Workbench surfaces the bounded tool loop, VS Code bootstrap state, and editor handoff without turning IDE actions into a fifth top-level destination." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions ide-hero-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onOpenWorkspaceInVsCode, children: "Open workspace in VS Code" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onBootstrapVsCode, children: "Bootstrap VS Code" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onInstallVsCodeCompanion, children: "Install companion" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, children: "Refresh" })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ide-hero-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workspace target" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || "") || "Not selected" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: props.snapshot?.selectedLabRoot ? "A lab is active, so the IDE handoff will follow the lab target." : "The IDE handoff follows the live workspace target." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code bootstrap" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: missingBootstrapCount > 0 ? "Needs bootstrap" : "Ready" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(vscodeSetup?.summary || "Bootstrap tasks, settings, and recommendations before widening editor-side work.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: companionInstalled ? "Detected" : "Missing" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(extensionHealth?.summary || "Install the VS Code companion so desktop and editor actions stay aligned.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tool catalog" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: props.tools.length }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: Object.keys(toolKinds).length > 0 ? `${Object.keys(toolKinds).length} tool families are exposed to the engine.` : "Tool metadata will appear after the next refresh." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active file" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: shortPath(activeFilePath) || "No active file" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: activeFilePath ? "Use the editor handoff to reopen the current working file in VS Code." : "Open a file from chat or the inspector and it will show up here." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active task" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(activeRun?.runtimeState || activeRun?.status || "idle") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(activeRun?.runtimeLabel || activeRun?.label || activeTask?.title || "No active coding run is recorded yet.") })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid ide-lane-grid", children: terminalLanes.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card ide-lane-card", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Terminal lane" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: lane.title }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: lane.detail }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: lane.onClick, children: lane.actionLabel }) })
+      ] }, lane.id)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid ide-workspace-grid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "VS Code setup" }),
+          Number(vscodeSetup?.missingFiles?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing files" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingFiles) ? vscodeSetup.missingFiles : []).join(", ") })
+          ] }) : null,
+          Number(vscodeSetup?.missingRecommendations?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing recommendations" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingRecommendations) ? vscodeSetup.missingRecommendations.slice(0, 6) : []).join(", ") })
+          ] }) : null,
+          Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Missing tasks" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: (Array.isArray(vscodeSetup.missingTaskLabels) ? vscodeSetup.missingTaskLabels : []).join(", ") })
+          ] }) : null,
+          missingBootstrapCount === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "VS Code workspace files, tasks, and recommendations are already aligned for this target." }) : null
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Editor handoff" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Workspace launch" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Open the current target root in VS Code so terminals, problems, and editor tools stay attached to the same workspace the desktop shell is supervising." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Active file" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: activeFilePath ? shortPath(activeFilePath) : "No active file is pinned yet." })
+          ] }),
+          openFiles.slice(0, 5).map((entry, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Recent editor file" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: shortPath(String(entry || "")) || "Unknown file" })
+          ] }, `${String(entry || "")}-${index}`)),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkspaceInVsCode, children: "Open workspace in VS Code" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenActiveFileInVsCode, disabled: !activeFilePath, children: "Open active file" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("workspace"), children: "Workspace settings" })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid ide-workspace-grid", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tool access exposed to the model" }),
+          props.tools.slice(0, 10).map((tool, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(tool?.label || tool?.id || "Tool") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(tool?.summary || `${tool?.kind || "tool"} \u2022 ${tool?.safetyLevel || "unknown safety"}`) })
+          ] }, `${String(tool?.id || tool?.label || "tool")}-${index}`)),
+          props.tools.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No tool metadata is available yet. Refresh the shell and verify the tool catalog preload path." }) : null
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Companion alignment" }),
+          Array.isArray(extensionHealth?.warnings) && extensionHealth.warnings.length > 0 ? extensionHealth.warnings.map((warning, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code companion" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: warning })
+          ] }, `${warning}-${index}`)) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: extensionHealth.displayName || "VS Code companion" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(extensionHealth?.nextStep || extensionHealth?.summary || "Companion health looks aligned with the desktop shell.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onInstallVsCodeCompanion, children: "Install companion" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("tools"), children: "Open tool catalog" })
+          ] })
+        ] })
+      ] })
+    ] });
+  }
+  function TunePodPanel(props) {
+    const settings = props.settings || props.snapshot?.settings || {};
+    const aiRoutingPolicies = Array.isArray(props.aiStatus?.routingPolicies) ? props.aiStatus.routingPolicies : [];
+    const aiRemoteProviders = Array.isArray(props.aiStatus?.remoteProviders) ? props.aiStatus.remoteProviders : [];
+    const aiRemoteModelOptions = Array.isArray(props.aiStatus?.remoteModelCatalog) ? props.aiStatus.remoteModelCatalog : [];
+    const capabilityLanes = Array.isArray(props.aiStatus?.capabilityLanes) ? props.aiStatus.capabilityLanes : [];
+    const targetHardwareOptions = Array.isArray(props.tuning?.hardwareTargets) ? props.tuning.hardwareTargets : [];
+    const selectedHardwareTarget = String(settings.trainingHardwareTarget || props.tuning?.settings?.trainingHardwareTarget || "auto");
+    const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
+    const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+    const tuningLifecycle = props.tuning?.lifecycle && typeof props.tuning.lifecycle === "object" ? props.tuning.lifecycle : props.aiStatus?.localModelInventory && typeof props.aiStatus.localModelInventory === "object" ? props.aiStatus.localModelInventory : {};
+    const machineProfile = props.tuning?.telemetry?.machine && typeof props.tuning.telemetry.machine === "object" ? props.tuning.telemetry.machine : {};
+    const selectedHardwareTargetMeta = targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget) || targetHardwareOptions[0] || null;
+    const effectiveHardwareTargetId = selectedHardwareTarget === "auto" ? String(machineProfile.id || "").trim() || "auto" : selectedHardwareTarget;
+    const effectiveHardwareTargetMeta = targetHardwareOptions.find((item) => String(item?.id || "") === effectiveHardwareTargetId) || selectedHardwareTargetMeta;
+    const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
+    const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || "hybrid-default");
+    const routePolicyMeta = aiRoutingPolicies.find((policy) => String(policy?.id || "") === routePolicyId) || null;
+    const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
+    const routePolicySummary = String(routePolicyMeta?.summary || "").trim();
+    const selectedRemoteProviderId = String(settings.aiRemoteProvider || props.aiStatus?.current?.remoteProvider || "openai");
+    const selectedRemoteProvider = aiRemoteProviders.find((provider) => String(provider?.id || "") === selectedRemoteProviderId) || aiRemoteProviders[0] || null;
+    const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || "");
+    const remoteFallbackReady = Boolean(selectedRemoteModel.trim());
+    const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
+    const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM \u2022 ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` \u2022 ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ""}` : "Machine telemetry is still warming up.";
+    const hardwareTargetLabelMap = targetHardwareOptions.reduce((accumulator, item) => {
+      const targetId = String(item?.id || "").trim();
+      if (targetId) {
+        accumulator[targetId] = String(item?.label || targetId);
+      }
+      return accumulator;
+    }, {});
+    const tunePodReadyModelSet = new Set(readAiModelOptions(props.aiStatus, props.tuning, settings).filter((option) => option.ready).map((option) => option.model));
+    const tunePodPresetTargetLabels = (preset) => {
+      const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : []).map((item) => String(item || "").trim()).filter((item) => item && item !== "auto");
+      return targetIds.map((targetId) => hardwareTargetLabelMap[targetId] || targetId);
+    };
+    const tunePodPresetFit = (preset) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
+    const compatibleTunePodPresets = installPresets.filter((preset) => tunePodPresetFit(preset).fits);
+    const incompatibleTunePodPresets = installPresets.filter((preset) => !tunePodPresetFit(preset).fits);
+    const readinessCounts = (Array.isArray(tuningLifecycle?.entries) ? tuningLifecycle.entries : []).reduce((accumulator, entry) => {
+      const readiness = String(entry?.localReadiness || entry?.installState || "").trim().toLowerCase();
+      if (readiness === "live" || readiness === "ready") {
+        accumulator.live += 1;
+      } else if (readiness === "registered" || readiness === "store-only") {
+        accumulator.registered += 1;
+      } else if (readiness === "staged" || readiness === "stored") {
+        accumulator.staged += 1;
+      } else {
+        accumulator.missing += 1;
+      }
+      return accumulator;
+    }, { live: 0, registered: 0, staged: 0, missing: 0 });
+    const routePlanCards = capabilityLanes.slice(0, 5).map((lane) => ({
+      id: String(lane?.id || lane?.label || ""),
+      label: String(lane?.label || lane?.id || "Lane"),
+      summary: String(lane?.summary || "Route detail pending."),
+      owner: `${String(lane?.provider || "provider")} \u2022 ${String(lane?.preferredModel || "model pending")}`,
+      source: String(lane?.sourceLabel || (lane?.source === "override" ? AI_ROUTE_COPY.routeSourceOverride : AI_ROUTE_COPY.routeSourceInherited))
+    }));
+    const nextSetupStep = (() => {
+      const nextLayerId = String(localModelProgram.nextLayer?.id || "").trim().toLowerCase();
+      if (nextLayerId === "foundation") {
+        return {
+          title: "Add more local models",
+          summary: "This machine needs more ready local models before local coding can be the default path."
+        };
+      }
+      if (nextLayerId === "routing") {
+        return {
+          title: "Finish local coding setup",
+          summary: "Set the active model choices so local coding is ready by default for everyday work."
+        };
+      }
+      if (nextLayerId === "coding") {
+        return {
+          title: "Verify local coding",
+          summary: "Run readiness checks to confirm local coding works cleanly on this machine."
+        };
+      }
+      if (nextLayerId === "promotion") {
+        return {
+          title: "Review advanced promotion options",
+          summary: "Promotion is an advanced step and can wait until the local coding setup is stable."
+        };
+      }
+      if (nextLayerId === "self-improve") {
+        return {
+          title: "Keep advanced improvement tools paused",
+          summary: "Leave advanced improvement tools alone until the lower setup layers are stable."
+        };
+      }
+      return {
+        title: "Current setup looks ready",
+        summary: "The main local model setup is in good shape for normal daily work."
+      };
+    })();
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "module-panel settings-panel-v2 tunepod-panel", "data-panel": "tunepod", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-shell", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-hero", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-hero-main", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tune Pod" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "See what fits this machine and what is ready now" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Tune Pod shows what this PC can run, which local models are ready, what is active, and what setup step comes next." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions settings-hero-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", "data-run-benchmark": "true", onClick: props.onRunBenchmark, children: "Check readiness" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenSettingsTab("ai"), children: "Import models" })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-hero-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Machine fit" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(machineProfile.label || "Machine profile pending") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: machineProfileFootprint })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current setup" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: routePolicyLabel }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: routePolicySummary || "These are the active model choices for this workspace." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Next recommended step" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: nextSetupStep.title }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: nextSetupStep.summary })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fallback help" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: remoteFallbackReady ? "Available when needed" : "Local only" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} is available as backup help or for quick comparison.` : "No fallback help is configured. Local models are the main path right now." })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card active", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active machine target" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(effectiveHardwareTargetMeta?.label || "Current machine") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(effectiveHardwareTargetMeta?.summary || "Use the live machine fit unless you are staging for a larger target.") })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active local model" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(settings.trainingOllamaModel || props.aiStatus?.current?.derivedModelLabel || "Not selected") }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: benchmarkLeader ? `Recent checks favor ${String(benchmarkLeader.model || "this model")} on this machine.` : "Run Check readiness to compare the current options." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fits this PC" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: compatibleTunePodPresets.length }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: compatibleTunePodPresets.length > 0 ? "These curated presets match the active target tier." : "No curated presets fit the active target tier yet." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model readiness" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${Number(tuningLifecycle.readyCount || readinessCounts.live || 0)} ready \u2022 ${Number(tuningLifecycle.localCount || 0)} tracked` }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "See what is ready now, saved for later, or still missing below." })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Machine target" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedHardwareTarget, onChange: (event) => void props.onUpdateSetting("trainingHardwareTarget", event.target.value), children: (targetHardwareOptions.length ? targetHardwareOptions : [{ id: "auto", label: "Current machine" }]).map((target) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(target.id || ""), children: String(target.label || target.id || "") }, String(target.id || ""))) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Current setup" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: routePolicyLabel, readOnly: true })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Active local model" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.trainingOllamaModel || props.aiStatus?.current?.derivedModelLabel || "Not selected"), readOnly: true })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Fallback help" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} \u2022 compare or backup help` : "Not configured", readOnly: true })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Model readiness" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "See what is ready now, saved, or still missing" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Tune Pod should make it obvious which models are ready to use now and which ones still need setup." })
+          ] }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Ready now" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: readinessCounts.live }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Ready to use on this machine right now." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Added" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: readinessCounts.registered }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Added to the app, but not confirmed ready on this machine yet." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Stored" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: readinessCounts.staged }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Available to import later, but not added to the live setup yet." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Missing" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: readinessCounts.missing }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Not available for this machine yet or not installed locally." })
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fits this PC" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Compatible local model presets for the active target" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Start with the presets that fit this machine before you widen to heavier families." })
+          ] }) }),
+          compatibleTunePodPresets.slice(0, 6).map((preset) => {
+            const targetLabels = tunePodPresetTargetLabels(preset);
+            const presetModel = String(preset.ollamaModel || "");
+            const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(preset.label || preset.id || "Preset") }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                String(preset.sizeLabel || "size pending"),
+                preset.requirementSummary ? ` \u2022 ${String(preset.requirementSummary)}` : "",
+                targetLabels.length > 0 ? ` \u2022 Fits ${targetLabels.join(" \u2022 ")}` : "",
+                isReady ? " \u2022 ready now" : " \u2022 needs setup"
+              ] })
+            ] }, String(preset.id || preset.label));
+          }),
+          compatibleTunePodPresets.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No curated local models fit the active target tier yet." }) : null
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "queue-card tunepod-advanced-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Advanced" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Model choices and deeper setup details" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Open this when you want task-specific model choices, fallback detail, or deeper readiness steps." })
+          ] }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current setup" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Which model handles each kind of work" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Use this only when you need to inspect or change task-specific model choices." })
+            ] }) }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid lane-grid", children: routePlanCards.map((lane) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card lane-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Active choice" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: lane.label }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: lane.summary }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "lane-summary", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: lane.owner }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: lane.source })
+              ] })
+            ] }, lane.id)) }),
+            routePlanCards.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Task model choices will appear here after the next AI status refresh." }) : null
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Advanced readiness details" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${localModelProgram.verifiedCount}/${localModelProgram.layers.length} steps verified` }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.summary })
+            ] }),
+            localModelProgram.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: layer.label }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${localModelProgramStatusLabel(layer.status)} \u2022 ${layer.summary}` }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `status-pill${layer.status === "verified" ? " ready" : ""}`, children: localModelProgramStatusLabel(layer.status) }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-pill", children: layer.unlockRule })
+              ] })
+            ] }, layer.id))
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fallback and compare" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Fallback help" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} with ${selectedRemoteModel || "a selected model"} is available as backup help or for quick comparison.` : "No fallback help is configured yet." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Compare" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: capabilityLanes.find((lane) => String(lane?.id || "").toLowerCase().includes("compare"))?.summary || "Quick compare stays available here when it is configured." })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Better on bigger hardware" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: incompatibleTunePodPresets.length > 0 ? `${incompatibleTunePodPresets.length} heavier preset${incompatibleTunePodPresets.length === 1 ? "" : "s"} stay listed here as bigger-machine options.` : "No heavier curated presets are recorded for this target right now." })
+            ] })
+          ] })
+        ] })
+      ] })
+    ] }) });
   }
   function LabsPanel(props) {
     const labs = Array.isArray(props.labs?.labs) ? props.labs.labs : [];
@@ -24259,7 +25147,7 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: summarizeText(signal.note || "", 180) })
           ] }, `${signal.note || index}-${signal.verdict || "comment"}`)),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "These signals come from approvals, needs-changes notes, and operator comments. Chat guidance can reuse them without flooding the UI." })
-        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No operator supervision signals yet. Record approvals, needs changes, or comments from Monitor to start shaping the engine." })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No operator supervision signals yet. Record approvals, needs changes, or comments from Workbench to start shaping the engine." })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Recent change events" }),
@@ -24318,6 +25206,35 @@
     const selectedHardwareTarget = String(settings.trainingHardwareTarget || props.tuning?.settings?.trainingHardwareTarget || "auto");
     const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
     const recommendedInstallPresets = installPresets.filter((item) => item.hardwareRecommended);
+    const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+    const tuningLifecycle = props.tuning?.lifecycle && typeof props.tuning.lifecycle === "object" ? props.tuning.lifecycle : props.aiStatus?.localModelInventory && typeof props.aiStatus.localModelInventory === "object" ? props.aiStatus.localModelInventory : {};
+    const machineProfile = props.tuning?.telemetry?.machine && typeof props.tuning.telemetry.machine === "object" ? props.tuning.telemetry.machine : {};
+    const selectedHardwareTargetMeta = targetHardwareOptions.find((item) => String(item?.id || "") === selectedHardwareTarget) || targetHardwareOptions[0] || null;
+    const effectiveHardwareTargetId = selectedHardwareTarget === "auto" ? String(machineProfile.id || "").trim() || "auto" : selectedHardwareTarget;
+    const effectiveHardwareTargetMeta = targetHardwareOptions.find((item) => String(item?.id || "") === effectiveHardwareTargetId) || selectedHardwareTargetMeta;
+    const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
+    const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || "hybrid-default");
+    const routePolicyMeta = aiRoutingPolicies.find((policy) => String(policy?.id || "") === routePolicyId) || null;
+    const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
+    const routePolicySummary = String(routePolicyMeta?.summary || "").trim();
+    const remoteFallbackReady = Boolean(String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || "").trim());
+    const hardwareTargetLabelMap = targetHardwareOptions.reduce((accumulator, item) => {
+      const targetId = String(item?.id || "").trim();
+      if (targetId) {
+        accumulator[targetId] = String(item?.label || targetId);
+      }
+      return accumulator;
+    }, {});
+    const tunePodReadyModelSet = new Set(aiModelOptions.filter((option) => option.ready).map((option) => option.model));
+    const tunePodPresetTargetLabels = (preset) => {
+      const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : []).map((item) => String(item || "").trim()).filter((item) => item && item !== "auto");
+      return targetIds.map((targetId) => hardwareTargetLabelMap[targetId] || targetId);
+    };
+    const tunePodPresetFit = (preset) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
+    const compatibleTunePodPresets = installPresets.filter((preset) => tunePodPresetFit(preset).fits);
+    const incompatibleTunePodPresets = installPresets.filter((preset) => !tunePodPresetFit(preset).fits);
+    const remoteReductionUnlock = localModelProgram.unlocks.find((unlock) => unlock.id === "remote-min") || null;
+    const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM \u2022 ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` \u2022 ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ""}` : "Machine telemetry is still warming up.";
     const [providerKeyBusy, setProviderKeyBusy] = import_react2.default.useState(false);
     const visibleBridgeProfiles = (aiBridgeProfiles.length ? aiBridgeProfiles : [{ id: "llama-bridge", label: "Llama Bridge" }, { id: "gpt4all-bridge", label: "GPT4All Bridge" }, { id: "custom", label: "Custom" }]).filter((profile) => aiManualMode || String(profile?.id || "") !== "custom");
     const selectedBridgeProfile = visibleBridgeProfiles.find((profile) => String(profile?.id || "") === aiBridgeProfile) || visibleBridgeProfiles[0] || null;
@@ -24445,6 +25362,12 @@
             { label: "Provider", value: currentProvider },
             { label: "Ready models", value: String(readyModelCount) },
             { label: "Overrides", value: String(activeLaneOverrideCount) }
+          ];
+        case "tunepod":
+          return [
+            { label: "Current target", value: String(effectiveHardwareTargetMeta?.label || "Current machine") },
+            { label: "Fits this target", value: String(compatibleTunePodPresets.length) },
+            { label: "Next unlock", value: localModelProgram.nextLayer.label }
           ];
         case "autonomy":
           return [
@@ -24913,7 +25836,7 @@
                 "button",
                 {
                   className: "ghost",
-                  onClick: () => void window.gosAgent.bootstrapWorkspaceVsCode({
+                  onClick: () => void window.gosAgent.installWorkspaceVsCodeCompanion({
                     workspaceRoot: props.snapshot?.workspaceRoot,
                     targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot
                   }).then(props.onRefresh),
@@ -25443,11 +26366,187 @@
               ] }, String(lane.id))) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Monitor handoff" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workbench handoff" }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Deep health, benchmarks, promotions, and debug exports moved to Monitor." }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Keep AI settings focused on selectors and lane tuning here, then use Monitor for the live operational view." })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Deep health, benchmarks, recovery, and debug exports moved to Workbench." }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Keep AI settings focused on selectors and lane tuning here, then use Workbench for the live operational view." })
               ] })
+            ] })
+          ] }) : null,
+          props.activeTab === "tunepod" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card active", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Current machine fit" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(machineProfile.label || "Machine profile pending") }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { children: [
+                  machineProfileFootprint,
+                  machineProfile.summary ? ` \u2022 ${String(machineProfile.summary)}` : ""
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selected Tune Pod target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(selectedHardwareTargetMeta?.label || "Current machine") }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(selectedHardwareTargetMeta?.summary || "The selected target controls which local model presets count as a good fit.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Local route block" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified` }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: localModelProgram.summary })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Compatible local options" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: compatibleTunePodPresets.length }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: compatibleTunePodPresets.length > 0 ? "These presets match the current hardware target." : "No curated presets match this target yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Local inventory" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${Number(tuningLifecycle.readyCount || 0)} ready \u2022 ${Number(tuningLifecycle.localCount || 0)} tracked` }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(tuningLifecycle.summary || "Import or stage local models to start proving the daily coding loop.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Remote reduction" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: remoteReductionUnlock ? localModelProgramStatusLabel(remoteReductionUnlock.status) : remoteFallbackReady ? "Configured" : "Locked" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: remoteReductionUnlock?.summary || (remoteFallbackReady ? "Remote is configured as a fallback path, not the daily default." : "Add a remote fallback only if you need compare or overflow coverage.") })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "settings-grid", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Tune Pod target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("select", { value: selectedHardwareTarget, onChange: (event) => void props.onUpdateSetting("trainingHardwareTarget", event.target.value), children: (targetHardwareOptions.length ? targetHardwareOptions : [{ id: "auto", label: "Current machine" }]).map((target) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(target.id || ""), children: String(target.label || target.id || "") }, String(target.id || ""))) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Route plan" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: routePolicyLabel, readOnly: true })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Primary local model" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: String(settings.trainingOllamaModel || derivedModelLabel || "qwen2.5-coder:7b"), readOnly: true })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Remote fallback" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", { value: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} \u2022 ${selectedRemoteModel || "model pending"}` : "Fallback not configured", readOnly: true })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Tune Pod route plan" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Keep local-first visible while remote shrinks to backup" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: routePolicySummary || "Tune Pod keeps the route proof visible so the operator can widen local capability intentionally instead of drifting back to remote-by-default." })
+              ] }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: routePolicyLabel }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.summary })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Benchmark leader" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: benchmarkLeader ? `${String(benchmarkLeader.model || "model")} \u2022 ${Number(benchmarkLeader.passRate || 0)}% pass \u2022 ${Number(benchmarkLeader.averageLatencyMs || 0)}ms avg latency` : "Run a benchmark to compare local candidates against the current route." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Remote fallback posture" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} with ${selectedRemoteModel || "a selected model"} is available for compare, overflow, or approval only.` : "No remote fallback is configured yet. The current plan depends entirely on local readiness." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Local inventory status" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(tuningLifecycle.summary || "No local inventory summary is available yet.") })
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Hardware target tiers" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Match the target before you pull heavier local models" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "These tiers are the requirement blocks the repo actually tracks today. Tune Pod uses them to sort good-fit models from models that belong on a larger machine." })
+              ] }) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "card-grid", children: (targetHardwareOptions.length ? targetHardwareOptions : [{ id: "auto", label: "Current machine", summary: "Use the current machine as the tuning reference." }]).map((target) => {
+                const targetId = String(target.id || "");
+                const isSelectedTarget = targetId === selectedHardwareTarget;
+                const isEffectiveTarget = targetId === effectiveHardwareTargetId;
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `metric-card${isSelectedTarget || isEffectiveTarget ? " active" : ""}`, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: isEffectiveTarget ? "Current fit tier" : isSelectedTarget ? "Selected target" : "Target tier" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(target.label || target.id || "Target") }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(target.summary || "Target summary unavailable.") }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                    isSelectedTarget ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-pill ready", children: "Selected in Tune Pod" }) : null,
+                    isEffectiveTarget ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-pill ready", children: "Current machine fit" }) : null
+                  ] })
+                ] }, targetId);
+              }) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fits this PC" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Compatible local models for the active Tune Pod target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Tune Pod promotes the presets that match the current fit tier first so the local route can get stronger before you widen to heavier families." })
+              ] }) }),
+              compatibleTunePodPresets.slice(0, 8).map((preset) => {
+                const targetLabels = tunePodPresetTargetLabels(preset);
+                const presetModel = String(preset.ollamaModel || "");
+                const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(preset.label || preset.id || "Preset") }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                    String(preset.sizeLabel || "size pending"),
+                    preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : "",
+                    preset.requirementSummary ? ` \u2022 ${String(preset.requirementSummary)}` : "",
+                    targetLabels.length > 0 ? ` \u2022 Fits ${targetLabels.join(" \u2022 ")}` : "",
+                    isReady ? " \u2022 ready locally" : " \u2022 import needed"
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                    preset.ollamaModel ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void props.onUpdateSetting("trainingOllamaModel", String(preset.ollamaModel || "")), children: "Pick model" }) : null,
+                    preset.downloadCommand ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => void window.navigator.clipboard?.writeText(String(preset.downloadCommand || "")), children: "Copy install command" }) : null
+                  ] })
+                ] }, String(preset.id || preset.label));
+              }),
+              compatibleTunePodPresets.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Tune Pod does not have a curated fit for this target yet. Pick a smaller target or import a lighter local family first." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "panel-header", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Better on bigger hardware" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Models that do not currently fit this Tune Pod target" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "If a model does not match the active target, Tune Pod keeps it visible but marks which larger tiers it belongs to so you do not waste time staging the wrong family." })
+              ] }) }),
+              incompatibleTunePodPresets.slice(0, 8).map((preset) => {
+                const targetLabels = tunePodPresetTargetLabels(preset);
+                const fit = tunePodPresetFit(preset);
+                return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(preset.label || preset.id || "Preset") }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+                    String(preset.sizeLabel || "size pending"),
+                    preset.requirementSummary ? ` \u2022 ${String(preset.requirementSummary)}` : "",
+                    fit.blockers.length > 0 ? ` \u2022 Needs ${fit.blockers.join(" \u2022 ")}` : "",
+                    targetLabels.length > 0 ? ` \u2022 Better on ${targetLabels.join(" \u2022 ")}` : " \u2022 Use a larger hardware tier",
+                    preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : ""
+                  ] })
+                ] }, String(preset.id || preset.label));
+              }),
+              incompatibleTunePodPresets.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Everything in the curated preset list currently fits this target tier." }) : null
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.ladderEyebrow }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified` }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.summary })
+              ] }),
+              localModelProgram.layers.map((layer) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: layer.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${localModelProgramStatusLabel(layer.status)} \u2022 ${layer.summary}` }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: `status-pill${layer.status === "verified" ? " ready" : ""}`, children: localModelProgramStatusLabel(layer.status) }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-pill", children: layer.unlockRule })
+                ] })
+              ] }, layer.id)),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: AI_ROUTE_COPY.ladderSummary })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: AI_ROUTE_COPY.unlockEyebrow }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: localModelProgram.nextLayer.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.nextLayer.unlockRule })
+              ] }),
+              localModelProgram.unlocks.map((unlock) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: unlock.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: `${localModelProgramStatusLabel(unlock.status)} \u2022 ${unlock.summary}` })
+              ] }, unlock.id)),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: AI_ROUTE_COPY.unlockSummary })
             ] })
           ] }) : null,
           props.activeTab === "autonomy" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
@@ -25697,6 +26796,44 @@
     const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
     const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === "object" ? testBench.nextSafeAction : {};
     const safeRecipe = testBench.safeRecipe && typeof testBench.safeRecipe === "object" ? testBench.safeRecipe : {};
+    const latestTaskRunLabel = String(taskRuns[0]?.runtimeLabel || taskRuns[0]?.label || taskRuns[0]?.title || "").trim();
+    const changedFiles = Array.isArray(testBench.changedFiles) ? testBench.changedFiles : [];
+    const failingLocations = Array.isArray(testBench.failingLocations) ? testBench.failingLocations : [];
+    const previewPath = String(
+      testBench.preferredPath || changedFiles[0]?.path || reviewer.notes?.[0]?.path || ""
+    ).trim();
+    const previewTitle = String(
+      latestTaskRunLabel || testBench.summary || reviewer.summary || "Latest workspace run"
+    ).trim();
+    const previewLines = [
+      `// ${previewTitle || "Workbench preview"}`,
+      previewPath ? `target_file("${previewPath.replace(/\\/g, "/")}" )` : 'target_file("workspace task")',
+      latestTaskRunLabel ? `run_label("${latestTaskRunLabel}")` : 'run_label("Task detail")',
+      `state("${String(taskRuns[0]?.runtimeState || taskRuns[0]?.status || testBench.status || "ready")}")`,
+      "",
+      ...changedFiles.slice(0, 5).map((item, index) => `${index + 1}. change(${JSON.stringify(shortPath(String(item?.path || item || "changed file")))});`),
+      ...changedFiles.length === 0 ? ['1. change("No changed files recorded yet.");'] : [],
+      "",
+      ...failingLocations.slice(0, 4).map((item) => `validate(${JSON.stringify(`${shortPath(String(item?.path || "finding"))} line ${Number(item?.line || 1)}: ${String(item?.message || "finding")}`)});`),
+      ...failingLocations.length === 0 ? ['validate("Focused proof is clear or not yet recorded.");'] : []
+    ];
+    const validationCards = failingLocations.length > 0 ? failingLocations.slice(0, 4).map((item) => ({
+      label: shortPath(String(item?.path || "Validation finding")) || "Validation finding",
+      detail: `line ${Number(item?.line || 1)} \u2022 ${String(item?.message || "Validation finding")}`,
+      status: "needs review"
+    })) : Array.isArray(acceptance?.checks) ? acceptance.checks.slice(0, 4).map((check) => ({
+      label: String(check?.label || check?.id || "Check"),
+      detail: summarizeText(String(check?.summary || "Validation check"), 90),
+      status: String(check?.status || "unknown")
+    })) : [];
+    const workbenchTabLabels = {
+      overview: "Overview",
+      runs: "Tasks",
+      learning: "Learning",
+      promotions: "Recovery",
+      debug: "Artifacts",
+      ide: "IDE"
+    };
     const [operatorComment, setOperatorComment] = import_react2.default.useState("");
     const [creatingOperatorTask, setCreatingOperatorTask] = import_react2.default.useState(false);
     const [recordingOperatorFeedback, setRecordingOperatorFeedback] = import_react2.default.useState(false);
@@ -25756,9 +26893,9 @@
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "module-panel monitor-panel", "data-panel": "monitor", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "panel-header", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Monitor" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "One place to watch the engine, learning loop, and promotion rings" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Safe mode, runs, benchmarks, promotions, and debug exports stay here so chat can stay clean." })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Workbench" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { children: "Inspect active tasks, run history, changes, and proof" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: "Execution details, recovery state, IDE lanes, and deeper artifacts stay here so chat can stay calm." })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onRefresh, children: "Refresh" }),
@@ -25769,7 +26906,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "primary", onClick: props.onExportDebugBundle, children: "Export debug bundle" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-tabs", children: MONITOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: props.activeTab === tab ? "active" : "", onClick: () => props.onSetActiveTab(tab), children: tab.charAt(0).toUpperCase() + tab.slice(1) }, tab)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "settings-tabs", children: MONITOR_TABS.map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: props.activeTab === tab ? "active" : "", onClick: () => props.onSetActiveTab(tab), children: workbenchTabLabels[tab] }, tab)) }),
       props.activeTab === "overview" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
@@ -25974,6 +27111,41 @@
         ] })
       ] }) : null,
       props.activeTab === "runs" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-review-shell", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "workbench-review-tabs", children: ["Output", "Diffs", "Tests", "IDE"].map((tab) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: tab === "Diffs" ? "active" : "", children: tab }, tab)) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-review-layout", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "workbench-preview-stage", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-preview-stage-header", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Selected task" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: previewTitle || "Latest workspace run" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-pill", children: String(taskRuns[0]?.runtimeState || taskRuns[0]?.status || testBench.status || "ready") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("pre", { className: "workbench-code-preview", children: previewLines.join("\n") })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("aside", { className: "workbench-review-side", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-result-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Result preview" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: latestTaskRunLabel || testBench.status || "Ready for review" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(testBench.summary || reviewer.summary || "Review the current task, touched files, and focused proof from this surface.") }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "chip-row", children: [
+                  previewPath ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onOpenReviewPath(previewPath, "workbench-preview"), children: "Open file" }) : null,
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: () => props.onSetActiveTab("ide"), children: "Open IDE lane" })
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "workbench-validation-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Validation checks" }),
+                validationCards.map((item, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "workbench-validation-item", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: item.label }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.detail }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("small", { children: item.status })
+                ] }, `${item.label}-${index}`)),
+                validationCards.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Focused validation results will land here after the next run." }) : null
+              ] })
+            ] })
+          ] })
+        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Test Bench" }),
@@ -26258,6 +27430,23 @@
           promotionHistory.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "No promotion history yet." }) : null
         ] })
       ] }) : null,
+      props.activeTab === "ide" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        IDEPanel,
+        {
+          snapshot: props.snapshot,
+          tools: props.tools,
+          taskList: props.taskList,
+          taskRuns,
+          onQuickChat: props.onQuickChat,
+          onRefresh: props.onRefresh,
+          onOpenSettingsTab: props.onOpenSettingsTab,
+          onOpenMonitorTab: props.onSetActiveTab,
+          onBootstrapVsCode: props.onBootstrapVsCode,
+          onInstallVsCodeCompanion: props.onInstallVsCodeCompanion,
+          onOpenWorkspaceInVsCode: props.onOpenWorkspaceInVsCode,
+          onOpenActiveFileInVsCode: props.onOpenActiveFileInVsCode
+        }
+      ) : null,
       props.activeTab === "debug" ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "settings-section", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "card-grid", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [

@@ -161,11 +161,14 @@ test('install app update can check, download, and install when needed', async ()
 
 test('free-form ai prompt includes recent history and desktop context', async () => {
   let receivedPrompt = '';
+  let receivedOptions = null;
   const reply = await handleAssistantChat('/workspace', 'Can you help me fix this?', {
+    requestId: 'chatreq-123',
     hasAiKey: async () => true,
     getSummary: async () => ({ total: 3, todo: 1, done: 2, tested: 1 }),
-    runAi: async (_workspaceRoot, prompt) => {
+    runAi: async (_workspaceRoot, prompt, options) => {
       receivedPrompt = prompt;
+      receivedOptions = options;
       return 'Yes — start with the focused file and latest diff.';
     },
     chatHistory: [
@@ -173,6 +176,9 @@ test('free-form ai prompt includes recent history and desktop context', async ()
       { role: 'assistant', text: 'Started plan for BAT<176>.' },
     ],
     chatContext: {
+      chatMode: 'ask',
+      suggestedLaneId: 'chat-fast',
+      suggestedTaskMode: 'chat',
       activeFile: 'main.js',
       selectionLine: 2317,
       changedFiles: 4,
@@ -191,6 +197,12 @@ test('free-form ai prompt includes recent history and desktop context', async ()
   });
 
   assert.equal(reply, 'Yes — start with the focused file and latest diff.');
+  assert.deepEqual(receivedOptions, {
+    requestId: 'chatreq-123',
+    chatMode: 'ask',
+    suggestedLaneId: 'chat-fast',
+    suggestedTaskMode: 'chat',
+  });
   assert.match(receivedPrompt, /Recent conversation:/);
   assert.match(receivedPrompt, /User: Plan BAT<176>/);
   assert.match(receivedPrompt, /Assistant: Started plan for BAT<176>\./);
@@ -303,8 +315,13 @@ test('free-form ai prompt keeps the default voice human-first and includes chat 
   });
 
   assert.equal(reply, 'Yes. Start with the smallest safe check, then we can decide whether this needs a wider fix.');
+  assert.match(receivedPrompt, /one excellent assistant/i);
+  assert.match(receivedPrompt, /one strong human collaborator/i);
   assert.match(receivedPrompt, /warm, capable pair-programming partner/i);
   assert.match(receivedPrompt, /Answer the way a strong human collaborator would/i);
+  assert.match(receivedPrompt, /Start with the answer itself instead of filler openings or meta commentary/i);
+  assert.match(receivedPrompt, /sentence-sized instead of dribbling out noisy fragments/i);
+  assert.match(receivedPrompt, /Do not expose chain-of-thought/i);
   assert.match(receivedPrompt, /Prefer short paragraphs by default/i);
   assert.match(receivedPrompt, /Chat mode: ask/i);
   assert.match(receivedPrompt, /Mode route: chat-fast/i);

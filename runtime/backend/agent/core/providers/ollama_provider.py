@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from http import HTTPStatus
 from typing import Any
 from urllib import error, request
@@ -40,6 +41,28 @@ class OllamaProvider(ModelProvider):
         with request.urlopen(req, timeout=self.config.request_timeout) as response:
             body = response.read().decode("utf-8")
         return json.loads(body) if body else {}
+
+    def _stream_json(self, path: str, payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        base = self.config.ollama_base_url.rstrip("/")
+        target = f"{base}{path}"
+        data = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            target,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with request.urlopen(req, timeout=self.config.request_timeout) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    payload_line = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload_line, dict):
+                    yield payload_line
 
     def _http_error_message(self, exc: error.HTTPError) -> str:
         status = exc.code if isinstance(exc.code, int) else 0
@@ -134,3 +157,41 @@ class OllamaProvider(ModelProvider):
     def propose_patch(self, prompt: str, **kwargs: Any) -> str:
         patch_prompt = f"Produce a small targeted repair suggestion for this issue. Focus on the minimal safe fix.\n\n{prompt}"
         return self.generate(prompt=patch_prompt, **kwargs)
+
+    def stream_generate(self, *, prompt: str | None = None, messages: list[ProviderMessage] | None = None, system_prompt: str | None = None, temperature: float | None = None) -> Iterator[str]:
+        payload_options: dict[str, Any] = {}
+        if temperature is not None:
+            payload_options["temperature"] = temperature
+        try:
+            if messages:
+                payload_messages = list(messages)
+                if system_prompt and not any(message.get("role") == "system" for message in payload_messages):
+                    payload_messages.insert(0, {"role": "system", "content": system_prompt})
+                payload = {
+                    "model": self.config.ollama_model,
+                    "messages": payload_messages,
+                    "stream": True,
+                    "options": payload_options,
+                }
+                for item in self._stream_json("/api/chat", payload):
+                    content = str((item.get("message") or {}).get("content") or "")
+                    if content:
+                        yield content
+                return
+            payload = {
+                "model": self.config.ollama_model,
+                "prompt": prompt or "",
+                "system": system_prompt or self.config.system_prompt,
+                "stream": True,
+                "options": payload_options,
+            }
+            for item in self._stream_json("/api/generate", payload):
+                content = str(item.get("response") or "")
+                if content:
+                    yield content
+        except error.HTTPError as exc:
+            raise RuntimeError(self._http_error_message(exc)) from exc
+        except (error.URLError, TimeoutError, ValueError, OSError):
+            fallback = self.generate(prompt=prompt, messages=messages, system_prompt=system_prompt, temperature=temperature)
+            if fallback:
+                yield fallback

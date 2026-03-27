@@ -8,6 +8,29 @@ const { DEFAULTS } = require('./constants');
 const { existsExecutable, readJsonFile } = require('./utils');
 const { RUNTIME_ROOT } = require('../core/app-roots');
 
+const CHAT_EVENT_PREFIX = '__GOS_AGENT_CHAT_EVENT__';
+
+function drainPrefixedJsonLines(buffer, chunk, prefix, onItem) {
+  const combined = `${buffer || ''}${String(chunk || '')}`;
+  const lines = combined.split(/\r?\n/);
+  const remainder = lines.pop() || '';
+  for (const line of lines) {
+    const trimmed = String(line || '').trim();
+    if (!trimmed.startsWith(prefix)) {
+      continue;
+    }
+    try {
+      const payload = JSON.parse(trimmed.slice(prefix.length));
+      if (typeof onItem === 'function') {
+        onItem(payload);
+      }
+    } catch (_error) {
+      // Ignore malformed stream events and keep the invoke result authoritative.
+    }
+  }
+  return remainder;
+}
+
 function canRunSystemCommand(command) {
   const text = String(command || '').trim();
   if (!text) {
@@ -310,11 +333,20 @@ class AgentRuntimeClient {
     }));
   }
 
-  chat(prompt, context = {}) {
+  chat(prompt, context = {}, handlers = {}) {
+    let stdoutBuffer = '';
     return this.invoke('chat', {
       prompt,
       context,
       envOverrides: context.env || {},
+    }, {
+      onStdout: (text) => {
+        stdoutBuffer = drainPrefixedJsonLines(stdoutBuffer, text, CHAT_EVENT_PREFIX, handlers.onEvent);
+        if (typeof handlers.onStdout === 'function') {
+          handlers.onStdout(text);
+        }
+      },
+      onStderr: handlers.onStderr,
     }).then((response) => response.result || { ok: response.ok, reply: '' });
   }
 

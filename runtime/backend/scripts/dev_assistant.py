@@ -134,6 +134,11 @@ except (ModuleNotFoundError, ImportError, SyntaxError):
             del prompt, messages, system_prompt, temperature
             return ""
 
+        def stream_generate(self, *, prompt: str | None = None, messages: list[dict] | None = None, system_prompt: str | None = None, temperature: float | None = None):
+            generated = self.generate(prompt=prompt, messages=messages, system_prompt=system_prompt, temperature=temperature)
+            if generated:
+                yield generated
+
         def chat(self, messages: list[dict], **kwargs) -> str:
             del kwargs
             return self.generate(messages=messages)
@@ -934,6 +939,11 @@ def ai_generate(prompt: str | None = None, messages: list[dict] | None = None) -
     """
     provider = _get_model_provider("You are a rigorous software engineer.")
     return provider.generate(prompt=prompt, messages=messages)
+
+
+def ai_generate_stream(prompt: str | None = None, messages: list[dict] | None = None):
+    provider = _get_model_provider("You are a rigorous software engineer.")
+    yield from provider.stream_generate(prompt=prompt, messages=messages)
 
 
 def ai_backend_diagnosis() -> str:

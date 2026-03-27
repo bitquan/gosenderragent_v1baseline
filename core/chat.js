@@ -6,10 +6,10 @@ const DEFAULT_HELP_TEXT =
   'Try: "Plan the next safe coding task", "Review the current repo and tell me what needs fixing first", "Set up the workspace coding model, engine control model, and verify the route plan is ready", "/plan 176", "/implement planned", "/repair", "/autopilot", "/approve", "/health", "/app update check", "/train", "/learn", "/status", or "/cancel <runId>".';
 
 const DEFAULT_FALLBACK_TEXT =
-  'I can turn English requests into scoped coding work, review diffs, manage approvals, run the engine, and report workspace health. Example: "Plan the next safe coding task."';
+  'I can help you plan changes, explain code, debug issues, review diffs, and carry coding work forward in this workspace. Example: "Plan the next safe coding task."';
 
 const DEFAULT_AI_MISSING_TEXT =
-  'No chat backend configured. Start Ollama, set a working LOCAL_AI_CMD, or configure OPENAI_API_KEY.';
+  'No assistant model is ready yet. Start Ollama, set a working LOCAL_AI_CMD, or configure OPENAI_API_KEY.';
 
 function clipText(value, maxChars = 900) {
   const text = String(value || '').trim();
@@ -239,6 +239,18 @@ function summarizeChatContext(chatContext) {
   return lines;
 }
 
+function buildRunAiOptions(callbacks = {}) {
+  const chatContext = callbacks.chatContext && typeof callbacks.chatContext === 'object'
+    ? callbacks.chatContext
+    : {};
+  return {
+    requestId: String(callbacks.requestId || '').trim(),
+    chatMode: String(chatContext.chatMode || '').trim().toLowerCase(),
+    suggestedLaneId: String(chatContext.suggestedLaneId || chatContext.laneId || '').trim().toLowerCase(),
+    suggestedTaskMode: String(chatContext.suggestedTaskMode || '').trim().toLowerCase(),
+  };
+}
+
 function isAiUnavailableReply(value) {
   const text = String(value || '').toLowerCase().trim();
   if (!text) {
@@ -297,7 +309,7 @@ function pickAutopilotMode(message, lower) {
 
 function buildCapabilitiesPrompt({ userMessage, summaryText, commandHints, workspaceRoot }) {
   return [
-    'You are the GoSenderr desktop coding workbench for this local software workspace.',
+    'You are GoSenderr, a chat-first AI dev assistant for this local software workspace.',
     '',
     `Workspace: ${workspaceRoot || '(unknown)'}`,
     `Current board snapshot: ${summaryText}`,
@@ -327,9 +339,17 @@ function buildConversationalPrompt({
   const contextLines = summarizeChatContext(chatContext);
 
   return [
-    'You are the GoSenderr desktop coding workbench inside the local desktop app for this software workspace.',
+    'You are GoSenderr, a chat-first AI dev assistant inside the local desktop app for this software workspace.',
+    'The user should feel like they are talking to one excellent assistant.',
+    'Speak like one strong human collaborator: warm, grounded, direct, and honest.',
     'Act like a warm, capable pair-programming partner: clear, calm, practical, and grounded in the current repo state.',
     'Answer the way a strong human collaborator would: understand the request, reply directly, and suggest the next step naturally.',
+    'Start with the answer itself instead of filler openings or meta commentary.',
+    'Keep planner, coder, reviewer, repair, and routing roles backstage unless the user explicitly asks about them.',
+    'Do not expose chain-of-thought, raw tool traces, or internal engine status dumps.',
+    'When streaming, keep the wording stable and sentence-sized instead of dribbling out noisy fragments.',
+    'If work is underway, keep any progress narration brief, plain-English, and separate from the main answer.',
+    'Summarize diffs, validation, and review outcomes in chat, then point to Workbench for the detailed proof when needed.',
     'Prefer short paragraphs by default. Use bullets only when the content is clearly list-shaped.',
     'Respect the operator guidance and learned prompt patterns when they are present, but do not overfit or become repetitive.',
     'If a slash command or in-app action would help, mention it briefly at the end.',
@@ -400,7 +420,7 @@ async function handleCapabilitiesReply(workspaceRoot, message, callbacks) {
       commandHints,
       workspaceRoot,
     });
-    const aiText = await callbacks.runAi(workspaceRoot, aiPrompt);
+    const aiText = await callbacks.runAi(workspaceRoot, aiPrompt, buildRunAiOptions(callbacks));
     if (aiText && !isAiUnavailableReply(aiText)) {
       return String(aiText);
     }
@@ -786,7 +806,7 @@ async function handleSingle(workspaceRoot, rawMessage, callbacks) {
       history: callbacks.chatHistory,
       chatContext: callbacks.chatContext,
     });
-    const aiText = await callbacks.runAi(workspaceRoot, aiPrompt);
+    const aiText = await callbacks.runAi(workspaceRoot, aiPrompt, buildRunAiOptions(callbacks));
     if (aiText && !isAiUnavailableReply(aiText)) {
       return String(aiText);
     }

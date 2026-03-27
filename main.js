@@ -244,7 +244,12 @@ const {
   rollbackPromotion,
 } = require('./core/promotions');
 const { LearningJournalService } = require('./core/learning-journal');
-const { buildVsCodeSetupStatus, bootstrapVsCodeWorkspace } = require('./core/vscode-setup');
+const {
+  buildVsCodeSetupStatus,
+  bootstrapVsCodeWorkspace,
+  installVsCodeCompanion,
+  resolveVsCodeCliCommand,
+} = require('./core/vscode-setup');
 const { buildVsCodeExtensionHealth } = require('./core/vscode-extension-health');
 const { buildModelFoundryStatus, seedModelFoundryCandidate } = require('./core/model-foundry');
 const {
@@ -267,6 +272,7 @@ const {
 } = require('./core/task-hub');
 const { buildQueuedRecipePayload, buildRunFollowupPlan, queueFollowupRecipeTasks } = require('./core/followup-recipes');
 const {
+  compareReleaseVersions,
   downloadLatestReleaseFromFeed,
   getStagedReleaseStatus,
   getStagedReleaseByVersion,
@@ -1266,6 +1272,17 @@ function sendSchedulerEvent(payload) {
   mainWindow.webContents.send('agent:scheduler-event', payload);
 }
 
+function sendAssistantChatEvent(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send('assistant:chat-event', payload);
+}
+
+runtime.on('chat-event', (event) => {
+  sendAssistantChatEvent(event);
+});
+
 function sendUpdateEvent(payload) {
   pushMonitorEvent('updates', payload);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1395,6 +1412,28 @@ function binaryUpdateStatusSnapshot(payload = {}) {
 function activeRunCount() {
   const status = runtime.getStatus();
   return Array.isArray(status?.activeRuns) ? status.activeRuns.length : 0;
+}
+
+function normalizeReleaseVersionForComparison(version) {
+  const text = String(version || '').trim();
+  const match = text.match(/^(\d+\.\d+\.\d+)/);
+  return match ? match[1] : text;
+}
+
+function evaluateStagedBinaryRelease(latestRelease) {
+  const latest = latestRelease && typeof latestRelease === 'object' ? latestRelease : null;
+  const currentVersion = normalizeReleaseVersionForComparison(app.getVersion());
+  const candidateVersion = normalizeReleaseVersionForComparison(
+    latest?.version || parseVersionFromName(path.basename(String(latest?.fullPath || latest?.name || ''))),
+  );
+  const isInstallable = !!latest && !!candidateVersion && compareReleaseVersions(candidateVersion, currentVersion) > 0;
+  return {
+    latest,
+    currentVersion,
+    candidateVersion,
+    isInstallable,
+    isStale: !!latest && (!candidateVersion || !isInstallable),
+  };
 }
 
 function autoUpdateSettings() {
@@ -1596,10 +1635,11 @@ function runRepairLoop(payload = {}) {
 }
 
 function buildLocalStagedBinaryStatus(settings = binaryUpdateSettings()) {
-  const latest = settings?.staged?.latest || null;
+  const stagedRelease = evaluateStagedBinaryRelease(settings?.staged?.latest || null);
+  const latest = stagedRelease.latest;
   const releaseDir = settings?.staged?.releaseDir || '';
   const live = settings?.live || {};
-  if (!latest) {
+  if (!latest || !stagedRelease.isInstallable) {
     if (live.latest) {
       return {
         state: 'ready',
@@ -1609,12 +1649,35 @@ function buildLocalStagedBinaryStatus(settings = binaryUpdateSettings()) {
         localStaged: false,
         localArtifactPath: '',
         localReleaseDir: releaseDir,
+        staleLocalArtifactPath: stagedRelease.isStale ? String(latest?.fullPath || '') : '',
+        staleVersion: stagedRelease.isStale ? stagedRelease.candidateVersion : '',
         liveChannelDir: live.channelDir || '',
         liveVersion: live.latest.version || '',
         liveManifestPath: live.manifestPath || '',
         livePromotedAt: live.promotedAt || '',
         stagedHistory: Array.isArray(settings?.staged?.history) ? settings.staged.history : [],
         liveHistory: Array.isArray(live.history) ? live.history : [],
+        version: app.getVersion(),
+      };
+    }
+    if (stagedRelease.isStale) {
+      return {
+        state: 'ready',
+        message: `Ignoring staged desktop release ${stagedRelease.candidateVersion || path.basename(String(latest?.fullPath || latest?.name || ''))} because it is not newer than the current app version ${stagedRelease.currentVersion || app.getVersion()}.`,
+        configured: true,
+        downloaded: false,
+        localStaged: false,
+        localArtifactPath: '',
+        localReleaseDir: releaseDir,
+        staleLocalArtifactPath: String(latest?.fullPath || ''),
+        staleVersion: stagedRelease.candidateVersion || '',
+        liveChannelDir: live.channelDir || '',
+        liveVersion: live.latest?.version || '',
+        liveManifestPath: live.manifestPath || '',
+        livePromotedAt: live.promotedAt || '',
+        stagedHistory: Array.isArray(settings?.staged?.history) ? settings.staged.history : [],
+        liveHistory: Array.isArray(live.history) ? live.history : [],
+        availableVersion: live.latest?.version || '',
         version: app.getVersion(),
       };
     }
@@ -1628,6 +1691,8 @@ function buildLocalStagedBinaryStatus(settings = binaryUpdateSettings()) {
     localStaged: true,
     localArtifactPath: latest.fullPath,
     localReleaseDir: releaseDir,
+    staleLocalArtifactPath: '',
+    staleVersion: '',
     liveChannelDir: live.channelDir || '',
     liveVersion: live.latest?.version || '',
     liveManifestPath: live.manifestPath || '',
@@ -1651,6 +1716,8 @@ function initializeBinaryUpdater() {
       message: 'Binary updater dependency is unavailable in this build.',
       configured: false,
       downloaded: false,
+      localStaged: false,
+      localArtifactPath: '',
       version: app.getVersion(),
     });
   }
@@ -1664,6 +1731,8 @@ function initializeBinaryUpdater() {
       message: 'Set a release feed URL or stage a local desktop release to enable app updates.',
       configured: false,
       downloaded: false,
+      localStaged: false,
+      localArtifactPath: '',
       version: app.getVersion(),
     });
   }
@@ -1769,8 +1838,9 @@ function initializeBinaryUpdater() {
 
 async function checkBinaryForUpdates() {
   const settings = binaryUpdateSettings();
+  const stagedRelease = evaluateStagedBinaryRelease(settings?.staged?.latest || null);
   initializeBinaryUpdater();
-  if (settings?.staged?.latest) {
+  if (stagedRelease.isInstallable) {
     return latestUpdateStatus.binary;
   }
   if (!settings.feedUrl || !electronAutoUpdater) {
@@ -1794,15 +1864,16 @@ async function checkBinaryForUpdates() {
 async function downloadBinaryUpdateNow() {
   const workspaceRoot = getWorkspaceRoot();
   const settings = binaryUpdateSettings();
+  const stagedRelease = evaluateStagedBinaryRelease(settings?.staged?.latest || null);
   initializeBinaryUpdater();
   if (!settings.feedUrl) {
     return { ok: false, message: 'Set a release feed URL before downloading a desktop release.' };
   }
-  if (settings?.staged?.latest) {
+  if (stagedRelease.isInstallable && stagedRelease.latest?.fullPath) {
     const refreshed = initializeBinaryUpdater();
     return {
       ok: true,
-      message: `A staged desktop release is already available: ${path.basename(settings.staged.latest.fullPath)}.`,
+      message: `A staged desktop release is already available: ${path.basename(stagedRelease.latest.fullPath)}.`,
       ...refreshed,
     };
   }
@@ -2128,13 +2199,26 @@ async function buildBinaryReleaseNow() {
 
 function installBinaryUpdateNow(payload = {}) {
   const requestedVersion = String(payload?.version || payload?.selectedVersion || '').trim();
+  const stagedRelease = evaluateStagedBinaryRelease(binaryUpdateSettings()?.staged?.latest || null);
   let localArtifactPath = String(latestUpdateStatus.binary?.localArtifactPath || '').trim();
+  if (!requestedVersion && !stagedRelease.isInstallable) {
+    localArtifactPath = '';
+  }
   if (requestedVersion) {
     const selected = getStagedReleaseByVersion(getWorkspaceRoot(), requestedVersion);
     if (!selected?.preferred?.fullPath) {
       return {
         ok: false,
         message: `Staged desktop release ${requestedVersion} was not found. Refresh Update Center and try again.`,
+        version: requestedVersion,
+      };
+    }
+    const selectedVersion = normalizeReleaseVersionForComparison(selected.preferred.version || requestedVersion);
+    const currentVersion = normalizeReleaseVersionForComparison(app.getVersion());
+    if (!selectedVersion || compareReleaseVersions(selectedVersion, currentVersion) <= 0) {
+      return {
+        ok: false,
+        message: `Staged desktop release ${requestedVersion} is not newer than the current app version ${currentVersion}.`,
         version: requestedVersion,
       };
     }
@@ -2552,7 +2636,7 @@ async function getSecret(name) {
   return { ok: true, value, backend: 'safeStorage-fallback' };
 }
 
-function runAssistantCli(workspaceRoot, args, extraEnv = {}) {
+function runAssistantCli(workspaceRoot, args, extraEnv = {}, options = {}) {
   if (!Array.isArray(args) || args[0] !== '--ai') {
     return Promise.resolve('Unsupported assistant CLI invocation.');
   }
@@ -2560,7 +2644,11 @@ function runAssistantCli(workspaceRoot, args, extraEnv = {}) {
   const prompt = promptIndex >= 0 ? String(args[promptIndex + 1] || '') : '';
   const editorContext = buildDesktopEditorContext(workspaceRoot);
   runtime.setWorkspaceRoot(workspaceRoot);
-  return runtime.chat(prompt, { env: extraEnv, editor_context: editorContext }).then((response) => {
+  return runtime.chat(prompt, {
+    env: extraEnv,
+    editor_context: editorContext,
+    requestId: String(options.requestId || '').trim(),
+  }).then((response) => {
     const reply = response && typeof response.reply === 'string' ? response.reply.trim() : '';
     return reply || '(AI unavailable)';
   }).catch((err) => `AI command failed to start: ${err.message}`);
@@ -2849,6 +2937,39 @@ function getConfiguredLocalAiCmd() {
 function getAvailableLocalAiCmd() {
   const command = getConfiguredLocalAiCmd();
   return commandExecutableExists(command, RUNTIME_ROOT) ? command : '';
+}
+
+const REMOTE_CHAT_QUALITY_POLICIES = new Set(['hybrid-default', 'best-available']);
+const REMOTE_CHAT_QUALITY_LANES = new Set(['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary']);
+const LOCAL_FIRST_CHAT_LANES = new Set(['code-main', 'repair-fast', 'review-verify']);
+const REMOTE_CHAT_QUALITY_TASK_MODES = new Set(['chat', 'planner', 'research', 'summarizer']);
+const LOCAL_FIRST_CHAT_TASK_MODES = new Set(['coder', 'repair', 'validator']);
+
+function shouldPreferRemoteChatReplies(options = {}) {
+  const aiProfile = normalizeProfileId(store.get('aiProfile'));
+  const routingPolicy = normalizeRoutingPolicy(store.get('aiRoutingPolicy'), aiProfile);
+  if (!REMOTE_CHAT_QUALITY_POLICIES.has(routingPolicy)) {
+    return false;
+  }
+
+  const laneId = String(options.suggestedLaneId || options.laneId || '').trim().toLowerCase();
+  if (LOCAL_FIRST_CHAT_LANES.has(laneId)) {
+    return false;
+  }
+  if (REMOTE_CHAT_QUALITY_LANES.has(laneId)) {
+    return true;
+  }
+
+  const taskMode = String(options.suggestedTaskMode || options.taskMode || '').trim().toLowerCase();
+  if (LOCAL_FIRST_CHAT_TASK_MODES.has(taskMode)) {
+    return false;
+  }
+  if (REMOTE_CHAT_QUALITY_TASK_MODES.has(taskMode)) {
+    return true;
+  }
+
+  const chatMode = resolveChatModeValue(options.chatMode || 'auto');
+  return chatMode === 'ask' || chatMode === 'plan';
 }
 
 function getChatBackendConfig(workspaceRoot) {
@@ -5182,6 +5303,20 @@ ipcMain.handle('workspace:vscodeBootstrap', async (_event, payload = {}) => {
   };
 });
 
+ipcMain.handle('workspace:vscodeInstallCompanion', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  const result = installVsCodeCompanion(targetWorkspaceRoot);
+  return {
+    ...result,
+    snapshot: workspaceSnapshot(),
+  };
+});
+
+ipcMain.handle('workspace:vscodeOpen', async (_event, payload = {}) => {
+  const { targetWorkspaceRoot } = resolveRequestRoots(payload);
+  return openWorkspaceInVsCode(targetWorkspaceRoot);
+});
+
 ipcMain.handle('foundry:status', async (_event, payload = {}) => {
   const { workspaceRoot } = resolveRequestRoots(payload);
   return {
@@ -7056,6 +7191,45 @@ async function openInVsCode(workspaceRoot, relativePath, line = 1) {
   };
 }
 
+async function openWorkspaceInVsCode(workspaceRoot) {
+  const root = normalizeDirectory(workspaceRoot);
+  if (!root || !fs.existsSync(root)) {
+    return { ok: false, message: 'Workspace path does not exist.' };
+  }
+
+  const cliCommand = resolveVsCodeCliCommand();
+  if (cliCommand) {
+    try {
+      const useCmdWrapper = /\.cmd$|\.bat$/i.test(cliCommand);
+      const command = useCmdWrapper ? 'cmd.exe' : cliCommand;
+      const args = useCmdWrapper ? ['/d', '/c', cliCommand, root] : [root];
+      const result = childProcess.spawnSync(command, args, {
+        encoding: 'utf8',
+        stdio: 'pipe',
+        windowsHide: true,
+      });
+      if (result && result.status === 0) {
+        return {
+          ok: true,
+          path: root,
+          cliCommand,
+          message: 'opened workspace in VS Code',
+        };
+      }
+    } catch (_error) {
+      // fall through to the default shell opener
+    }
+  }
+
+  const opened = await shell.openPath(root);
+  return {
+    ok: opened === '',
+    message: opened || 'opened',
+    path: root,
+    cliCommand,
+  };
+}
+
 function buildDesktopEditorContext(workspaceRoot) {
   const activeFilePath = desktopEditorState.activeFilePath || '';
   const latest = runtime.getStatus().latest?.[0] || null;
@@ -7203,6 +7377,7 @@ async function buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, 
 
 ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   const { workspaceRoot, targetWorkspaceRoot, labRoot } = resolveRequestRoots(payload);
+  const requestId = String(payload.requestId || `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`).trim();
   let text = String(payload.text || '').trim();
   const directive = parseChatModeDirective(text);
   const modeDirective = directive;
@@ -7530,6 +7705,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   }
 
   const reply = await handleAssistantChat(targetWorkspaceRoot, text, {
+    requestId,
     chatHistory,
     chatContext: {
       ...chatContext,
@@ -7711,11 +7887,12 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       const secret = await getSecret(remoteApiKeyName);
       return !!(secret.ok && secret.value);
     },
-    runAi: async (_root, prompt) => {
+    runAi: async (_root, prompt, options = {}) => {
       const { runtimeMode, localCmd, ollamaModel, remoteBaseUrl, remoteModel, remoteApiKeyName } = getChatBackendConfig(targetWorkspaceRoot);
       const secret = await getSecret(remoteApiKeyName);
       const env = {};
       const hasSecret = !!(secret.ok && secret.value);
+      const preferRemoteChat = shouldPreferRemoteChatReplies(options);
 
       if (runtimeMode === 'openai') {
         if (hasSecret) {
@@ -7725,6 +7902,13 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
           if (remoteBaseUrl) {
             env.OPENAI_BASE_URL = remoteBaseUrl;
           }
+        }
+      } else if (runtimeMode === 'hybrid' && preferRemoteChat && hasSecret) {
+        env.AGENT_PROVIDER = 'openai';
+        env.OPENAI_API_KEY = secret.value;
+        env.OPENAI_MODEL = remoteModel;
+        if (remoteBaseUrl) {
+          env.OPENAI_BASE_URL = remoteBaseUrl;
         }
       } else if ((runtimeMode === 'local' || runtimeMode === 'hybrid') && localCmd) {
         env.AGENT_PROVIDER = 'local';
@@ -7748,7 +7932,9 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
           }
         }
       }
-      return runAssistantCli(targetWorkspaceRoot, ['--ai', '--prompt', prompt], env);
+      return runAssistantCli(targetWorkspaceRoot, ['--ai', '--prompt', prompt], env, {
+        requestId: options.requestId || requestId,
+      });
     },
     getBinaryUpdateStatus: async () => initializeBinaryUpdater(),
     checkBinaryUpdate: async () => checkBinaryForUpdates(),

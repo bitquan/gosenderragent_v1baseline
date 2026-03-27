@@ -58,6 +58,8 @@ from backend.agent.core.providers.base import NullProvider, ProviderConfig
 from backend.agent.core.providers.factory import create_provider
 from backend.agent.core.approval import ApprovalGate
 from backend.agent.core.tool_loop import run_tool_loop
+
+CHAT_EVENT_PREFIX = "__GOS_AGENT_CHAT_EVENT__"
 from backend.agent.runtime.lab_docker_runner import run_lab_container_contract
 from backend.agent.runtime.lab_runtime_adapter import run_lab_training_scenario
 from backend.agent.runtime.contracts import (
@@ -1738,8 +1740,22 @@ def run_batch(action: str, filters: dict[str, Any] | None = None, options: dict[
 def chat(prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     assistant = _load_script_module("runtime_api_dev_assistant", "dev_assistant.py")
     payload_context = dict(context or {})
+    request_id = str(payload_context.get("requestId") or payload_context.get("request_id") or "").strip()
     env_overrides = dict(payload_context.get("env", {}))
     editor_context = normalize_editor_context(payload_context.get("editor_context") or payload_context.get("editorContext"))
+
+    def emit_chat_event(event_type: str, **payload: Any) -> None:
+        if not request_id:
+            return
+        envelope = {
+            "requestId": request_id,
+            "type": event_type,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        envelope.update(payload)
+        sys.stdout.write(f"{CHAT_EVENT_PREFIX}{json.dumps(envelope, ensure_ascii=True)}\n")
+        sys.stdout.flush()
+
     original: dict[str, str | None] = {}
     for key, value in env_overrides.items():
         original[key] = os.environ.get(key)
@@ -1748,10 +1764,46 @@ def chat(prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         else:
             os.environ[key] = str(value)
     try:
+        emit_chat_event(
+            "progress",
+            title="Reviewing the workspace",
+            detail="Checking the active repo context before drafting the reply." if editor_context else "Checking the request before drafting the reply.",
+        )
+        reply_parts: list[str] = []
         if editor_context:
-            reply = assistant.ai_generate(messages=build_coding_chat_messages(prompt, editor_context))
+            stream = getattr(assistant, "ai_generate_stream", None)
+            messages = build_coding_chat_messages(prompt, editor_context)
+            if callable(stream):
+                for chunk in stream(messages=messages):
+                    text_chunk = str(chunk or "")
+                    if not text_chunk:
+                        continue
+                    reply_parts.append(text_chunk)
+                    emit_chat_event("reply-delta", delta=text_chunk)
+            else:
+                reply = assistant.ai_generate(messages=messages)
+                reply_parts.append(str(reply or ""))
+                if reply_parts[-1]:
+                    emit_chat_event("reply-delta", delta=reply_parts[-1])
         else:
-            reply = assistant.ai_generate(prompt=prompt)
+            stream = getattr(assistant, "ai_generate_stream", None)
+            if callable(stream):
+                for chunk in stream(prompt=prompt):
+                    text_chunk = str(chunk or "")
+                    if not text_chunk:
+                        continue
+                    reply_parts.append(text_chunk)
+                    emit_chat_event("reply-delta", delta=text_chunk)
+            else:
+                reply = assistant.ai_generate(prompt=prompt)
+                reply_parts.append(str(reply or ""))
+                if reply_parts[-1]:
+                    emit_chat_event("reply-delta", delta=reply_parts[-1])
+        reply = "".join(reply_parts)
+        emit_chat_event("complete", state="completed")
+    except Exception as exc:
+        emit_chat_event("error", message=str(exc))
+        raise
     finally:
         for key, value in original.items():
             if value is None:

@@ -4,20 +4,25 @@ import { createRoot } from 'react-dom/client';
 import { AI_ROUTE_COPY, buildLocalModelProgram, localModelProgramStatusLabel } from './lib/ai-route-copy';
 import { shortPath, formatStamp, summarizeText, makeId } from './lib/format';
 import { createStore, useStoreValue } from './lib/store';
-import type { ChatMessage, ChatThread, InspectorState, JsonMap } from './lib/types';
+import type { AssistantChatEvent, AssistantChatProgress, ChatMessage, ChatThread, InspectorState, JsonMap } from './lib/types';
 
 const THREADS_KEY = 'gosenderr.desktop.workbench.threads.v3';
 const ACTIVE_THREAD_KEY = 'gosenderr.desktop.workbench.active-thread.v3';
-const SETTINGS_TABS = ['general', 'workspace', 'ai', 'autonomy', 'skills', 'extensions', 'tools', 'automations', 'labs', 'learning', 'storage'] as const;
-const MONITOR_TABS = ['overview', 'runs', 'learning', 'promotions', 'debug'] as const;
+const IDE_PANEL_PROMPT = 'Open Workbench IDE tools.';
+const SETTINGS_TABS = ['general', 'workspace', 'ai', 'tunepod', 'autonomy', 'skills', 'extensions', 'tools', 'automations', 'labs', 'learning', 'storage'] as const;
+const MONITOR_TABS = ['overview', 'runs', 'learning', 'promotions', 'debug', 'ide'] as const;
 const INSPECTOR_TABS = ['manager', 'inbox', 'file', 'diff', 'learning'] as const;
 type SettingsTabId = typeof SETTINGS_TABS[number];
 type MonitorTabId = typeof MONITOR_TABS[number];
 type InspectorTabId = typeof INSPECTOR_TABS[number];
-type UiIconName = 'plus' | 'agents' | 'spaces' | 'spark' | 'mode' | 'repo' | 'issue' | 'git' | 'pull-request' | 'session';
+type UiIconName = 'plus' | 'agents' | 'spaces' | 'spark' | 'mode' | 'repo' | 'issue' | 'git' | 'pull-request' | 'session' | 'terminal';
+type QuickPromptAction = {
+  label: string;
+  action: 'chat' | 'tunepod' | 'ide';
+};
 
 const INSPECTOR_TAB_LABELS: Record<InspectorTabId, string> = {
-  manager: 'Manager',
+  manager: 'Context',
   inbox: 'Inbox',
   file: 'File',
   diff: 'Diff',
@@ -56,6 +61,13 @@ const SETTINGS_TAB_META: Record<SettingsTabId, {
     title: 'AI routing and model selection',
     eyebrow: 'Profiles + providers',
     description: AI_ROUTE_COPY.settingsTabDescription,
+    icon: 'spark',
+  },
+  tunepod: {
+    navLabel: 'Tune Pod',
+    title: 'Tune Pod',
+    eyebrow: 'Machine fit + model setup',
+    description: 'See what this machine can run, which local models are ready, and what setup step comes next.',
     icon: 'spark',
   },
   autonomy: {
@@ -142,6 +154,10 @@ type AppState = {
   composerText: string;
   pendingAttachments: JsonMap[];
   busyChat: boolean;
+  activeChatRequestId: string;
+  activeChatThreadId: string;
+  activeChatMessageId: string;
+  liveChatProgress: AssistantChatProgress | null;
   busyBinaryUpdate: boolean;
   busyAcceptance: boolean;
   busySafetyController: boolean;
@@ -181,6 +197,10 @@ const initialState: AppState = {
   composerText: '',
   pendingAttachments: [],
   busyChat: false,
+  activeChatRequestId: '',
+  activeChatThreadId: '',
+  activeChatMessageId: '',
+  liveChatProgress: null,
   busyBinaryUpdate: false,
   busyAcceptance: false,
   busySafetyController: false,
@@ -202,6 +222,25 @@ const initialState: AppState = {
 };
 
 const store = createStore(initialState);
+
+function upsertThreadMessage(messages: ChatMessage[], nextMessage: ChatMessage) {
+  const messageIndex = messages.findIndex((message) => message.id === nextMessage.id);
+  if (messageIndex === -1) {
+    return [...messages, nextMessage];
+  }
+  return messages.map((message) => (message.id === nextMessage.id ? { ...message, ...nextMessage } : message));
+}
+
+function updateThreadMessages(
+  threads: ChatThread[],
+  threadId: string,
+  updater: (messages: ChatMessage[]) => ChatMessage[],
+  updatedAt: string,
+) {
+  return threads.map((thread) => (thread.id === threadId
+    ? { ...thread, updatedAt, messages: updater(thread.messages) }
+    : thread));
+}
 
 type InboxItem = {
   id: string;
@@ -278,6 +317,8 @@ function UiIcon(props: { name: UiIconName; className?: string }) {
       return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0V11a2 2 0 0 0 2 2h2M11 4a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 4Zm0 0v7.5" /></svg>;
     case 'pull-request':
       return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm0 0v8.5m6-8.5a1.25 1.25 0 1 0 0 2.5A1.25 1.25 0 0 0 11 3.75Zm0 0V8a3 3 0 0 1-3 3H6.25" /></svg>;
+    case 'terminal':
+      return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M3.25 4.25h9.5a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5h-9.5a1.5 1.5 0 0 1-1.5-1.5v-4.5a1.5 1.5 0 0 1 1.5-1.5Zm1.5 2 1.75 1.75-1.75 1.75M8.25 10h2.75" /></svg>;
     case 'session':
     default:
       return <svg className={classes} viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4.75h8M4 8h8M4 11.25h5.5" /></svg>;
@@ -302,6 +343,94 @@ function latestAssistantMessageId(thread: ChatThread | undefined) {
   const messages = Array.isArray(thread?.messages) ? thread.messages : [];
   const latest = [...messages].reverse().find((message) => message.role === 'assistant' || message.role === 'system');
   return String(latest?.id || '').trim();
+}
+
+function renderChatInlineText(value: string, keyPrefix: string) {
+  return String(value || '').split('\n').map((line, index) => (
+    <React.Fragment key={`${keyPrefix}-${index}`}>
+      {index > 0 ? <br /> : null}
+      {line}
+    </React.Fragment>
+  ));
+}
+
+function renderChatMessageBody(text: string, keyPrefix: string) {
+  const blocks = String(text || '')
+    .replace(/\r/g, '')
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  if (blocks.length === 0) {
+    return null;
+  }
+  return (
+    <div className="chat-message-body">
+      {blocks.map((block, blockIndex) => {
+        const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+        if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line))) {
+          return (
+            <ul key={`${keyPrefix}-ul-${blockIndex}`}>
+              {lines.map((line, itemIndex) => (
+                <li key={`${keyPrefix}-ul-${blockIndex}-${itemIndex}`}>
+                  {renderChatInlineText(line.replace(/^[-*]\s+/, ''), `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line))) {
+          return (
+            <ol key={`${keyPrefix}-ol-${blockIndex}`}>
+              {lines.map((line, itemIndex) => (
+                <li key={`${keyPrefix}-ol-${blockIndex}-${itemIndex}`}>
+                  {renderChatInlineText(line.replace(/^\d+\.\s+/, ''), `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        return <p key={`${keyPrefix}-p-${blockIndex}`}>{renderChatInlineText(block, `${keyPrefix}-p-${blockIndex}`)}</p>;
+      })}
+    </div>
+  );
+}
+
+function buildAssistantProgressState(input: { busyChat: boolean; activeTaskRun: JsonMap | null; chatProgress: AssistantChatProgress | null }) {
+  if (input.activeTaskRun) {
+    const runLabel = String(
+      input.activeTaskRun.runtimeLabel
+      || input.activeTaskRun.label
+      || input.activeTaskRun.title
+      || input.activeTaskRun.task
+      || 'Current task',
+    ).trim() || 'Current task';
+    const runState = String(
+      input.activeTaskRun.runtimeState
+      || input.activeTaskRun.state
+      || input.activeTaskRun.status
+      || 'running',
+    ).trim().toLowerCase().replace(/_/g, ' ');
+    return {
+      title: `Working on ${runLabel}`,
+      detail: `${runLabel} is ${runState || 'running'}. Chat keeps the summary here while Workbench holds files, diffs, and validation.`,
+      showWorkbenchAction: true,
+    };
+  }
+  if (input.chatProgress && input.busyChat) {
+    return {
+      title: String(input.chatProgress.title || 'Reviewing the workspace'),
+      detail: String(input.chatProgress.detail || 'Checking the current repo context before drafting the reply.'),
+      showWorkbenchAction: false,
+    };
+  }
+  if (input.busyChat) {
+    return {
+      title: 'Reviewing the workspace',
+      detail: 'Checking the current repo context before drafting the reply.',
+      showWorkbenchAction: false,
+    };
+  }
+  return null;
 }
 
 function readChangedFileItems(snapshot: JsonMap | null) {
@@ -426,7 +555,7 @@ function buildInboxItems(input: {
       id: 'reviewer-summary',
       severity: reviewerStatus === 'needs-revision' ? 'warn' : 'info',
       title: reviewerStatus === 'needs-revision' ? 'Reviewer wants a revision pass' : 'Reviewer wants a manual review pass',
-      detail: String(reviewer.summary || reviewer.nextAction || 'Open Monitor to inspect the Test Bench review results.'),
+      detail: String(reviewer.summary || reviewer.nextAction || 'Open Workbench to inspect the Test Bench review results.'),
       openModule: 'monitor',
       targetTab: 'runs',
       actionLabel: 'Open Test Bench',
@@ -439,7 +568,7 @@ function buildInboxItems(input: {
       id: 'regression-candidates',
       severity: 'info',
       title: `${regressionCount} regression candidate${regressionCount === 1 ? '' : 's'} ready`,
-      detail: String(regression.summary || 'Open Monitor to turn the latest fix into replayable coverage.'),
+      detail: String(regression.summary || 'Open Workbench to turn the latest fix into replayable coverage.'),
       openModule: 'monitor',
       targetTab: 'runs',
       actionLabel: 'Open Test Bench',
@@ -475,7 +604,7 @@ function buildInboxItems(input: {
       detail: `${newestCandidate.name || newestCandidate.id || 'Candidate'} is ready for monitored promotion.`,
       openModule: 'monitor',
       targetTab: 'inbox',
-      actionLabel: 'Open monitor',
+      actionLabel: 'Open Workbench',
     });
   }
 
@@ -497,10 +626,10 @@ function buildInboxItems(input: {
       id: 'engine-acceptance-status',
       severity: acceptanceStatus === 'fail' ? 'critical' : 'warn',
       title: acceptanceStatus === 'fail' ? 'Engine acceptance needs review' : 'Engine acceptance raised warnings',
-      detail: String(acceptance?.summary || acceptance?.nextAction || 'Open Monitor to review the latest engine acceptance report.'),
+      detail: String(acceptance?.summary || acceptance?.nextAction || 'Open Workbench to review the latest engine acceptance report.'),
       openModule: 'monitor',
       targetTab: 'overview',
-      actionLabel: 'Open monitor',
+      actionLabel: 'Open Workbench',
     });
   }
 
@@ -547,6 +676,7 @@ function buildComposerSuggestions(input: {
   docsContext?: JsonMap;
   nextSafeAction?: JsonMap;
   safeRecipe?: JsonMap;
+  tunePodPrompt?: string;
 }) {
   const suggestions: string[] = [];
   const lower = String(input.composerText || '').trim().toLowerCase();
@@ -569,6 +699,7 @@ function buildComposerSuggestions(input: {
     || input.safeRecipe?.summary
     || ''
   ).trim();
+  const tunePodPrompt = String(input.tunePodPrompt || '').trim();
 
   if (!lower && safeRecipePrompt) {
     pushUniqueSuggestion(suggestions, summarizeText(safeRecipePrompt, 120));
@@ -585,6 +716,9 @@ function buildComposerSuggestions(input: {
   if (!lower) {
     pushUniqueSuggestion(suggestions, 'Plan the next safe coding task.');
     pushUniqueSuggestion(suggestions, 'Review the current repo and tell me what needs fixing first.');
+    if (tunePodPrompt) {
+      pushUniqueSuggestion(suggestions, tunePodPrompt);
+    }
   }
 
   if (lower.includes('/')) {
@@ -611,6 +745,10 @@ function buildComposerSuggestions(input: {
     pushUniqueSuggestion(suggestions, 'Plan the next safe coding task.');
   }
 
+  if (tunePodPrompt && /(local|model|ollama|route|routing|proof|benchmark|acceptance|fit|gpu|vram|ram|hardware|tunepod|tune pod)/.test(lower)) {
+    pushUniqueSuggestion(suggestions, tunePodPrompt);
+  }
+
   if (/(doc|docs|documentation|guide|reference)/.test(lower)) {
     const topDoc = docsRecommendations[0] && typeof docsRecommendations[0] === 'object' ? docsRecommendations[0] : null;
     if (topDoc?.label && topDoc?.domain) {
@@ -624,6 +762,7 @@ function buildComposerSuggestions(input: {
   }
 
   if (/(vscode|vs code|extension|editor|ide)/.test(lower)) {
+    pushUniqueSuggestion(suggestions, IDE_PANEL_PROMPT);
     pushUniqueSuggestion(suggestions, 'Set up VS Code support for this workspace and summarize what changed.');
   }
 
@@ -937,6 +1076,79 @@ function buildLocalModelProgramView(snapshot: JsonMap | null, aiStatus: JsonMap 
   });
 }
 
+function readPositiveNumber(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function readTunePodCapabilities(target: JsonMap | null, machineProfile: JsonMap | null, fallbackTarget: JsonMap | null = null) {
+  const targetCapabilities = target?.capabilities && typeof target.capabilities === 'object'
+    ? target.capabilities
+    : (fallbackTarget?.capabilities && typeof fallbackTarget.capabilities === 'object' ? fallbackTarget.capabilities : {});
+  return {
+    systemRamGb: readPositiveNumber(machineProfile?.totalMemoryGiB) || readPositiveNumber(targetCapabilities?.systemRamGb),
+    cpuThreads: readPositiveNumber(machineProfile?.cpuCount) || readPositiveNumber(targetCapabilities?.cpuThreads),
+    gpuVramGb: readPositiveNumber(machineProfile?.gpuVramGb) || readPositiveNumber(targetCapabilities?.gpuVramGb),
+    dedicatedGpu: typeof machineProfile?.hasDedicatedGpu === 'boolean'
+      ? machineProfile.hasDedicatedGpu === true
+      : (typeof targetCapabilities?.dedicatedGpu === 'boolean' ? targetCapabilities.dedicatedGpu === true : null),
+  };
+}
+
+function evaluateTunePodRequirementFit(
+  preset: JsonMap | null,
+  capabilities: { systemRamGb: number | null; cpuThreads: number | null; gpuVramGb: number | null; dedicatedGpu: boolean | null },
+) {
+  const requirements = preset?.requirements && typeof preset.requirements === 'object' ? preset.requirements : {};
+  const blockers: string[] = [];
+  if (Number(requirements.minimumSystemRamGb || 0) > 0 && capabilities.systemRamGb !== null && capabilities.systemRamGb < Number(requirements.minimumSystemRamGb)) {
+    blockers.push(`${Number(requirements.minimumSystemRamGb)} GB RAM minimum`);
+  }
+  if (Number(requirements.minimumCpuThreads || 0) > 0 && capabilities.cpuThreads !== null && capabilities.cpuThreads < Number(requirements.minimumCpuThreads)) {
+    blockers.push(`${Number(requirements.minimumCpuThreads)} CPU threads minimum`);
+  }
+  if (requirements.requiresDedicatedGpu === true && capabilities.dedicatedGpu === false) {
+    blockers.push('dedicated GPU required');
+  }
+  if (Number(requirements.minimumGpuVramGb || 0) > 0 && capabilities.gpuVramGb !== null && capabilities.gpuVramGb < Number(requirements.minimumGpuVramGb)) {
+    blockers.push(`${Number(requirements.minimumGpuVramGb)} GB VRAM minimum`);
+  }
+  return {
+    fits: blockers.length === 0,
+    blockers,
+  };
+}
+
+function buildTunePodGuidance(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
+  const settings = snapshot?.settings || {};
+  const targetHardwareOptions = Array.isArray(tuning?.hardwareTargets) ? tuning.hardwareTargets : [];
+  const installPresets = Array.isArray(tuning?.installPresets) ? tuning.installPresets : [];
+  const selectedHardwareTarget = String(settings.trainingHardwareTarget || tuning?.settings?.trainingHardwareTarget || 'auto');
+  const machineProfile = tuning?.telemetry?.machine && typeof tuning.telemetry.machine === 'object' ? tuning.telemetry.machine : {};
+  const selectedTarget = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === selectedHardwareTarget) || null;
+  const fallbackTarget = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === String(machineProfile.id || '')) || null;
+  const capabilities = readTunePodCapabilities(selectedTarget, machineProfile, fallbackTarget);
+  const compatiblePresets = installPresets.filter((preset: JsonMap) => evaluateTunePodRequirementFit(preset, capabilities).fits);
+  const localModelProgram = buildLocalModelProgramView(snapshot, aiStatus, tuning);
+  const nextLayerId = String(localModelProgram.nextLayer?.id || '').trim().toLowerCase();
+  const fitBlocked = nextLayerId === 'foundation' || compatiblePresets.length === 0;
+  const routeProofBlocked = ['routing', 'coding'].includes(nextLayerId);
+  if (!fitBlocked && !routeProofBlocked) {
+    return {
+      blocked: false,
+      prompt: '',
+      reason: '',
+    };
+  }
+  return {
+    blocked: true,
+    prompt: fitBlocked ? AI_ROUTE_COPY.tunePodFitPrompt : AI_ROUTE_COPY.tunePodRoutePrompt,
+    reason: fitBlocked
+      ? 'Tune Pod has the machine-fit and compatible-model view for the current blocker.'
+      : 'Tune Pod has the local-first route proof ladder for the current blocker.',
+  };
+}
+
 function App() {
   const state = useStoreValue(store);
   const reportRendererError = window.gosAgent.reportRendererError;
@@ -1068,6 +1280,69 @@ function App() {
       appendRuntimeEvent('benchmarkEvents', payload);
       scheduleRefresh(500);
     });
+    const offAssistantChat = window.gosAgent.onAssistantChatEvent((payload) => {
+      const event = payload as AssistantChatEvent;
+      store.update((current) => {
+        const requestId = String(event?.requestId || '').trim();
+        if (!requestId || requestId !== current.activeChatRequestId || !current.activeChatThreadId || !current.activeChatMessageId) {
+          return current;
+        }
+        const eventAt = String(event?.createdAt || new Date().toISOString());
+        const activeThread = current.threads.find((thread) => thread.id === current.activeChatThreadId) || null;
+        const activeMessage = activeThread?.messages.find((message) => message.id === current.activeChatMessageId) || null;
+        const hasStartedReply = String(activeMessage?.text || '').length > 0;
+        if (event.type === 'progress') {
+          if (hasStartedReply) {
+            return current;
+          }
+          return {
+            ...current,
+            liveChatProgress: {
+              requestId,
+              title: String(event.title || 'Reviewing the workspace'),
+              detail: String(event.detail || 'Checking the current repo context before drafting the reply.'),
+              createdAt: eventAt,
+            },
+          };
+        }
+        if (event.type === 'reply-delta') {
+          const delta = String(event.delta || '');
+          if (!delta) {
+            return current;
+          }
+          return {
+            ...current,
+            liveChatProgress: null,
+            threads: updateThreadMessages(
+              current.threads,
+              current.activeChatThreadId,
+              (messages) => messages.map((message) => (message.id === current.activeChatMessageId
+                ? { ...message, text: `${message.text || ''}${delta}` }
+                : message)),
+              eventAt,
+            ),
+          };
+        }
+        if (event.type === 'complete') {
+          return {
+            ...current,
+            liveChatProgress: null,
+          };
+        }
+        if (event.type === 'error') {
+          return {
+            ...current,
+            liveChatProgress: {
+              requestId,
+              title: 'Reply interrupted',
+              detail: String(event.message || 'The assistant could not finish the reply.'),
+              createdAt: eventAt,
+            },
+          };
+        }
+        return current;
+      });
+    });
 
     return () => {
       if (refreshTimerRef.current !== null) {
@@ -1080,6 +1355,7 @@ function App() {
       offLearning();
       offLab();
       offBenchmark();
+      offAssistantChat();
     };
   }, []);
 
@@ -1209,19 +1485,35 @@ function App() {
       createdAt,
       attachments,
     };
+    const requestId = makeId('chatreq');
+    const assistantMessageId = makeId('msg');
+    const assistantPlaceholder: ChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      text: '',
+      createdAt,
+    };
     store.update((current) => ({
       ...current,
       busyChat: true,
+      activeChatRequestId: requestId,
+      activeChatThreadId: currentThread.id,
+      activeChatMessageId: assistantMessageId,
+      liveChatProgress: {
+        requestId,
+        title: 'Reviewing the workspace',
+        detail: 'Checking the current repo context before drafting the reply.',
+        createdAt,
+      },
       composerText: '',
       pendingAttachments: [],
       error: '',
-      threads: current.threads.map((entry) => entry.id === currentThread.id
-        ? { ...entry, updatedAt: createdAt, messages: [...entry.messages, userMessage] }
-        : entry),
+      threads: updateThreadMessages(current.threads, currentThread.id, (messages) => [...messages, userMessage, assistantPlaceholder], createdAt),
     }));
 
     try {
       const reply = await window.gosAgent.chatMessage(text, snapshot.targetWorkspaceRoot || snapshot.workspaceRoot, {
+        requestId,
         workspaceRoot: snapshot.workspaceRoot,
         targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
         labRoot: snapshot.selectedLabRoot || '',
@@ -1242,47 +1534,55 @@ function App() {
         },
       });
 
-      const assistantMessage: ChatMessage = {
-        id: makeId('msg'),
-        role: 'assistant',
-        text: String(reply?.reply || reply?.message || 'No response.'),
-        createdAt: new Date().toISOString(),
-        suggestions: Array.isArray(reply?.suggestions) ? reply.suggestions : [],
-        refs: Array.isArray(reply?.refs) ? reply.refs : [],
-      };
+      const completedAt = new Date().toISOString();
 
       store.update((current) => ({
         ...current,
         busyChat: false,
-        threads: current.threads.map((entry) => entry.id === currentThread.id
-          ? { ...entry, updatedAt: assistantMessage.createdAt, messages: [...entry.messages, assistantMessage] }
-          : entry),
+        activeChatRequestId: current.activeChatRequestId === requestId ? '' : current.activeChatRequestId,
+        activeChatThreadId: current.activeChatRequestId === requestId ? '' : current.activeChatThreadId,
+        activeChatMessageId: current.activeChatRequestId === requestId ? '' : current.activeChatMessageId,
+        liveChatProgress: current.activeChatRequestId === requestId ? null : current.liveChatProgress,
+        threads: updateThreadMessages(current.threads, currentThread.id, (messages) => {
+          const existingMessage = messages.find((message) => message.id === assistantMessageId) || null;
+          const nextMessage: ChatMessage = {
+            id: assistantMessageId,
+            role: 'assistant',
+            text: String(reply?.reply || reply?.message || '').trim() || String(existingMessage?.text || '').trim() || 'No response.',
+            createdAt: completedAt,
+            suggestions: Array.isArray(reply?.suggestions) ? reply.suggestions : [],
+            refs: Array.isArray(reply?.refs) ? reply.refs : [],
+          };
+          return upsertThreadMessage(messages, nextMessage);
+        }, completedAt),
         threadReadMarkers: current.activeModuleId === 'workbench'
           ? {
             ...current.threadReadMarkers,
-            [currentThread.id]: assistantMessage.id,
+            [currentThread.id]: assistantMessageId,
           }
           : current.threadReadMarkers,
       }));
 
-      if (assistantMessage.refs?.[0]?.path) {
-        void onLoadInspectorPath(String(assistantMessage.refs[0].path || ''), 'chat-ref');
+      if (reply?.refs?.[0]?.path) {
+        void onLoadInspectorPath(String(reply.refs[0].path || ''), 'chat-ref');
       }
       await refreshApp('lite');
     } catch (error) {
       const failureMessage: ChatMessage = {
-        id: makeId('msg'),
-        role: 'system',
+        id: assistantMessageId,
+        role: 'assistant',
         text: error instanceof Error ? error.message : 'Chat failed.',
         createdAt: new Date().toISOString(),
       };
       store.update((current) => ({
         ...current,
         busyChat: false,
+        activeChatRequestId: current.activeChatRequestId === requestId ? '' : current.activeChatRequestId,
+        activeChatThreadId: current.activeChatRequestId === requestId ? '' : current.activeChatThreadId,
+        activeChatMessageId: current.activeChatRequestId === requestId ? '' : current.activeChatMessageId,
+        liveChatProgress: current.activeChatRequestId === requestId ? null : current.liveChatProgress,
         error: failureMessage.text,
-        threads: current.threads.map((entry) => entry.id === currentThread.id
-          ? { ...entry, updatedAt: failureMessage.createdAt, messages: [...entry.messages, failureMessage] }
-          : entry),
+        threads: updateThreadMessages(current.threads, currentThread.id, (messages) => upsertThreadMessage(messages, failureMessage), failureMessage.createdAt),
         threadReadMarkers: current.activeModuleId === 'workbench'
           ? {
             ...current.threadReadMarkers,
@@ -1294,6 +1594,10 @@ function App() {
   };
 
   const onQuickChat = (command: string) => {
+    if (command === IDE_PANEL_PROMPT) {
+      onOpenIdeModule();
+      return;
+    }
     store.update((current) => ({
       ...current,
       activeModuleId: 'workbench',
@@ -1311,6 +1615,20 @@ function App() {
     void refreshApp('full');
   };
 
+  const onOpenTunePod = () => {
+    store.update((current) => ({
+      ...current,
+      activeModuleId: 'tunepod',
+      activeSettingsTab: 'tunepod',
+      chatFocused: false,
+    }));
+    void refreshApp('lite');
+  };
+
+  const onOpenIdeModule = () => {
+    onOpenMonitorTab('ide');
+  };
+
   const onStopRun = async () => {
     const runId = String(activeTaskRun?.runId || activeTaskRun?.id || '').trim();
     if (!runId) {
@@ -1325,6 +1643,10 @@ function App() {
   };
 
   const onOpenSettingsTab = (tab: SettingsTabId) => {
+    if (tab === 'tunepod') {
+      onOpenTunePod();
+      return;
+    }
     store.update((current) => ({
       ...current,
       activeModuleId: 'settings',
@@ -1348,6 +1670,75 @@ function App() {
     store.update((current) => ({
       ...current,
       error: result?.ok ? '' : String(result?.message || 'Unable to open the handbook.'),
+    }));
+  };
+
+  const onBootstrapWorkspaceVsCode = async () => {
+    const snapshot = store.getState().snapshot;
+    if (!snapshot) {
+      return;
+    }
+    const result = await window.gosAgent.bootstrapWorkspaceVsCode({
+      workspaceRoot: snapshot.workspaceRoot,
+      targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+      labRoot: snapshot.selectedLabRoot || '',
+    });
+    store.update((current) => ({
+      ...current,
+      error: result?.ok ? '' : String(result?.message || 'Unable to bootstrap VS Code for this workspace.'),
+    }));
+    await refreshApp('full');
+  };
+
+  const onInstallVsCodeCompanion = async () => {
+    const snapshot = store.getState().snapshot;
+    if (!snapshot) {
+      return;
+    }
+    const result = await window.gosAgent.installWorkspaceVsCodeCompanion({
+      workspaceRoot: snapshot.workspaceRoot,
+      targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+      labRoot: snapshot.selectedLabRoot || '',
+    });
+    store.update((current) => ({
+      ...current,
+      error: result?.ok ? '' : String(result?.message || 'Unable to install the VS Code companion.'),
+    }));
+    await refreshApp('full');
+  };
+
+  const onOpenWorkspaceInVsCode = async () => {
+    const snapshot = store.getState().snapshot;
+    if (!snapshot) {
+      return;
+    }
+    const result = await window.gosAgent.openWorkspaceInVsCode({
+      workspaceRoot: snapshot.workspaceRoot,
+      targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+      labRoot: snapshot.selectedLabRoot || '',
+    });
+    store.update((current) => ({
+      ...current,
+      error: result?.ok ? '' : String(result?.message || 'Unable to open the current workspace in VS Code.'),
+    }));
+  };
+
+  const onOpenActiveEditorFileInVsCode = async () => {
+    const snapshot = store.getState().snapshot;
+    const activeFilePath = String(snapshot?.editorContext?.active_file_path || '').trim();
+    if (!snapshot || !activeFilePath) {
+      return;
+    }
+    const result = await window.gosAgent.openInVsCode({
+      workspaceRoot: snapshot.workspaceRoot,
+      targetWorkspaceRoot: snapshot.targetWorkspaceRoot,
+      labRoot: snapshot.selectedLabRoot || '',
+      path: activeFilePath,
+      line: Number(snapshot?.editorContext?.selection_start_line || 1),
+    });
+    store.update((current) => ({
+      ...current,
+      error: result?.ok ? '' : String(result?.message || 'Unable to open the active file in VS Code.'),
     }));
   };
 
@@ -1862,6 +2253,31 @@ function App() {
     }
   };
 
+  const activeScreenMeta = (() => {
+    if (state.activeModuleId === 'monitor') {
+      return {
+        title: 'Workbench',
+        subtitle: 'Inspect active tasks, changes, validation, and execution proof.',
+      };
+    }
+    if (state.activeModuleId === 'tunepod') {
+      return {
+        title: 'Tune Pod',
+        subtitle: 'Machine fit, model readiness, and current setup for this workspace.',
+      };
+    }
+    if (state.activeModuleId === 'settings') {
+      return {
+        title: 'Settings',
+        subtitle: 'Preferences, updates, diagnostics, and workspace defaults.',
+      };
+    }
+    return {
+      title: 'Chat',
+      subtitle: 'Ask, plan, and start coding work from one conversation.',
+    };
+  })();
+
   return (
     <div className={`workbench-shell${state.leftRailOpen ? ' left-open' : ''}${state.rightRailOpen ? ' right-open' : ''}`} data-workbench-shell="true">
       <aside className="left-rail app-nav-rail">
@@ -1878,32 +2294,43 @@ function App() {
         <nav className="rail-nav-list">
           <button
             className={`rail-nav-item${state.activeModuleId === 'workbench' ? ' active' : ''}`}
-            data-module-nav="workbench"
-            data-route-tab="workbench"
+            data-module-nav="chat"
+            data-route-tab="chat"
             onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
           >
               <UiIcon name="agents" className="nav-icon" />
-            <strong>Agents</strong>
-            <span>{unreadThreadCount > 0 ? `${unreadThreadCount} active session${unreadThreadCount === 1 ? '' : 's'}` : 'Open the main workspace chat'}</span>
-          </button>
-          <button
-            className={`rail-nav-item${state.activeModuleId === 'settings' && state.activeSettingsTab === 'workspace' ? ' active' : ''}`}
-            data-route-tab="settings"
-            onClick={() => onOpenSettingsTab('workspace')}
-          >
-              <UiIcon name="spaces" className="nav-icon" />
-            <strong>Spaces</strong>
-            <span>{shortPath(status.target) || 'Choose a workspace root'}</span>
+            <strong>Chat</strong>
+            <span>{unreadThreadCount > 0 ? `${unreadThreadCount} active conversation${unreadThreadCount === 1 ? '' : 's'}` : 'Ask questions, plan work, and launch coding tasks'}</span>
           </button>
           <button
             className={`rail-nav-item${state.activeModuleId === 'monitor' ? ' active' : ''}`}
-            data-route-tab="monitor"
-            onClick={() => onOpenMonitorTab('overview')}
+            data-module-nav="workbench"
+            data-route-tab="workbench"
+            onClick={() => onOpenMonitorTab(state.activeMonitorTab === 'ide' ? 'ide' : 'runs')}
           >
               <UiIcon name="spark" className="nav-icon" />
-            <strong>Spark</strong>
-            <span>{activeTaskRun ? 'Live run status is available' : 'Preview runs, learning, and promotions'}</span>
-            <em>Preview</em>
+            <strong>Workbench</strong>
+            <span>{activeTaskRun ? 'Inspect the active run, files, and validation proof' : 'Review execution history, blockers, and recovery evidence'}</span>
+          </button>
+          <button
+            className={`rail-nav-item${state.activeModuleId === 'tunepod' ? ' active' : ''}`}
+            data-module-nav="tunepod"
+            data-route-tab="tunepod"
+            onClick={onOpenTunePod}
+          >
+              <UiIcon name="terminal" className="nav-icon" />
+            <strong>Tune Pod</strong>
+            <span>{state.tuning ? 'Check machine fit, ready local models, and current setup' : 'Load machine fit and model readiness for this workspace'}</span>
+          </button>
+          <button
+            className={`rail-nav-item${state.activeModuleId === 'settings' ? ' active' : ''}`}
+            data-module-nav="settings"
+            data-route-tab="settings"
+            onClick={() => onOpenSettingsTab(state.activeSettingsTab === 'tunepod' ? 'general' : (state.activeSettingsTab || 'general'))}
+          >
+              <UiIcon name="spaces" className="nav-icon" />
+            <strong>Settings</strong>
+            <span>{shortPath(status.target) || 'Preferences, updates, and diagnostics'}</span>
           </button>
         </nav>
 
@@ -1940,7 +2367,7 @@ function App() {
 
         <section className="rail-session-section secondary">
           <div className="rail-section-head">
-            <span>Chats</span>
+            <span>Workspace</span>
             <button className="icon-button" onClick={() => void onOpenHandbook()}>?</button>
           </div>
           <div className="rail-mini-card">
@@ -1963,8 +2390,8 @@ function App() {
               </button>
             ) : null}
             <div className="topbar-copy">
-              <strong>{threadIsFresh ? 'New chat' : (thread?.title || 'New thread')}</strong>
-              <span>{shortPath(status.target) || 'Pick a workspace'}</span>
+              <strong>{activeScreenMeta.title}</strong>
+              <span>{`${activeScreenMeta.subtitle} • ${shortPath(status.target) || shortPath(status.workspace) || 'Pick a workspace'}`}</span>
             </div>
           </div>
 
@@ -1991,24 +2418,31 @@ function App() {
             ) : null}
             <button
               className={`toolbar-chip${state.activeModuleId === 'monitor' ? ' active' : ''}`}
-              data-route-tab="monitor"
-              onClick={() => onOpenMonitorTab(state.activeMonitorTab || 'overview')}
+              data-route-tab="workbench"
+              onClick={() => onOpenMonitorTab(state.activeMonitorTab === 'ide' ? 'ide' : 'runs')}
             >
-              CLI
+              Workbench
             </button>
             <button
               className={`toolbar-chip${state.activeModuleId === 'workbench' ? ' active' : ''}`}
-              data-route-tab="workbench"
+              data-route-tab="chat"
               onClick={() => store.update((current) => ({ ...current, activeModuleId: 'workbench' }))}
             >
               Chat
             </button>
             <button
+              className={`toolbar-chip${state.activeModuleId === 'tunepod' ? ' active' : ''}`}
+              data-route-tab="tunepod"
+              onClick={onOpenTunePod}
+            >
+              Tune Pod
+            </button>
+            <button
               className={`toolbar-chip${state.activeModuleId === 'settings' ? ' active' : ''}`}
               data-route-tab="settings"
-              onClick={() => onOpenSettingsTab(state.activeSettingsTab || 'ai')}
+              onClick={() => onOpenSettingsTab(state.activeSettingsTab === 'tunepod' ? 'general' : (state.activeSettingsTab || 'general'))}
             >
-              Download
+              Settings
             </button>
             <button className="toolbar-chip" onClick={() => void refreshApp('full')}>Sync</button>
             <button className="toolbar-chip" onClick={() => void onOpenHandbook()}>Handbook</button>
@@ -2020,8 +2454,15 @@ function App() {
             <WorkbenchPanel
               snapshot={state.snapshot}
               aiStatus={state.aiStatus}
+              tuning={state.tuning}
               learningStatus={state.learningStatus}
               thread={thread}
+              threads={state.threads}
+              activeThreadId={state.activeThreadId}
+              threadReadMarkers={state.threadReadMarkers}
+              activeChatThreadId={state.activeChatThreadId}
+              activeChatMessageId={state.activeChatMessageId}
+              liveChatProgress={state.liveChatProgress}
               composerText={state.composerText}
               pendingAttachments={state.pendingAttachments}
               busyChat={state.busyChat}
@@ -2034,9 +2475,6 @@ function App() {
               goalList={goalList}
               taskList={taskList}
               taskRuns={taskRuns}
-              threads={state.threads}
-              activeThreadId={state.activeThreadId}
-              threadReadMarkers={state.threadReadMarkers}
               onComposerChange={(value) => store.update((current) => ({ ...current, composerText: value }))}
               onChatFocusChange={(focused) => store.update((current) => ({ ...current, chatFocused: focused }))}
               onSendChat={onSendChat}
@@ -2045,6 +2483,7 @@ function App() {
               onNewThread={onNewThread}
               onSelectThread={onSelectThread}
               onUpdateSetting={onUpdateSetting}
+              onOpenSettingsTab={onOpenSettingsTab}
               onSelectPath={onLoadInspectorPath}
               onShowInspector={(tab) => {
                 store.update((current) => ({
@@ -2057,6 +2496,8 @@ function App() {
                 }
               }}
               onOpenInbox={onOpenInbox}
+              onOpenWorkbench={() => onOpenMonitorTab('runs')}
+              onOpenIdeModule={onOpenIdeModule}
               onRollbackLatestBackup={onRollbackLatestBackup}
             />
           ) : null}
@@ -2104,6 +2545,18 @@ function App() {
             />
           ) : null}
 
+          {state.activeModuleId === 'tunepod' ? (
+            <TunePodPanel
+              snapshot={state.snapshot}
+              settings={state.settings}
+              aiStatus={state.aiStatus}
+              tuning={state.tuning}
+              onUpdateSetting={onUpdateSetting}
+              onRunBenchmark={onRunBenchmark}
+              onOpenSettingsTab={onOpenSettingsTab}
+            />
+          ) : null}
+
           {state.activeModuleId === 'monitor' ? (
             <MonitorPanel
               snapshot={state.snapshot}
@@ -2114,6 +2567,8 @@ function App() {
               learningEvents={state.learningEvents}
               labEvents={state.labEvents}
               benchmarkEvents={state.benchmarkEvents}
+              tools={state.tools}
+              taskList={taskList}
               activeTab={state.activeMonitorTab}
               onSetActiveTab={(tab) => store.update((current) => ({ ...current, activeMonitorTab: tab, activeModuleId: 'monitor' }))}
               onCreateCandidate={onCreateCandidate}
@@ -2124,9 +2579,15 @@ function App() {
               onRunAcceptance={onRunAcceptance}
               onExportDebugBundle={onExportMonitorBundle}
               onOpenReviewPath={onLoadInspectorPath}
+              onQuickChat={onQuickChat}
               onCreateSuggestedTask={onCreateSuggestedTask}
               onQueueSuggestedRecipe={onQueueSuggestedRecipe}
               onRecordOperatorFeedback={onRecordOperatorFeedback}
+              onOpenSettingsTab={onOpenSettingsTab}
+              onBootstrapVsCode={onBootstrapWorkspaceVsCode}
+              onInstallVsCodeCompanion={onInstallVsCodeCompanion}
+              onOpenWorkspaceInVsCode={onOpenWorkspaceInVsCode}
+              onOpenActiveFileInVsCode={onOpenActiveEditorFileInVsCode}
               onRefresh={() => void refreshApp('full')}
               acceptanceBusy={state.busyAcceptance}
               safetyBusy={state.busySafetyController}
@@ -2137,13 +2598,13 @@ function App() {
 
       {!state.rightRailOpen ? (
         <button className="right-rail-toggle" data-sidebar-toggle="right" onClick={onToggleManagerInspector}>
-          Manager
+          Context
         </button>
       ) : null}
 
       <aside className={`inspector inspector-${state.activeInspectorTab}`}>
         <div className="rail-header">
-          <div className="eyebrow">{state.activeInspectorTab === 'manager' ? 'Manager' : 'Context'}</div>
+          <div className="eyebrow">Context</div>
           <button className="icon-button" data-sidebar-toggle="right" onClick={() => store.update((current) => ({ ...current, rightRailOpen: false }))}>
             Close
           </button>
@@ -2167,13 +2628,21 @@ function App() {
             snapshot={state.snapshot}
             safeMode={safeMode}
             inboxCount={inboxItems.length}
-            quickPrompts={[
-              'Plan the next safe coding task in this repo.',
-              'Review the current repo and tell me what needs fixing first.',
-              AI_ROUTE_COPY.modelSetupPrompt,
-            ]}
+            quickPrompts={(() => {
+              const tunePodGuidance = buildTunePodGuidance(state.snapshot, state.aiStatus, state.tuning);
+              return [
+                { label: 'Plan the next safe coding task in this repo.', action: 'chat' as const },
+                { label: 'Review the current repo and tell me what needs fixing first.', action: 'chat' as const },
+                { label: IDE_PANEL_PROMPT, action: 'ide' as const },
+                tunePodGuidance.blocked
+                  ? { label: tunePodGuidance.prompt, action: 'tunepod' as const }
+                  : { label: AI_ROUTE_COPY.modelSetupPrompt, action: 'chat' as const },
+              ];
+            })()}
             onUpdateSetting={onUpdateSetting}
             onQuickChat={onQuickChat}
+            onOpenIdeModule={onOpenIdeModule}
+            onOpenSettingsTab={onOpenSettingsTab}
             onShowInspector={(tab) => store.update((current) => ({ ...current, activeInspectorTab: tab, rightRailOpen: true }))}
           />
         ) : null}
@@ -2229,11 +2698,15 @@ function App() {
 function WorkbenchPanel(props: {
   snapshot: JsonMap | null;
   aiStatus: JsonMap | null;
+  tuning: JsonMap | null;
   learningStatus: JsonMap;
   thread: ChatThread | undefined;
   threads: ChatThread[];
   activeThreadId: string;
   threadReadMarkers: Record<string, string>;
+  activeChatThreadId: string;
+  activeChatMessageId: string;
+  liveChatProgress: AssistantChatProgress | null;
   composerText: string;
   pendingAttachments: JsonMap[];
   busyChat: boolean;
@@ -2254,46 +2727,48 @@ function WorkbenchPanel(props: {
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
   onUpdateSetting: (key: string, value: any) => void | Promise<void>;
+  onOpenSettingsTab: (tab: SettingsTabId) => void;
+  onOpenIdeModule: () => void;
   onSelectPath: (path: string, source?: string) => void;
   onShowInspector: (tab: InspectorTabId) => void;
   onOpenInbox: () => void;
+  onOpenWorkbench: () => void;
   onRollbackLatestBackup: (backupId?: string) => void;
 }) {
   const settings = props.snapshot?.settings || {};
   const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
+  const chatModeLabels: Record<typeof chatModes[number], string> = {
+    auto: 'Auto',
+    ask: 'Answer only',
+    plan: 'Plan next step',
+    edit: 'Prepare code changes',
+    agent: 'Run with tool support',
+  };
   const messages = props.thread?.messages || [];
+  const visibleMessages = messages.filter((message) => message.role !== 'system');
   const isFreshThread = !messages.some((message) => message.role !== 'system');
   const chatMode = chatModes.includes(String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
     ? (String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
     : 'auto';
-  const chatTransparencyLevel = String(settings.chatTransparencyLevel || 'balanced');
-  const effectiveChatMode = chatMode;
-  const modeSummaryLabel = `effective ${effectiveChatMode}`;
   const modeRouteSummary: Record<typeof chatModes[number], string> = {
-    auto: 'supervised engine loop',
-    ask: 'answer directly without mutating the workspace',
-    plan: 'shape the next safe slice before making edits',
-    edit: 'focus on bounded repo edits and validation',
-    agent: 'use auto manager to route the full operator loop',
+    auto: 'I will choose whether to answer, plan, or work.',
+    ask: 'Answer in chat without changing files.',
+    plan: 'Work through the next step before editing.',
+    edit: 'Prepare the code changes and what to touch.',
+    agent: 'Use tools to carry the task forward safely.',
   };
   const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || 'workspace').trim() || 'workspace';
   const safetyLabel = props.safeMode.active
     ? 'Safe mode active'
     : (props.safeMode.watchOnly ? 'Safety watch active' : 'Safety ready');
-  const openModule = props.inboxItems.length > 0 ? 'monitor' : 'workbench';
-  const latestGoal = props.goalList[0] || null;
-  const latestTask = props.taskList[0] || null;
-  const latestRun = props.taskRuns[0] || null;
-  const recentRuns = props.taskRuns.slice(0, 4);
-  const recentThreads = props.threads.slice(0, 4);
   const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'workspace';
-  const modelLabel = String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b');
   const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === 'object'
     ? props.snapshot.testBench
     : {};
   const docsContext = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === 'object'
     ? props.snapshot.manager.approvedDocsVault
     : {};
+  const tunePodGuidance = buildTunePodGuidance(props.snapshot, props.aiStatus, props.tuning);
   const composerSuggestions = buildComposerSuggestions({
     composerText: props.composerText,
     learningStatus: props.learningStatus,
@@ -2306,41 +2781,70 @@ function WorkbenchPanel(props: {
     safeRecipe: testBench?.safeRecipe && typeof testBench.safeRecipe === 'object'
       ? testBench.safeRecipe
       : {},
+    tunePodPrompt: tunePodGuidance.prompt,
   });
-  const promptCards = [
-    `Plan the next safe coding task in ${shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'this repo'}.`,
-    'Review the current repo and tell me what needs fixing first.',
-    AI_ROUTE_COPY.modelSetupPrompt,
+  const freshThreadPromptCards: QuickPromptAction[] = [
+    { label: 'Explain this repo.', action: 'chat' },
+    { label: 'Find the next bug worth fixing.', action: 'chat' },
+    { label: 'Plan the next safe change.', action: 'chat' },
+    { label: 'Help me debug this failure.', action: 'chat' },
   ];
-  const launcherActions = [
-    { label: 'Agent', icon: 'agents' as UiIconName, onClick: () => void props.onUpdateSetting('chatMode', 'agent') },
-    { label: 'Create issue', icon: 'issue' as UiIconName, onClick: () => props.onQuickChat('Create a scoped issue list for the current workspace and rank it by impact.') },
-    { label: 'Spark', icon: 'spark' as UiIconName, onClick: () => props.onQuickChat('Brainstorm three high-leverage improvements for this repo and explain the tradeoffs.') },
-    { label: 'Git', icon: 'git' as UiIconName, onClick: () => props.onShowInspector('file') },
-    { label: 'Pull requests', icon: 'pull-request' as UiIconName, onClick: () => props.onShowInspector('inbox') },
+  const welcomeCards = [
+    {
+      title: 'Explain this repo',
+      detail: 'Get a quick read on the structure, main flows, and what matters first.',
+      icon: 'repo' as UiIconName,
+      onClick: () => props.onQuickChat('Explain this repo and call out the next safe change to make.'),
+    },
+    {
+      title: 'Plan the next change',
+      detail: 'Turn the current repo state into one safe, concrete next step.',
+      icon: 'mode' as UiIconName,
+      onClick: () => props.onQuickChat('Plan the next safe change for this repo.'),
+    },
+    {
+      title: 'Debug a failure',
+      detail: 'Start from an error, failing test, or broken flow and work toward a fix.',
+      icon: 'issue' as UiIconName,
+      onClick: () => props.onQuickChat('Help me debug this failure and suggest the safest fix first.'),
+    },
   ];
-  const recentSessionItems = recentRuns.length > 0
-    ? recentRuns.map((item) => ({
-      id: String(item?.runId || item?.id || item?.runtimeLabel || Math.random()),
-      title: String(item?.runtimeLabel || item?.label || item?.title || 'Session'),
-      status: String(item?.runtimeState || item?.status || item?.riskClass || 'ready'),
-      detail: summarizeText(String(item?.blockedReason || item?.summary || item?.objective || 'No extra detail recorded yet.'), 120),
-      meta: String(item?.completedAt || item?.updatedAt || item?.createdAt || ''),
-      onClick: latestTask ? () => props.onQuickChat(`Summarize the current run state for ${String(item?.runtimeLabel || item?.label || 'this session')}.`) : undefined,
-    }))
-    : recentThreads.map((entry) => {
-      const latestSeenId = latestAssistantMessageId(entry) || latestMessageId(entry);
-      const unread = Boolean(latestSeenId && props.threadReadMarkers[entry.id] !== latestSeenId);
-      const preview = [...entry.messages].reverse().find((message) => message.role !== 'system')?.text || 'No reply recorded yet.';
+  const activeTaskRun = props.taskRuns.find((item: JsonMap) => ['running', 'queued', 'active', 'in_progress', 'starting'].includes(String(item?.runtimeState || item?.state || item?.status || '').toLowerCase())) || null;
+  const blockedTaskRun = props.taskRuns.find((item: JsonMap) => ['fail', 'blocked', 'cancelled'].includes(String(item?.runtimeState || item?.state || item?.status || '').toLowerCase())) || null;
+  const liveProgress = buildAssistantProgressState({
+    busyChat: props.busyChat,
+    activeTaskRun,
+    chatProgress: props.thread?.id === props.activeChatThreadId ? props.liveChatProgress : null,
+  });
+  const streamingMessageId = props.thread?.id === props.activeChatThreadId ? props.activeChatMessageId : '';
+
+  const workbenchHandoff = (() => {
+    if (blockedTaskRun) {
       return {
-        id: entry.id,
-        title: entry.title,
-        status: unread ? 'unread' : 'read',
-        detail: summarizeText(preview, 120),
-        meta: formatStamp(entry.updatedAt),
-        onClick: () => props.onSelectThread(entry.id),
+        title: 'Run needs review',
+        detail: summarizeText(String(blockedTaskRun?.blockedReason || blockedTaskRun?.message || blockedTaskRun?.summary || 'Open Workbench to inspect the latest blocked or failed run.'), 140),
       };
-    });
+    }
+    if (props.approvalItems.length > 0) {
+      return {
+        title: 'Review needed',
+        detail: `${props.approvalItems.length} item${props.approvalItems.length === 1 ? '' : 's'} are waiting for review in Workbench.`,
+      };
+    }
+    if (activeTaskRun) {
+      return {
+        title: 'Work in progress',
+        detail: summarizeText(`${String(activeTaskRun?.runtimeLabel || activeTaskRun?.label || activeTaskRun?.title || 'Current task')} is running. Open Workbench for detailed progress, files, and validation.`, 140),
+      };
+    }
+    if (props.changedItems.length > 0) {
+      return {
+        title: 'Recent changes ready to inspect',
+        detail: `${props.changedItems.length} changed file${props.changedItems.length === 1 ? '' : 's'} are ready to inspect in Workbench.`,
+      };
+    }
+    return null;
+  })();
 
   return (
     <section className="module-panel workbench-panel" data-panel="workbench">
@@ -2357,7 +2861,7 @@ function WorkbenchPanel(props: {
                 <p>{String(props.safeMode.summary || 'Safety guardrails are active for this workspace.')}</p>
               </div>
               <div className="row-actions">
-                <button className="ghost" onClick={props.onOpenInbox}>Open inbox</button>
+                <button className="ghost" onClick={props.onOpenWorkbench}>Open Workbench</button>
                 {props.safeMode.rollbackAvailable ? (
                   <button className="ghost" onClick={() => props.onRollbackLatestBackup(String(props.safeMode.latestBackupId || ''))}>
                     Restore latest backup
@@ -2367,14 +2871,39 @@ function WorkbenchPanel(props: {
             </section>
           ) : null}
 
+          {workbenchHandoff ? (
+            <section className="queue-card workbench-handoff-card">
+              <div className="eyebrow">Workbench handoff</div>
+              <strong>{workbenchHandoff.title}</strong>
+              <p>{workbenchHandoff.detail}</p>
+              <div className="row-actions">
+                <button className="ghost" onClick={props.onOpenWorkbench}>Open Workbench</button>
+              </div>
+            </section>
+          ) : null}
+
           {isFreshThread ? (
             <div className="workbench-start-shell">
-              <section className="workbench-hero-panel">
-                <div className="chat-empty-state compact start-hero-copy" data-legacy-empty-title="Let's build">
+              <section className="chat-welcome-panel" data-legacy-empty-title="Let's build">
+                <div className="chat-empty-state compact start-hero-copy">
                   <div className="start-hero-mark">GS</div>
-                  <h2>Ask anything</h2>
-                  <p>{workspaceLabel} • {modelLabel}</p>
+                  <h2>Welcome to GoSenderr</h2>
+                  <p>Your chat is the front door to coding work.</p>
                 </div>
+                <div className="welcome-action-grid">
+                  {welcomeCards.map((card) => (
+                    <button key={card.title} className="welcome-action-card" onClick={card.onClick}>
+                      <div className="welcome-action-icon">
+                        <UiIcon name={card.icon} className="action-icon" />
+                      </div>
+                      <strong>{card.title}</strong>
+                      <span>{card.detail}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="workbench-hero-panel chat-entry-panel">
                 <div className="composer chat-composer launch-composer">
                 <div className="chat-mode-bar launch-toolbar">
                   <label className="selector-chip">
@@ -2382,7 +2911,7 @@ function WorkbenchPanel(props: {
                     <span>Mode</span>
                     <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
                       {chatModes.map((mode) => (
-                        <option key={mode} value={mode}>{mode}</option>
+                        <option key={mode} value={mode}>{chatModeLabels[mode]}</option>
                       ))}
                     </select>
                   </label>
@@ -2418,24 +2947,25 @@ function WorkbenchPanel(props: {
 
                 <div className="composer-footer launch-footer">
                   <div className="chat-activity-strip launch-status-row">
-                    <span className="status-inline-chip">{modeSummaryLabel}</span>
-                    <span className="status-inline-chip">{modeRouteSummary[chatMode]}</span>
-                    <span className="status-inline-chip">{branchLabel}</span>
-                    <span className="status-inline-chip">{safetyLabel}</span>
+                    <span className="status-inline-chip">{workspaceLabel}</span>
+                    {branchLabel && branchLabel !== 'workspace' ? <span className="status-inline-chip">{branchLabel}</span> : null}
+                    {props.safeMode.active || props.safeMode.watchOnly ? <span className="status-inline-chip">{safetyLabel}</span> : null}
                   </div>
                   <div className="launch-send-row">
-                    <span className="composer-model-tag">{modelLabel}</span>
                     <button className="primary send-icon-button" id="chatSend" data-chat-send="true" onClick={props.onSendChat} disabled={props.busyChat}>
                       {props.busyChat ? 'Working…' : 'Send'}
                     </button>
                   </div>
                 </div>
 
-                <div className="launch-action-row">
-                  {launcherActions.map((action) => (
-                    <button key={action.label} className="ghost launch-action-pill" onClick={action.onClick}>
-                      <UiIcon name={action.icon} className="action-icon" />
-                      <span>{action.label}</span>
+                <div className="prompt-grid compact manager-prompt-grid">
+                  {freshThreadPromptCards.map((prompt) => (
+                    <button
+                      key={prompt.label}
+                      className="prompt-card compact"
+                      onClick={() => props.onQuickChat(prompt.label)}
+                    >
+                      {prompt.label}
                     </button>
                   ))}
                 </div>
@@ -2444,7 +2974,15 @@ function WorkbenchPanel(props: {
                   <div className="composer-toolbar compact">
                     <div className="chip-row quick-command-row">
                       {composerSuggestions.map((command) => (
-                        <button key={command} className="ghost" onClick={() => props.onQuickChat(command)}>{command}</button>
+                        <button
+                          key={command}
+                          className="ghost"
+                          onClick={() => command === AI_ROUTE_COPY.tunePodFitPrompt || command === AI_ROUTE_COPY.tunePodRoutePrompt
+                            ? props.onOpenSettingsTab('tunepod')
+                            : (command === IDE_PANEL_PROMPT ? props.onOpenIdeModule() : props.onQuickChat(command))}
+                        >
+                          {command}
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -2461,44 +2999,36 @@ function WorkbenchPanel(props: {
                 ) : null}
                 </div>
               </section>
-
-              <section className="recent-session-card recent-session-panel">
-                <div className="panel-header compact">
-                  <div>
-                    <div className="eyebrow">Recent agent sessions</div>
-                    <h2>{latestRun?.runtimeLabel || latestTask?.title || 'Latest workspace activity'}</h2>
-                  </div>
-                </div>
-                <div className="recent-session-list">
-                  {recentSessionItems.map((item) => (
-                    <article key={item.id} className={`recent-session-item${item.id === props.activeThreadId ? ' active' : ''}`}>
-                      <button className="recent-session-button" onClick={item.onClick} disabled={!item.onClick}>
-                        <div className="recent-session-top">
-                          <div className="recent-session-title-row">
-                            <UiIcon name="session" className="recent-session-icon" />
-                            <strong>{item.title}</strong>
-                          </div>
-                          <span className={`recent-session-badge status-${String(item.status || '').toLowerCase()}`}>{item.status}</span>
-                        </div>
-                        <p className="recent-session-summary">{item.detail}</p>
-                        <small className="recent-session-meta">{item.meta || 'Ready'}</small>
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              </section>
             </div>
           ) : (
             <div className="active-thread-shell">
+              {liveProgress ? (
+                <section className="queue-card assistant-progress-card">
+                  <div className="assistant-progress-header">
+                    <div className="eyebrow">Live progress</div>
+                    <span className="status-inline-chip">Separate from reply text</span>
+                  </div>
+                  <strong>{liveProgress.title}</strong>
+                  <p>{liveProgress.detail}</p>
+                  {liveProgress.showWorkbenchAction ? (
+                    <div className="row-actions">
+                      <button className="ghost" onClick={props.onOpenWorkbench}>Open Workbench</button>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
               <div className="chat-stage active-thread-stage">
                 <div className="chat-log" data-chat-log="true">
-                  {messages.map((message) => (
-                    <article key={message.id} className={`chat-bubble ${message.role}`}>
+                  {visibleMessages.map((message) => (
+                    <article key={message.id} className={`chat-bubble ${message.role}${message.id === streamingMessageId ? ' is-streaming' : ''}`}>
                       <header>
-                        <strong>{message.role}</strong>
+                        <strong>{message.role === 'assistant' ? 'GoSenderr' : 'You'}</strong>
                         <span>{formatStamp(message.createdAt)}</span>
                       </header>
-                      <p>{message.text || (Array.isArray(message.attachments) && message.attachments.length > 0 ? 'Attached screenshot context.' : '')}</p>
+                      {renderChatMessageBody(message.text, message.id)}
+                      {!message.text && Array.isArray(message.attachments) && message.attachments.length > 0 ? <p>Attached screenshot context.</p> : null}
+                      {message.id === streamingMessageId ? <span className="streaming-caret" aria-hidden="true" /> : null}
                       {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
                         <div className="chip-row">
                           {message.attachments.map((attachment, index) => (
@@ -2542,12 +3072,12 @@ function WorkbenchPanel(props: {
                     <span>Mode</span>
                     <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting("chatMode", event.target.value)} aria-label="Chat mode">
                       {chatModes.map((mode) => (
-                        <option key={mode} value={mode}>{mode}</option>
+                        <option key={mode} value={mode}>{chatModeLabels[mode]}</option>
                       ))}
                     </select>
                   </label>
                   <button className="ghost" onClick={props.onPickAttachments}>Attach screenshot</button>
-                  <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Inbox {props.inboxItems.length ? `(${props.inboxItems.length})` : ''}</button>
+                  <button className="ghost" onClick={props.onOpenWorkbench}>Open Workbench</button>
                 </div>
 
                 {props.pendingAttachments.length > 0 ? (
@@ -2578,13 +3108,11 @@ function WorkbenchPanel(props: {
 
                 <div className="composer-footer launch-footer">
                   <div className="chat-activity-strip">
-                    <span>{modeSummaryLabel}</span>
-                    <span>{modeRouteSummary[chatMode]}</span>
-                    <span>{branchLabel}</span>
-                    <span>{safetyLabel}</span>
+                    <span>{workspaceLabel}</span>
+                    {branchLabel && branchLabel !== 'workspace' ? <span>{branchLabel}</span> : null}
+                    {props.safeMode.active || props.safeMode.watchOnly ? <span>{safetyLabel}</span> : null}
                   </div>
                   <div className="launch-send-row">
-                    <span className="composer-model-tag">{modelLabel}</span>
                     <button className="primary send-icon-button" id="chatSend" data-chat-send="true" onClick={props.onSendChat} disabled={props.busyChat}>
                       {props.busyChat ? 'Working…' : 'Send'}
                     </button>
@@ -2603,26 +3131,33 @@ function ManagerInspector(props: {
   snapshot: JsonMap | null;
   safeMode: JsonMap;
   inboxCount: number;
-  quickPrompts: string[];
+  quickPrompts: QuickPromptAction[];
   onUpdateSetting: (key: string, value: any) => void | Promise<void>;
   onQuickChat: (command: string) => void;
+  onOpenIdeModule: () => void;
+  onOpenSettingsTab: (tab: SettingsTabId) => void;
   onShowInspector: (tab: InspectorTabId) => void;
 }) {
   const settings = props.snapshot?.settings || {};
   const chatModes = ['auto', 'ask', 'plan', 'edit', 'agent'] as const;
+  const chatModeLabels: Record<typeof chatModes[number], string> = {
+    auto: 'Auto',
+    ask: 'Answer only',
+    plan: 'Plan next step',
+    edit: 'Prepare code changes',
+    agent: 'Run with tool support',
+  };
   const chatMode = chatModes.includes(String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
     ? (String(settings.chatMode || '').trim().toLowerCase() as typeof chatModes[number])
     : 'auto';
-  const chatTransparencyLevel = String(settings.chatTransparencyLevel || 'balanced');
   const modeRouteSummary: Record<typeof chatModes[number], string> = {
-    auto: 'supervised engine loop',
-    ask: 'answer directly without mutating the workspace',
-    plan: 'shape the next safe slice before making edits',
-    edit: 'focus on bounded repo edits and validation',
-    agent: 'use auto manager to route the full operator loop',
+    auto: 'Let Chat choose the best help mode.',
+    ask: 'Answer in chat only.',
+    plan: 'Talk through the next step before editing.',
+    edit: 'Prepare the next code change safely.',
+    agent: 'Use tools when the task needs them.',
   };
   const workspaceLabel = shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'workspace';
-  const modelLabel = String(settings.model || settings.trainingOllamaModel || 'qwen2.5-coder:7b');
   const branchLabel = String(props.snapshot?.git?.branch || props.snapshot?.review?.branch || 'workspace').trim() || 'workspace';
   const safetyLabel = props.safeMode.active
     ? 'Safe mode active'
@@ -2632,51 +3167,54 @@ function ManagerInspector(props: {
     <div className="inspector-body manager-inspector-body">
       <section className="manager-drawer manager-drawer-rail">
         <div className="manager-copy">
-          <div className="eyebrow">Operator rail</div>
-          <strong>Use auto manager</strong>
-          <p>Talk to the engine like a teammate and only open the heavier control surface when you need it.</p>
+          <div className="eyebrow">Context</div>
+          <strong>Use this rail only when you need extra detail</strong>
+          <p>Keep the main conversation clean, then open context when you want files, inbox items, or supporting detail.</p>
         </div>
 
         <div className="composer-selector-row manager-control-row">
           <label className="selector-chip">
-            <span>Manager</span>
-            <span>auto</span>
-          </label>
-          <label className="selector-chip">
-            <span>Worker</span>
-            <span>workspace</span>
-          </label>
-          <label className="selector-chip">
             <span>Mode</span>
-            <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting('chatMode', event.target.value)} aria-label="Manager mode">
+            <select value={String(settings.chatMode || 'auto')} onChange={(event) => void props.onUpdateSetting('chatMode', event.target.value)} aria-label="Chat mode">
               {chatModes.map((mode) => (
-                <option key={`manager-${mode}`} value={mode}>{mode}</option>
+                <option key={`manager-${mode}`} value={mode}>{chatModeLabels[mode]}</option>
               ))}
             </select>
+          </label>
+          <label className="selector-chip">
+            <span>Workspace</span>
+            <span>{workspaceLabel}</span>
           </label>
         </div>
 
         <div className="workbench-status-strip manager-status-strip">
-          <span className="status-inline-chip">{modeRouteSummary[chatMode]}</span>
-          <span className="status-inline-chip">{branchLabel}</span>
-          <span className="status-inline-chip">{safetyLabel}</span>
+          <span className="status-inline-chip">{chatModeLabels[chatMode]}</span>
+          {branchLabel && branchLabel !== 'workspace' ? <span className="status-inline-chip">{branchLabel}</span> : null}
+          {props.safeMode.active || props.safeMode.watchOnly ? <span className="status-inline-chip">{safetyLabel}</span> : null}
         </div>
 
         <div className="chat-compact-strip manager-compact-strip">
-          <span>Auto-run queued tasks</span>
-          <span>{modeRouteSummary[chatMode]} • {chatTransparencyLevel}</span>
+          <span>Optional details</span>
+          <span>{modeRouteSummary[chatMode]}</span>
         </div>
 
         <div className="manager-quick-grid">
-          <button className="ghost" onClick={() => props.onQuickChat('/health')}>Run hygiene</button>
+          <button className="ghost" onClick={() => props.onQuickChat('/health')}>Check status</button>
+          {props.quickPrompts.some((prompt) => prompt.action === 'tunepod') ? <button className="ghost" onClick={() => props.onOpenSettingsTab('tunepod')}>{AI_ROUTE_COPY.tunePodActionLabel}</button> : null}
           <button className="ghost" onClick={() => props.onShowInspector('inbox')}>Open inbox {props.inboxCount ? `(${props.inboxCount})` : ''}</button>
-          <button className="ghost" onClick={() => props.onShowInspector('file')}>Open workspace files</button>
+          <button className="ghost" onClick={() => props.onShowInspector('file')}>Open files</button>
         </div>
 
         <div className="prompt-grid compact manager-prompt-grid">
           {props.quickPrompts.map((prompt) => (
-            <button key={prompt} className="prompt-card compact" onClick={() => props.onQuickChat(prompt)}>
-              {prompt}
+            <button
+              key={prompt.label}
+              className="prompt-card compact"
+              onClick={() => prompt.action === 'tunepod'
+                ? props.onOpenSettingsTab('tunepod')
+                : (prompt.action === 'ide' ? props.onOpenIdeModule() : props.onQuickChat(prompt.label))}
+            >
+              {prompt.label}
             </button>
           ))}
         </div>
@@ -2685,10 +3223,559 @@ function ManagerInspector(props: {
       <section className="queue-card manager-summary-card">
         <div className="eyebrow">Workspace</div>
         <strong>{workspaceLabel}</strong>
-        <span>{modelLabel}</span>
         <span>{props.inboxCount > 0 ? `${props.inboxCount} inbox item${props.inboxCount === 1 ? '' : 's'} pending review` : 'Inbox is clear'}</span>
       </section>
     </div>
+  );
+}
+
+function IDEPanel(props: {
+  snapshot: JsonMap | null;
+  tools: JsonMap[];
+  taskList: JsonMap[];
+  taskRuns: JsonMap[];
+  onQuickChat: (command: string) => void;
+  onRefresh: () => void;
+  onOpenSettingsTab: (tab: SettingsTabId) => void;
+  onOpenMonitorTab: (tab: MonitorTabId) => void;
+  onBootstrapVsCode: () => void;
+  onInstallVsCodeCompanion: () => void;
+  onOpenWorkspaceInVsCode: () => void;
+  onOpenActiveFileInVsCode: () => void;
+}) {
+  const vscodeSetup = props.snapshot?.vscodeSetup || {};
+  const extensionHealth = props.snapshot?.extensionHealth || {};
+  const editorContext = props.snapshot?.editorContext || {};
+  const activeFilePath = String(editorContext?.active_file_path || '').trim();
+  const openFiles = Array.isArray(editorContext?.open_files) ? editorContext.open_files : [];
+  const missingBootstrapCount = Number(vscodeSetup?.missingFiles?.length || 0)
+    + Number(vscodeSetup?.missingRecommendations?.length || 0)
+    + Number(vscodeSetup?.missingTaskLabels?.length || 0);
+  const companionInstalled = Boolean(vscodeSetup?.companionInstall?.installed || extensionHealth?.exists);
+  const activeTask = props.taskList[0] || null;
+  const activeRun = props.taskRuns[0] || null;
+  const toolKinds = props.tools.reduce((accumulator, item) => {
+    const kind = String(item?.kind || 'other').trim() || 'other';
+    accumulator[kind] = Number(accumulator[kind] || 0) + 1;
+    return accumulator;
+  }, {} as Record<string, number>);
+  const terminalLanes = [
+    {
+      id: 'plan',
+      title: 'Plan next safe slice',
+      detail: 'Keep chat and the tool loop scoped before the engine mutates the workspace.',
+      actionLabel: 'Open in chat',
+      onClick: () => props.onQuickChat('Plan the next safe coding task in this repo.'),
+    },
+    {
+      id: 'implement',
+      title: 'Implement with tools',
+      detail: 'Push the bounded file/search/edit/test tool loop through the next concrete repo task.',
+      actionLabel: 'Run through chat',
+      onClick: () => props.onQuickChat('Implement the next safe coding task using the bounded tool loop and summarize the touched files.'),
+    },
+    {
+      id: 'repair',
+      title: 'Repair latest blocker',
+      detail: 'Route the engine into the smallest failing slice instead of widening the request.',
+      actionLabel: 'Repair in chat',
+      onClick: () => props.onQuickChat('Repair the latest failed run and summarize the fix.'),
+    },
+    {
+      id: 'monitor',
+      title: 'Inspect blockers',
+      detail: 'Stay in Workbench when the tool route is blocked by acceptance, safety, or queued run debt.',
+      actionLabel: 'Open Workbench',
+      onClick: () => props.onOpenMonitorTab('overview'),
+    },
+  ];
+
+  return (
+    <section className="module-panel ide-panel" data-panel="ide">
+      <section className="ide-hero">
+        <div className="ide-hero-main">
+          <div>
+            <div className="eyebrow">Workbench IDE lanes</div>
+            <h2>Tool use, editor handoff, and terminal lanes stay attached to execution work</h2>
+            <p>Workbench surfaces the bounded tool loop, VS Code bootstrap state, and editor handoff without turning IDE actions into a fifth top-level destination.</p>
+          </div>
+          <div className="row-actions ide-hero-actions">
+            <button className="primary" onClick={props.onOpenWorkspaceInVsCode}>Open workspace in VS Code</button>
+            <button className="ghost" onClick={props.onBootstrapVsCode}>Bootstrap VS Code</button>
+            <button className="ghost" onClick={props.onInstallVsCodeCompanion}>Install companion</button>
+            <button className="ghost" onClick={props.onRefresh}>Refresh</button>
+          </div>
+        </div>
+
+        <div className="ide-hero-grid">
+          <article className="metric-card">
+            <div className="eyebrow">Workspace target</div>
+            <strong>{shortPath(props.snapshot?.targetWorkspaceRoot || props.snapshot?.workspaceRoot || '') || 'Not selected'}</strong>
+            <p>{props.snapshot?.selectedLabRoot ? 'A lab is active, so the IDE handoff will follow the lab target.' : 'The IDE handoff follows the live workspace target.'}</p>
+          </article>
+          <article className="metric-card">
+            <div className="eyebrow">VS Code bootstrap</div>
+            <strong>{missingBootstrapCount > 0 ? 'Needs bootstrap' : 'Ready'}</strong>
+            <p>{String(vscodeSetup?.summary || 'Bootstrap tasks, settings, and recommendations before widening editor-side work.')}</p>
+          </article>
+          <article className="metric-card">
+            <div className="eyebrow">Companion</div>
+            <strong>{companionInstalled ? 'Detected' : 'Missing'}</strong>
+            <p>{String(extensionHealth?.summary || 'Install the VS Code companion so desktop and editor actions stay aligned.')}</p>
+          </article>
+          <article className="metric-card">
+            <div className="eyebrow">Tool catalog</div>
+            <strong>{props.tools.length}</strong>
+            <p>{Object.keys(toolKinds).length > 0 ? `${Object.keys(toolKinds).length} tool families are exposed to the engine.` : 'Tool metadata will appear after the next refresh.'}</p>
+          </article>
+          <article className="metric-card">
+            <div className="eyebrow">Active file</div>
+            <strong>{shortPath(activeFilePath) || 'No active file'}</strong>
+            <p>{activeFilePath ? 'Use the editor handoff to reopen the current working file in VS Code.' : 'Open a file from chat or the inspector and it will show up here.'}</p>
+          </article>
+          <article className="metric-card">
+            <div className="eyebrow">Active task</div>
+            <strong>{String(activeRun?.runtimeState || activeRun?.status || 'idle')}</strong>
+            <p>{String(activeRun?.runtimeLabel || activeRun?.label || activeTask?.title || 'No active coding run is recorded yet.')}</p>
+          </article>
+        </div>
+      </section>
+
+      <div className="card-grid ide-lane-grid">
+        {terminalLanes.map((lane) => (
+          <article key={lane.id} className="metric-card ide-lane-card">
+            <div className="eyebrow">Terminal lane</div>
+            <strong>{lane.title}</strong>
+            <p>{lane.detail}</p>
+            <div className="row-actions">
+              <button className="ghost" onClick={lane.onClick}>{lane.actionLabel}</button>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="card-grid ide-workspace-grid">
+        <section className="queue-card">
+          <div className="eyebrow">VS Code setup</div>
+          {Number(vscodeSetup?.missingFiles?.length || 0) > 0 ? (
+            <div className="run-item">
+              <strong>Missing files</strong>
+              <span>{(Array.isArray(vscodeSetup.missingFiles) ? vscodeSetup.missingFiles : []).join(', ')}</span>
+            </div>
+          ) : null}
+          {Number(vscodeSetup?.missingRecommendations?.length || 0) > 0 ? (
+            <div className="run-item">
+              <strong>Missing recommendations</strong>
+              <span>{(Array.isArray(vscodeSetup.missingRecommendations) ? vscodeSetup.missingRecommendations.slice(0, 6) : []).join(', ')}</span>
+            </div>
+          ) : null}
+          {Number(vscodeSetup?.missingTaskLabels?.length || 0) > 0 ? (
+            <div className="run-item">
+              <strong>Missing tasks</strong>
+              <span>{(Array.isArray(vscodeSetup.missingTaskLabels) ? vscodeSetup.missingTaskLabels : []).join(', ')}</span>
+            </div>
+          ) : null}
+          {missingBootstrapCount === 0 ? <p className="empty-copy">VS Code workspace files, tasks, and recommendations are already aligned for this target.</p> : null}
+        </section>
+
+        <section className="queue-card">
+          <div className="eyebrow">Editor handoff</div>
+          <div className="run-item">
+            <strong>Workspace launch</strong>
+            <span>Open the current target root in VS Code so terminals, problems, and editor tools stay attached to the same workspace the desktop shell is supervising.</span>
+          </div>
+          <div className="run-item">
+            <strong>Active file</strong>
+            <span>{activeFilePath ? shortPath(activeFilePath) : 'No active file is pinned yet.'}</span>
+          </div>
+          {openFiles.slice(0, 5).map((entry: unknown, index: number) => (
+            <div key={`${String(entry || '')}-${index}`} className="run-item">
+              <strong>Recent editor file</strong>
+              <span>{shortPath(String(entry || '')) || 'Unknown file'}</span>
+            </div>
+          ))}
+          <div className="row-actions">
+            <button className="ghost" onClick={props.onOpenWorkspaceInVsCode}>Open workspace in VS Code</button>
+            <button className="ghost" onClick={props.onOpenActiveFileInVsCode} disabled={!activeFilePath}>Open active file</button>
+            <button className="ghost" onClick={() => props.onOpenSettingsTab('workspace')}>Workspace settings</button>
+          </div>
+        </section>
+      </div>
+
+      <div className="card-grid ide-workspace-grid">
+        <section className="queue-card">
+          <div className="eyebrow">Tool access exposed to the model</div>
+          {props.tools.slice(0, 10).map((tool, index) => (
+            <div key={`${String(tool?.id || tool?.label || 'tool')}-${index}`} className="run-item">
+              <strong>{String(tool?.label || tool?.id || 'Tool')}</strong>
+              <span>{String(tool?.summary || `${tool?.kind || 'tool'} • ${tool?.safetyLevel || 'unknown safety'}`)}</span>
+            </div>
+          ))}
+          {props.tools.length === 0 ? <p className="empty-copy">No tool metadata is available yet. Refresh the shell and verify the tool catalog preload path.</p> : null}
+        </section>
+
+        <section className="queue-card">
+          <div className="eyebrow">Companion alignment</div>
+          {Array.isArray(extensionHealth?.warnings) && extensionHealth.warnings.length > 0 ? (
+            extensionHealth.warnings.map((warning: string, index: number) => (
+              <div key={`${warning}-${index}`} className="run-item">
+                <strong>{extensionHealth.displayName || 'VS Code companion'}</strong>
+                <span>{warning}</span>
+              </div>
+            ))
+          ) : (
+            <div className="run-item">
+              <strong>{extensionHealth.displayName || 'VS Code companion'}</strong>
+              <span>{String(extensionHealth?.nextStep || extensionHealth?.summary || 'Companion health looks aligned with the desktop shell.')}</span>
+            </div>
+          )}
+          <div className="row-actions">
+            <button className="ghost" onClick={props.onInstallVsCodeCompanion}>Install companion</button>
+            <button className="ghost" onClick={() => props.onOpenSettingsTab('tools')}>Open tool catalog</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function TunePodPanel(props: {
+  snapshot: JsonMap | null;
+  settings: JsonMap;
+  aiStatus: JsonMap | null;
+  tuning: JsonMap | null;
+  onUpdateSetting: (field: string, value: any) => void | Promise<void>;
+  onRunBenchmark: () => void;
+  onOpenSettingsTab: (tab: SettingsTabId) => void;
+}) {
+  const settings = props.settings || props.snapshot?.settings || {};
+  const aiRoutingPolicies = Array.isArray(props.aiStatus?.routingPolicies) ? props.aiStatus.routingPolicies : [];
+  const aiRemoteProviders = Array.isArray(props.aiStatus?.remoteProviders) ? props.aiStatus.remoteProviders : [];
+  const aiRemoteModelOptions = Array.isArray(props.aiStatus?.remoteModelCatalog) ? props.aiStatus.remoteModelCatalog : [];
+  const capabilityLanes = Array.isArray(props.aiStatus?.capabilityLanes) ? props.aiStatus.capabilityLanes : [];
+  const targetHardwareOptions = Array.isArray(props.tuning?.hardwareTargets) ? props.tuning.hardwareTargets : [];
+  const selectedHardwareTarget = String(settings.trainingHardwareTarget || props.tuning?.settings?.trainingHardwareTarget || 'auto');
+  const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
+  const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+  const tuningLifecycle = props.tuning?.lifecycle && typeof props.tuning.lifecycle === 'object'
+    ? props.tuning.lifecycle
+    : (props.aiStatus?.localModelInventory && typeof props.aiStatus.localModelInventory === 'object' ? props.aiStatus.localModelInventory : {});
+  const machineProfile = props.tuning?.telemetry?.machine && typeof props.tuning.telemetry.machine === 'object'
+    ? props.tuning.telemetry.machine
+    : {};
+  const selectedHardwareTargetMeta = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === selectedHardwareTarget)
+    || targetHardwareOptions[0]
+    || null;
+  const effectiveHardwareTargetId = selectedHardwareTarget === 'auto'
+    ? (String(machineProfile.id || '').trim() || 'auto')
+    : selectedHardwareTarget;
+  const effectiveHardwareTargetMeta = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === effectiveHardwareTargetId)
+    || selectedHardwareTargetMeta;
+  const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
+  const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || 'hybrid-default');
+  const routePolicyMeta = aiRoutingPolicies.find((policy: JsonMap) => String(policy?.id || '') === routePolicyId) || null;
+  const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
+  const routePolicySummary = String(routePolicyMeta?.summary || '').trim();
+  const selectedRemoteProviderId = String(settings.aiRemoteProvider || props.aiStatus?.current?.remoteProvider || 'openai');
+  const selectedRemoteProvider = aiRemoteProviders.find((provider: JsonMap) => String(provider?.id || '') === selectedRemoteProviderId)
+    || aiRemoteProviders[0]
+    || null;
+  const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || '');
+  const remoteFallbackReady = Boolean(selectedRemoteModel.trim());
+  const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
+  const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb
+    ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM • ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` • ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ''}`
+    : 'Machine telemetry is still warming up.';
+  const hardwareTargetLabelMap = targetHardwareOptions.reduce((accumulator, item: JsonMap) => {
+    const targetId = String(item?.id || '').trim();
+    if (targetId) {
+      accumulator[targetId] = String(item?.label || targetId);
+    }
+    return accumulator;
+  }, {} as Record<string, string>);
+  const tunePodReadyModelSet = new Set(readAiModelOptions(props.aiStatus, props.tuning, settings).filter((option) => option.ready).map((option) => option.model));
+  const tunePodPresetTargetLabels = (preset: JsonMap) => {
+    const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : [])
+      .map((item: unknown) => String(item || '').trim())
+      .filter((item: string) => item && item !== 'auto');
+    return targetIds.map((targetId: string) => hardwareTargetLabelMap[targetId] || targetId);
+  };
+  const tunePodPresetFit = (preset: JsonMap) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
+  const compatibleTunePodPresets = installPresets.filter((preset: JsonMap) => tunePodPresetFit(preset).fits);
+  const incompatibleTunePodPresets = installPresets.filter((preset: JsonMap) => !tunePodPresetFit(preset).fits);
+  const readinessCounts = (Array.isArray(tuningLifecycle?.entries) ? tuningLifecycle.entries : []).reduce((accumulator: { live: number; registered: number; staged: number; missing: number }, entry: JsonMap) => {
+    const readiness = String(entry?.localReadiness || entry?.installState || '').trim().toLowerCase();
+    if (readiness === 'live' || readiness === 'ready') {
+      accumulator.live += 1;
+    } else if (readiness === 'registered' || readiness === 'store-only') {
+      accumulator.registered += 1;
+    } else if (readiness === 'staged' || readiness === 'stored') {
+      accumulator.staged += 1;
+    } else {
+      accumulator.missing += 1;
+    }
+    return accumulator;
+  }, { live: 0, registered: 0, staged: 0, missing: 0 });
+  const routePlanCards = capabilityLanes.slice(0, 5).map((lane: JsonMap) => ({
+    id: String(lane?.id || lane?.label || ''),
+    label: String(lane?.label || lane?.id || 'Lane'),
+    summary: String(lane?.summary || 'Route detail pending.'),
+    owner: `${String(lane?.provider || 'provider')} • ${String(lane?.preferredModel || 'model pending')}`,
+    source: String(lane?.sourceLabel || (lane?.source === 'override' ? AI_ROUTE_COPY.routeSourceOverride : AI_ROUTE_COPY.routeSourceInherited)),
+  }));
+  const nextSetupStep = (() => {
+    const nextLayerId = String(localModelProgram.nextLayer?.id || '').trim().toLowerCase();
+    if (nextLayerId === 'foundation') {
+      return {
+        title: 'Add more local models',
+        summary: 'This machine needs more ready local models before local coding can be the default path.',
+      };
+    }
+    if (nextLayerId === 'routing') {
+      return {
+        title: 'Finish local coding setup',
+        summary: 'Set the active model choices so local coding is ready by default for everyday work.',
+      };
+    }
+    if (nextLayerId === 'coding') {
+      return {
+        title: 'Verify local coding',
+        summary: 'Run readiness checks to confirm local coding works cleanly on this machine.',
+      };
+    }
+    if (nextLayerId === 'promotion') {
+      return {
+        title: 'Review advanced promotion options',
+        summary: 'Promotion is an advanced step and can wait until the local coding setup is stable.',
+      };
+    }
+    if (nextLayerId === 'self-improve') {
+      return {
+        title: 'Keep advanced improvement tools paused',
+        summary: 'Leave advanced improvement tools alone until the lower setup layers are stable.',
+      };
+    }
+    return {
+      title: 'Current setup looks ready',
+      summary: 'The main local model setup is in good shape for normal daily work.',
+    };
+  })();
+
+  return (
+    <section className="module-panel settings-panel-v2 tunepod-panel" data-panel="tunepod">
+      <div className="settings-shell">
+        <section className="settings-hero">
+          <div className="settings-hero-main">
+            <div>
+              <div className="eyebrow">Tune Pod</div>
+              <h2>See what fits this machine and what is ready now</h2>
+              <p>Tune Pod shows what this PC can run, which local models are ready, what is active, and what setup step comes next.</p>
+            </div>
+            <div className="row-actions settings-hero-actions">
+              <button className="primary" data-run-benchmark="true" onClick={props.onRunBenchmark}>Check readiness</button>
+              <button className="ghost" onClick={() => props.onOpenSettingsTab('ai')}>Import models</button>
+            </div>
+          </div>
+          <div className="settings-hero-grid">
+            <article className="settings-hero-card">
+              <div className="eyebrow">Machine fit</div>
+              <strong>{String(machineProfile.label || 'Machine profile pending')}</strong>
+              <p>{machineProfileFootprint}</p>
+            </article>
+            <article className="settings-hero-card">
+              <div className="eyebrow">Current setup</div>
+              <strong>{routePolicyLabel}</strong>
+              <p>{routePolicySummary || 'These are the active model choices for this workspace.'}</p>
+            </article>
+            <article className="settings-hero-card">
+              <div className="eyebrow">Next recommended step</div>
+              <strong>{nextSetupStep.title}</strong>
+              <p>{nextSetupStep.summary}</p>
+            </article>
+            <article className="settings-hero-card">
+              <div className="eyebrow">Fallback help</div>
+              <strong>{remoteFallbackReady ? 'Available when needed' : 'Local only'}</strong>
+              <p>{remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} is available as backup help or for quick comparison.` : 'No fallback help is configured. Local models are the main path right now.'}</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="card-grid">
+            <article className="metric-card active">
+              <div className="eyebrow">Active machine target</div>
+              <strong>{String(effectiveHardwareTargetMeta?.label || 'Current machine')}</strong>
+              <p>{String(effectiveHardwareTargetMeta?.summary || 'Use the live machine fit unless you are staging for a larger target.')}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Active local model</div>
+              <strong>{String(settings.trainingOllamaModel || props.aiStatus?.current?.derivedModelLabel || 'Not selected')}</strong>
+              <p>{benchmarkLeader ? `Recent checks favor ${String(benchmarkLeader.model || 'this model')} on this machine.` : 'Run Check readiness to compare the current options.'}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Fits this PC</div>
+              <strong>{compatibleTunePodPresets.length}</strong>
+              <p>{compatibleTunePodPresets.length > 0 ? 'These curated presets match the active target tier.' : 'No curated presets fit the active target tier yet.'}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Model readiness</div>
+              <strong>{`${Number(tuningLifecycle.readyCount || readinessCounts.live || 0)} ready • ${Number(tuningLifecycle.localCount || 0)} tracked`}</strong>
+              <p>See what is ready now, saved for later, or still missing below.</p>
+            </article>
+          </div>
+
+          <div className="settings-grid">
+            <label>
+              <span>Machine target</span>
+              <select value={selectedHardwareTarget} onChange={(event) => void props.onUpdateSetting('trainingHardwareTarget', event.target.value)}>
+                {(targetHardwareOptions.length ? targetHardwareOptions : [{ id: 'auto', label: 'Current machine' }]).map((target: JsonMap) => (
+                  <option key={String(target.id || '')} value={String(target.id || '')}>{String(target.label || target.id || '')}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Current setup</span>
+              <input value={routePolicyLabel} readOnly />
+            </label>
+            <label>
+              <span>Active local model</span>
+              <input value={String(settings.trainingOllamaModel || props.aiStatus?.current?.derivedModelLabel || 'Not selected')} readOnly />
+            </label>
+            <label>
+              <span>Fallback help</span>
+              <input value={remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} • compare or backup help` : 'Not configured'} readOnly />
+            </label>
+          </div>
+
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Model readiness</div>
+                <h2>See what is ready now, saved, or still missing</h2>
+                <p>Tune Pod should make it obvious which models are ready to use now and which ones still need setup.</p>
+              </div>
+            </div>
+            <div className="card-grid">
+              <article className="metric-card">
+                <div className="eyebrow">Ready now</div>
+                <strong>{readinessCounts.live}</strong>
+                <p>Ready to use on this machine right now.</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Added</div>
+                <strong>{readinessCounts.registered}</strong>
+                <p>Added to the app, but not confirmed ready on this machine yet.</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Stored</div>
+                <strong>{readinessCounts.staged}</strong>
+                <p>Available to import later, but not added to the live setup yet.</p>
+              </article>
+              <article className="metric-card">
+                <div className="eyebrow">Missing</div>
+                <strong>{readinessCounts.missing}</strong>
+                <p>Not available for this machine yet or not installed locally.</p>
+              </article>
+            </div>
+          </section>
+
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Fits this PC</div>
+                <h2>Compatible local model presets for the active target</h2>
+                <p>Start with the presets that fit this machine before you widen to heavier families.</p>
+              </div>
+            </div>
+            {compatibleTunePodPresets.slice(0, 6).map((preset: JsonMap) => {
+              const targetLabels = tunePodPresetTargetLabels(preset);
+              const presetModel = String(preset.ollamaModel || '');
+              const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+              return (
+                <div key={String(preset.id || preset.label)} className="run-item">
+                  <strong>{String(preset.label || preset.id || 'Preset')}</strong>
+                  <span>
+                    {String(preset.sizeLabel || 'size pending')}
+                    {preset.requirementSummary ? ` • ${String(preset.requirementSummary)}` : ''}
+                    {targetLabels.length > 0 ? ` • Fits ${targetLabels.join(' • ')}` : ''}
+                    {isReady ? ' • ready now' : ' • needs setup'}
+                  </span>
+                </div>
+              );
+            })}
+            {compatibleTunePodPresets.length === 0 ? <p className="empty-copy">No curated local models fit the active target tier yet.</p> : null}
+          </section>
+
+          <details className="queue-card tunepod-advanced-card">
+            <summary className="panel-header">
+              <div>
+                <div className="eyebrow">Advanced</div>
+                <h2>Model choices and deeper setup details</h2>
+                <p>Open this when you want task-specific model choices, fallback detail, or deeper readiness steps.</p>
+              </div>
+            </summary>
+
+            <section className="queue-card">
+              <div className="panel-header">
+                <div>
+                  <div className="eyebrow">Current setup</div>
+                  <h2>Which model handles each kind of work</h2>
+                  <p>Use this only when you need to inspect or change task-specific model choices.</p>
+                </div>
+              </div>
+              <div className="card-grid lane-grid">
+                {routePlanCards.map((lane) => (
+                  <article key={lane.id} className="metric-card lane-card">
+                    <div className="eyebrow">Active choice</div>
+                    <strong>{lane.label}</strong>
+                    <p>{lane.summary}</p>
+                    <div className="lane-summary">
+                      <span>{lane.owner}</span>
+                      <span>{lane.source}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              {routePlanCards.length === 0 ? <p className="empty-copy">Task model choices will appear here after the next AI status refresh.</p> : null}
+            </section>
+
+            <section className="queue-card">
+              <div className="eyebrow">Advanced readiness details</div>
+              <div className="run-item">
+                <strong>{`${localModelProgram.verifiedCount}/${localModelProgram.layers.length} steps verified`}</strong>
+                <span>{localModelProgram.summary}</span>
+              </div>
+              {localModelProgram.layers.map((layer: { id: string; label: string; status: string; summary: string; unlockRule: string }) => (
+                <div key={layer.id} className="run-item">
+                  <strong>{layer.label}</strong>
+                  <span>{`${localModelProgramStatusLabel(layer.status)} • ${layer.summary}`}</span>
+                  <div className="row-actions">
+                    <span className={`status-pill${layer.status === 'verified' ? ' ready' : ''}`}>{localModelProgramStatusLabel(layer.status)}</span>
+                    <span className="status-pill">{layer.unlockRule}</span>
+                  </div>
+                </div>
+              ))}
+            </section>
+
+            <section className="queue-card">
+              <div className="eyebrow">Fallback and compare</div>
+              <div className="run-item">
+                <strong>Fallback help</strong>
+                <span>{remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} with ${selectedRemoteModel || 'a selected model'} is available as backup help or for quick comparison.` : 'No fallback help is configured yet.'}</span>
+              </div>
+              <div className="run-item">
+                <strong>Compare</strong>
+                <span>{capabilityLanes.find((lane: JsonMap) => String(lane?.id || '').toLowerCase().includes('compare'))?.summary || 'Quick compare stays available here when it is configured.'}</span>
+              </div>
+              <div className="run-item">
+                <strong>Better on bigger hardware</strong>
+                <span>{incompatibleTunePodPresets.length > 0 ? `${incompatibleTunePodPresets.length} heavier preset${incompatibleTunePodPresets.length === 1 ? '' : 's'} stay listed here as bigger-machine options.` : 'No heavier curated presets are recorded for this target right now.'}</span>
+              </div>
+            </section>
+          </details>
+        </section>
+      </div>
+    </section>
   );
 }
 
@@ -2903,7 +3990,7 @@ function LearningPanel(props: {
             <p className="empty-copy">These signals come from approvals, needs-changes notes, and operator comments. Chat guidance can reuse them without flooding the UI.</p>
           </>
         ) : (
-          <p className="empty-copy">No operator supervision signals yet. Record approvals, needs changes, or comments from Monitor to start shaping the engine.</p>
+          <p className="empty-copy">No operator supervision signals yet. Record approvals, needs changes, or comments from Workbench to start shaping the engine.</p>
         )}
       </section>
 
@@ -2998,6 +4085,48 @@ function SettingsPanel(props: {
   const selectedHardwareTarget = String(settings.trainingHardwareTarget || props.tuning?.settings?.trainingHardwareTarget || 'auto');
   const installPresets = Array.isArray(props.tuning?.installPresets) ? props.tuning.installPresets : [];
   const recommendedInstallPresets = installPresets.filter((item: JsonMap) => item.hardwareRecommended);
+  const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+  const tuningLifecycle = props.tuning?.lifecycle && typeof props.tuning.lifecycle === 'object'
+    ? props.tuning.lifecycle
+    : (props.aiStatus?.localModelInventory && typeof props.aiStatus.localModelInventory === 'object' ? props.aiStatus.localModelInventory : {});
+  const machineProfile = props.tuning?.telemetry?.machine && typeof props.tuning.telemetry.machine === 'object'
+    ? props.tuning.telemetry.machine
+    : {};
+  const selectedHardwareTargetMeta = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === selectedHardwareTarget)
+    || targetHardwareOptions[0]
+    || null;
+  const effectiveHardwareTargetId = selectedHardwareTarget === 'auto'
+    ? (String(machineProfile.id || '').trim() || 'auto')
+    : selectedHardwareTarget;
+  const effectiveHardwareTargetMeta = targetHardwareOptions.find((item: JsonMap) => String(item?.id || '') === effectiveHardwareTargetId)
+    || selectedHardwareTargetMeta;
+  const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
+  const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || 'hybrid-default');
+  const routePolicyMeta = aiRoutingPolicies.find((policy: JsonMap) => String((policy as JsonMap)?.id || '') === routePolicyId) || null;
+  const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
+  const routePolicySummary = String(routePolicyMeta?.summary || '').trim();
+  const remoteFallbackReady = Boolean(String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || '').trim());
+  const hardwareTargetLabelMap = targetHardwareOptions.reduce((accumulator, item: JsonMap) => {
+    const targetId = String(item?.id || '').trim();
+    if (targetId) {
+      accumulator[targetId] = String(item?.label || targetId);
+    }
+    return accumulator;
+  }, {} as Record<string, string>);
+  const tunePodReadyModelSet = new Set(aiModelOptions.filter((option) => option.ready).map((option) => option.model));
+  const tunePodPresetTargetLabels = (preset: JsonMap) => {
+    const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : [])
+      .map((item: unknown) => String(item || '').trim())
+      .filter((item: string) => item && item !== 'auto');
+    return targetIds.map((targetId: string) => hardwareTargetLabelMap[targetId] || targetId);
+  };
+  const tunePodPresetFit = (preset: JsonMap) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
+  const compatibleTunePodPresets = installPresets.filter((preset: JsonMap) => tunePodPresetFit(preset).fits);
+  const incompatibleTunePodPresets = installPresets.filter((preset: JsonMap) => !tunePodPresetFit(preset).fits);
+  const remoteReductionUnlock = localModelProgram.unlocks.find((unlock) => unlock.id === 'remote-min') || null;
+  const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb
+    ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM • ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` • ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ''}`
+    : 'Machine telemetry is still warming up.';
   const [providerKeyBusy, setProviderKeyBusy] = React.useState(false);
   const visibleBridgeProfiles = (aiBridgeProfiles.length ? aiBridgeProfiles : [{ id: 'llama-bridge', label: 'Llama Bridge' }, { id: 'gpt4all-bridge', label: 'GPT4All Bridge' }, { id: 'custom', label: 'Custom' }])
     .filter((profile: JsonMap) => aiManualMode || String(profile?.id || '') !== 'custom');
@@ -3138,6 +4267,12 @@ function SettingsPanel(props: {
           { label: 'Provider', value: currentProvider },
           { label: 'Ready models', value: String(readyModelCount) },
           { label: 'Overrides', value: String(activeLaneOverrideCount) },
+        ];
+      case 'tunepod':
+        return [
+          { label: 'Current target', value: String(effectiveHardwareTargetMeta?.label || 'Current machine') },
+          { label: 'Fits this target', value: String(compatibleTunePodPresets.length) },
+          { label: 'Next unlock', value: localModelProgram.nextLayer.label },
         ];
       case 'autonomy':
         return [
@@ -3650,7 +4785,7 @@ function SettingsPanel(props: {
             <div className="row-actions">
               <button
                 className="ghost"
-                onClick={() => void window.gosAgent.bootstrapWorkspaceVsCode({
+                onClick={() => void window.gosAgent.installWorkspaceVsCodeCompanion({
                   workspaceRoot: props.snapshot?.workspaceRoot,
                   targetWorkspaceRoot: props.snapshot?.targetWorkspaceRoot,
                 }).then(props.onRefresh)}
@@ -4192,11 +5327,219 @@ function SettingsPanel(props: {
             </div>
           </section>
           <section className="queue-card">
-            <div className="eyebrow">Monitor handoff</div>
+            <div className="eyebrow">Workbench handoff</div>
             <div className="run-item">
-              <strong>Deep health, benchmarks, promotions, and debug exports moved to Monitor.</strong>
-              <span>Keep AI settings focused on selectors and lane tuning here, then use Monitor for the live operational view.</span>
+              <strong>Deep health, benchmarks, recovery, and debug exports moved to Workbench.</strong>
+              <span>Keep AI settings focused on selectors and lane tuning here, then use Workbench for the live operational view.</span>
             </div>
+          </section>
+        </section>
+      ) : null}
+
+      {props.activeTab === 'tunepod' ? (
+        <section className="settings-section">
+          <div className="card-grid">
+            <article className="metric-card active">
+              <div className="eyebrow">Current machine fit</div>
+              <strong>{String(machineProfile.label || 'Machine profile pending')}</strong>
+              <p>{machineProfileFootprint}{machineProfile.summary ? ` • ${String(machineProfile.summary)}` : ''}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Selected Tune Pod target</div>
+              <strong>{String(selectedHardwareTargetMeta?.label || 'Current machine')}</strong>
+              <p>{String(selectedHardwareTargetMeta?.summary || 'The selected target controls which local model presets count as a good fit.')}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Local route block</div>
+              <strong>{`${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified`}</strong>
+              <p>{localModelProgram.summary}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Compatible local options</div>
+              <strong>{compatibleTunePodPresets.length}</strong>
+              <p>{compatibleTunePodPresets.length > 0 ? 'These presets match the current hardware target.' : 'No curated presets match this target yet.'}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Local inventory</div>
+              <strong>{`${Number(tuningLifecycle.readyCount || 0)} ready • ${Number(tuningLifecycle.localCount || 0)} tracked`}</strong>
+              <p>{String(tuningLifecycle.summary || 'Import or stage local models to start proving the daily coding loop.')}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Remote reduction</div>
+              <strong>{remoteReductionUnlock ? localModelProgramStatusLabel(remoteReductionUnlock.status) : (remoteFallbackReady ? 'Configured' : 'Locked')}</strong>
+              <p>{remoteReductionUnlock?.summary || (remoteFallbackReady ? 'Remote is configured as a fallback path, not the daily default.' : 'Add a remote fallback only if you need compare or overflow coverage.')}</p>
+            </article>
+          </div>
+          <div className="settings-grid">
+            <label>
+              <span>Tune Pod target</span>
+              <select value={selectedHardwareTarget} onChange={(event) => void props.onUpdateSetting('trainingHardwareTarget', event.target.value)}>
+                {(targetHardwareOptions.length ? targetHardwareOptions : [{ id: 'auto', label: 'Current machine' }]).map((target: JsonMap) => (
+                  <option key={String(target.id || '')} value={String(target.id || '')}>{String(target.label || target.id || '')}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Route plan</span>
+              <input value={routePolicyLabel} readOnly />
+            </label>
+            <label>
+              <span>Primary local model</span>
+              <input value={String(settings.trainingOllamaModel || derivedModelLabel || 'qwen2.5-coder:7b')} readOnly />
+            </label>
+            <label>
+              <span>Remote fallback</span>
+              <input value={remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} • ${selectedRemoteModel || 'model pending'}` : 'Fallback not configured'} readOnly />
+            </label>
+          </div>
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Tune Pod route plan</div>
+                <h2>Keep local-first visible while remote shrinks to backup</h2>
+                <p>{routePolicySummary || 'Tune Pod keeps the route proof visible so the operator can widen local capability intentionally instead of drifting back to remote-by-default.'}</p>
+              </div>
+            </div>
+            <div className="run-item">
+              <strong>{routePolicyLabel}</strong>
+              <span>{localModelProgram.summary}</span>
+            </div>
+            <div className="run-item">
+              <strong>Benchmark leader</strong>
+              <span>{benchmarkLeader ? `${String(benchmarkLeader.model || 'model')} • ${Number(benchmarkLeader.passRate || 0)}% pass • ${Number(benchmarkLeader.averageLatencyMs || 0)}ms avg latency` : 'Run a benchmark to compare local candidates against the current route.'}</span>
+            </div>
+            <div className="run-item">
+              <strong>Remote fallback posture</strong>
+              <span>{remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} with ${selectedRemoteModel || 'a selected model'} is available for compare, overflow, or approval only.` : 'No remote fallback is configured yet. The current plan depends entirely on local readiness.'}</span>
+            </div>
+            <div className="run-item">
+              <strong>Local inventory status</strong>
+              <span>{String(tuningLifecycle.summary || 'No local inventory summary is available yet.')}</span>
+            </div>
+          </section>
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Hardware target tiers</div>
+                <h2>Match the target before you pull heavier local models</h2>
+                <p>These tiers are the requirement blocks the repo actually tracks today. Tune Pod uses them to sort good-fit models from models that belong on a larger machine.</p>
+              </div>
+            </div>
+            <div className="card-grid">
+              {(targetHardwareOptions.length ? targetHardwareOptions : [{ id: 'auto', label: 'Current machine', summary: 'Use the current machine as the tuning reference.' }]).map((target: JsonMap) => {
+                const targetId = String(target.id || '');
+                const isSelectedTarget = targetId === selectedHardwareTarget;
+                const isEffectiveTarget = targetId === effectiveHardwareTargetId;
+                return (
+                  <article key={targetId} className={`metric-card${isSelectedTarget || isEffectiveTarget ? ' active' : ''}`}>
+                    <div className="eyebrow">{isEffectiveTarget ? 'Current fit tier' : isSelectedTarget ? 'Selected target' : 'Target tier'}</div>
+                    <strong>{String(target.label || target.id || 'Target')}</strong>
+                    <p>{String(target.summary || 'Target summary unavailable.')}</p>
+                    <div className="row-actions">
+                      {isSelectedTarget ? <span className="status-pill ready">Selected in Tune Pod</span> : null}
+                      {isEffectiveTarget ? <span className="status-pill ready">Current machine fit</span> : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Fits this PC</div>
+                <h2>Compatible local models for the active Tune Pod target</h2>
+                <p>Tune Pod promotes the presets that match the current fit tier first so the local route can get stronger before you widen to heavier families.</p>
+              </div>
+            </div>
+            {compatibleTunePodPresets.slice(0, 8).map((preset: JsonMap) => {
+              const targetLabels = tunePodPresetTargetLabels(preset);
+              const presetModel = String(preset.ollamaModel || '');
+              const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+              return (
+                <div key={String(preset.id || preset.label)} className="run-item">
+                  <strong>{String(preset.label || preset.id || 'Preset')}</strong>
+                  <span>
+                    {String(preset.sizeLabel || 'size pending')}
+                    {preset.sourceLabel ? ` • ${String(preset.sourceLabel)}` : ''}
+                    {preset.requirementSummary ? ` • ${String(preset.requirementSummary)}` : ''}
+                    {targetLabels.length > 0 ? ` • Fits ${targetLabels.join(' • ')}` : ''}
+                    {isReady ? ' • ready locally' : ' • import needed'}
+                  </span>
+                  <div className="row-actions">
+                    {preset.ollamaModel ? (
+                      <button className="ghost" onClick={() => void props.onUpdateSetting('trainingOllamaModel', String(preset.ollamaModel || ''))}>
+                        Pick model
+                      </button>
+                    ) : null}
+                    {preset.downloadCommand ? (
+                      <button className="ghost" onClick={() => void window.navigator.clipboard?.writeText(String(preset.downloadCommand || ''))}>
+                        Copy install command
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+            {compatibleTunePodPresets.length === 0 ? <p className="empty-copy">Tune Pod does not have a curated fit for this target yet. Pick a smaller target or import a lighter local family first.</p> : null}
+          </section>
+          <section className="queue-card">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Better on bigger hardware</div>
+                <h2>Models that do not currently fit this Tune Pod target</h2>
+                <p>If a model does not match the active target, Tune Pod keeps it visible but marks which larger tiers it belongs to so you do not waste time staging the wrong family.</p>
+              </div>
+            </div>
+            {incompatibleTunePodPresets.slice(0, 8).map((preset: JsonMap) => {
+              const targetLabels = tunePodPresetTargetLabels(preset);
+              const fit = tunePodPresetFit(preset);
+              return (
+                <div key={String(preset.id || preset.label)} className="run-item">
+                  <strong>{String(preset.label || preset.id || 'Preset')}</strong>
+                  <span>
+                    {String(preset.sizeLabel || 'size pending')}
+                    {preset.requirementSummary ? ` • ${String(preset.requirementSummary)}` : ''}
+                    {fit.blockers.length > 0 ? ` • Needs ${fit.blockers.join(' • ')}` : ''}
+                    {targetLabels.length > 0 ? ` • Better on ${targetLabels.join(' • ')}` : ' • Use a larger hardware tier'}
+                    {preset.sourceLabel ? ` • ${String(preset.sourceLabel)}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+            {incompatibleTunePodPresets.length === 0 ? <p className="empty-copy">Everything in the curated preset list currently fits this target tier.</p> : null}
+          </section>
+          <section className="queue-card">
+            <div className="eyebrow">{AI_ROUTE_COPY.ladderEyebrow}</div>
+            <div className="run-item">
+              <strong>{`${localModelProgram.verifiedCount}/${localModelProgram.layers.length} verified`}</strong>
+              <span>{localModelProgram.summary}</span>
+            </div>
+            {localModelProgram.layers.map((layer: { id: string; label: string; status: string; summary: string; unlockRule: string }) => (
+              <div key={layer.id} className="run-item">
+                <strong>{layer.label}</strong>
+                <span>{`${localModelProgramStatusLabel(layer.status)} • ${layer.summary}`}</span>
+                <div className="row-actions">
+                  <span className={`status-pill${layer.status === 'verified' ? ' ready' : ''}`}>{localModelProgramStatusLabel(layer.status)}</span>
+                  <span className="status-pill">{layer.unlockRule}</span>
+                </div>
+              </div>
+            ))}
+            <p className="empty-copy">{AI_ROUTE_COPY.ladderSummary}</p>
+          </section>
+          <section className="queue-card">
+            <div className="eyebrow">{AI_ROUTE_COPY.unlockEyebrow}</div>
+            <div className="run-item">
+              <strong>{localModelProgram.nextLayer.label}</strong>
+              <span>{localModelProgram.nextLayer.unlockRule}</span>
+            </div>
+            {localModelProgram.unlocks.map((unlock: { id: string; label: string; status: string; summary: string }) => (
+              <div key={unlock.id} className="run-item">
+                <strong>{unlock.label}</strong>
+                <span>{`${localModelProgramStatusLabel(unlock.status)} • ${unlock.summary}`}</span>
+              </div>
+            ))}
+            <p className="empty-copy">{AI_ROUTE_COPY.unlockSummary}</p>
           </section>
         </section>
       ) : null}
@@ -4452,6 +5795,8 @@ function MonitorPanel(props: {
   learningEvents: JsonMap[];
   labEvents: JsonMap[];
   benchmarkEvents: JsonMap[];
+  tools: JsonMap[];
+  taskList: JsonMap[];
   activeTab: MonitorTabId;
   onSetActiveTab: (tab: MonitorTabId) => void;
   onCreateCandidate: () => void;
@@ -4462,9 +5807,15 @@ function MonitorPanel(props: {
   onRunAcceptance: () => void;
   onExportDebugBundle: () => void;
   onOpenReviewPath: (path: string, source?: string) => void;
+  onQuickChat: (command: string) => void;
   onCreateSuggestedTask: (candidate: JsonMap) => Promise<void>;
   onQueueSuggestedRecipe: (recipe: JsonMap) => Promise<void>;
   onRecordOperatorFeedback: (payload: JsonMap) => Promise<void>;
+  onOpenSettingsTab: (tab: SettingsTabId) => void;
+  onBootstrapVsCode: () => void;
+  onInstallVsCodeCompanion: () => void;
+  onOpenWorkspaceInVsCode: () => void;
+  onOpenActiveFileInVsCode: () => void;
   onRefresh: () => void;
   acceptanceBusy: boolean;
   safetyBusy: boolean;
@@ -4530,6 +5881,52 @@ function MonitorPanel(props: {
   const safeRecipe = testBench.safeRecipe && typeof testBench.safeRecipe === 'object'
     ? testBench.safeRecipe
     : {};
+  const latestTaskRunLabel = String(taskRuns[0]?.runtimeLabel || taskRuns[0]?.label || taskRuns[0]?.title || '').trim();
+  const changedFiles = Array.isArray(testBench.changedFiles) ? testBench.changedFiles : [];
+  const failingLocations = Array.isArray(testBench.failingLocations) ? testBench.failingLocations : [];
+  const previewPath = String(
+    testBench.preferredPath
+    || changedFiles[0]?.path
+    || reviewer.notes?.[0]?.path
+    || ''
+  ).trim();
+  const previewTitle = String(
+    latestTaskRunLabel
+    || testBench.summary
+    || reviewer.summary
+    || 'Latest workspace run'
+  ).trim();
+  const previewLines = [
+    `// ${previewTitle || 'Workbench preview'}`,
+    previewPath ? `target_file("${previewPath.replace(/\\/g, '/')}" )` : 'target_file("workspace task")',
+    latestTaskRunLabel ? `run_label("${latestTaskRunLabel}")` : 'run_label("Task detail")',
+    `state("${String(taskRuns[0]?.runtimeState || taskRuns[0]?.status || testBench.status || 'ready')}")`,
+    '',
+    ...(changedFiles.slice(0, 5).map((item: JsonMap, index: number) => `${index + 1}. change(${JSON.stringify(shortPath(String(item?.path || item || 'changed file')))});`)),
+    ...(changedFiles.length === 0 ? ['1. change("No changed files recorded yet.");'] : []),
+    '',
+    ...(failingLocations.slice(0, 4).map((item: JsonMap) => `validate(${JSON.stringify(`${shortPath(String(item?.path || 'finding'))} line ${Number(item?.line || 1)}: ${String(item?.message || 'finding')}`)});`)),
+    ...(failingLocations.length === 0 ? ['validate("Focused proof is clear or not yet recorded.");'] : []),
+  ];
+  const validationCards: Array<{ label: string; detail: string; status: string }> = failingLocations.length > 0
+    ? failingLocations.slice(0, 4).map((item: JsonMap) => ({
+        label: shortPath(String(item?.path || 'Validation finding')) || 'Validation finding',
+        detail: `line ${Number(item?.line || 1)} • ${String(item?.message || 'Validation finding')}`,
+        status: 'needs review',
+      }))
+    : (Array.isArray(acceptance?.checks) ? acceptance.checks.slice(0, 4).map((check: JsonMap) => ({
+        label: String(check?.label || check?.id || 'Check'),
+        detail: summarizeText(String(check?.summary || 'Validation check'), 90),
+        status: String(check?.status || 'unknown'),
+      })) : []);
+  const workbenchTabLabels: Record<MonitorTabId, string> = {
+    overview: 'Overview',
+    runs: 'Tasks',
+    learning: 'Learning',
+    promotions: 'Recovery',
+    debug: 'Artifacts',
+    ide: 'IDE',
+  };
   const [operatorComment, setOperatorComment] = React.useState('');
   const [creatingOperatorTask, setCreatingOperatorTask] = React.useState(false);
   const [recordingOperatorFeedback, setRecordingOperatorFeedback] = React.useState(false);
@@ -4609,9 +6006,9 @@ function MonitorPanel(props: {
     <section className="module-panel monitor-panel" data-panel="monitor">
       <div className="panel-header">
         <div>
-          <div className="eyebrow">Monitor</div>
-          <h2>One place to watch the engine, learning loop, and promotion rings</h2>
-          <p>Safe mode, runs, benchmarks, promotions, and debug exports stay here so chat can stay clean.</p>
+          <div className="eyebrow">Workbench</div>
+          <h2>Inspect active tasks, run history, changes, and proof</h2>
+          <p>Execution details, recovery state, IDE lanes, and deeper artifacts stay here so chat can stay calm.</p>
         </div>
         <div className="row-actions">
           <button className="ghost" onClick={props.onRefresh}>Refresh</button>
@@ -4632,7 +6029,7 @@ function MonitorPanel(props: {
       <div className="settings-tabs">
         {MONITOR_TABS.map((tab) => (
           <button key={tab} className={props.activeTab === tab ? 'active' : ''} onClick={() => props.onSetActiveTab(tab)}>
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {workbenchTabLabels[tab]}
           </button>
         ))}
       </div>
@@ -4867,6 +6264,50 @@ function MonitorPanel(props: {
 
       {props.activeTab === 'runs' ? (
         <section className="settings-section">
+          <section className="workbench-review-shell">
+            <div className="workbench-review-tabs">
+              {['Output', 'Diffs', 'Tests', 'IDE'].map((tab) => (
+                <button key={tab} className={tab === 'Diffs' ? 'active' : ''}>{tab}</button>
+              ))}
+            </div>
+            <div className="workbench-review-layout">
+              <article className="workbench-preview-stage">
+                <div className="workbench-preview-stage-header">
+                  <div>
+                    <div className="eyebrow">Selected task</div>
+                    <strong>{previewTitle || 'Latest workspace run'}</strong>
+                  </div>
+                  <span className="status-pill">{String(taskRuns[0]?.runtimeState || taskRuns[0]?.status || testBench.status || 'ready')}</span>
+                </div>
+                <pre className="workbench-code-preview">{previewLines.join('\n')}</pre>
+              </article>
+
+              <aside className="workbench-review-side">
+                <section className="workbench-result-card">
+                  <div className="eyebrow">Result preview</div>
+                  <strong>{latestTaskRunLabel || testBench.status || 'Ready for review'}</strong>
+                  <p>{String(testBench.summary || reviewer.summary || 'Review the current task, touched files, and focused proof from this surface.')}</p>
+                  <div className="chip-row">
+                    {previewPath ? <button className="ghost" onClick={() => props.onOpenReviewPath(previewPath, 'workbench-preview')}>Open file</button> : null}
+                    <button className="ghost" onClick={() => props.onSetActiveTab('ide')}>Open IDE lane</button>
+                  </div>
+                </section>
+
+                <section className="workbench-validation-card">
+                  <div className="eyebrow">Validation checks</div>
+                  {validationCards.map((item, index) => (
+                    <div key={`${item.label}-${index}`} className="workbench-validation-item">
+                      <strong>{item.label}</strong>
+                      <span>{item.detail}</span>
+                      <small>{item.status}</small>
+                    </div>
+                  ))}
+                  {validationCards.length === 0 ? <p className="empty-copy">Focused validation results will land here after the next run.</p> : null}
+                </section>
+              </aside>
+            </div>
+          </section>
+
           <div className="card-grid">
             <article className="metric-card">
               <div className="eyebrow">Test Bench</div>
@@ -5219,6 +6660,23 @@ function MonitorPanel(props: {
             {promotionHistory.length === 0 ? <p className="empty-copy">No promotion history yet.</p> : null}
           </section>
         </section>
+      ) : null}
+
+      {props.activeTab === 'ide' ? (
+        <IDEPanel
+          snapshot={props.snapshot}
+          tools={props.tools}
+          taskList={props.taskList}
+          taskRuns={taskRuns}
+          onQuickChat={props.onQuickChat}
+          onRefresh={props.onRefresh}
+          onOpenSettingsTab={props.onOpenSettingsTab}
+          onOpenMonitorTab={props.onSetActiveTab}
+          onBootstrapVsCode={props.onBootstrapVsCode}
+          onInstallVsCodeCompanion={props.onInstallVsCodeCompanion}
+          onOpenWorkspaceInVsCode={props.onOpenWorkspaceInVsCode}
+          onOpenActiveFileInVsCode={props.onOpenActiveFileInVsCode}
+        />
       ) : null}
 
       {props.activeTab === 'debug' ? (
