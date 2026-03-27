@@ -281,6 +281,31 @@ function inferChatModeRouting(chatMode, message = '') {
   };
 }
 
+function shouldUseCodingChatContext({ chatMode = 'auto', suggestedTaskMode = '', suggestedLaneId = '', message = '' } = {}) {
+  const resolvedMode = resolveChatModeValue(chatMode);
+  const laneId = normalizeCapabilityLaneId(suggestedLaneId) || '';
+  const taskMode = normalizeTaskLoopMode(suggestedTaskMode || '');
+  if (resolvedMode === 'agent' || resolvedMode === 'edit') {
+    return true;
+  }
+  if (['code-main', 'repair-fast', 'review-verify'].includes(laneId)) {
+    return true;
+  }
+  if (['coder', 'repair', 'validator'].includes(taskMode)) {
+    return true;
+  }
+  if (resolvedMode === 'plan') {
+    return false;
+  }
+  if (['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary'].includes(laneId)) {
+    return false;
+  }
+  if (['chat', 'planner', 'research', 'summarizer'].includes(taskMode)) {
+    return false;
+  }
+  return /\b(stack trace|traceback|line\s+\d+|failing test|test failure|error|exception|diff|snippet)\b/.test(String(message || '').trim().toLowerCase());
+}
+
 function buildTerminalRoutingSummary({ chatMode = 'ask', message = '' } = {}) {
   const route = inferChatModeRouting(chatMode, message);
   const lane = resolveTaskLoopLane(route.suggestedLaneId);
@@ -324,5 +349,6 @@ module.exports = {
   resolveTaskModeRouteKey,
   resolveTaskLoopAction,
   resolveTaskLoopLane,
+  shouldUseCodingChatContext,
   taskModeFromAction,
 };

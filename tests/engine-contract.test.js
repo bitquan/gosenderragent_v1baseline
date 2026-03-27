@@ -11,6 +11,7 @@ const {
   resolveExecutionModelRole,
   resolveModelProfileSelection,
   resolveTaskLoopLane,
+  shouldUseCodingChatContext,
 } = require('../core/engine-contract');
 
 test('engine contract keeps human-first chat modes explicit', () => {
@@ -81,6 +82,27 @@ test('engine contract keeps chat-fast conversational while routing it through th
   assert.equal(selection.active.baseModel, 'qwen2.5-coder:7b');
   assert.equal(summary.suggestedTaskMode, 'chat');
   assert.equal(summary.routeTaskMode, 'planner');
+});
+
+test('engine contract keeps normal ask chat lightweight while preserving coding context for edit lanes', () => {
+  assert.equal(shouldUseCodingChatContext({
+    chatMode: 'ask',
+    suggestedLaneId: 'chat-fast',
+    suggestedTaskMode: 'chat',
+    message: 'Can you help me think through the next step?',
+  }), false);
+  assert.equal(shouldUseCodingChatContext({
+    chatMode: 'edit',
+    suggestedLaneId: 'repair-fast',
+    suggestedTaskMode: 'repair',
+    message: 'Repair the failing validation path.',
+  }), true);
+  assert.equal(shouldUseCodingChatContext({
+    chatMode: 'ask',
+    suggestedLaneId: 'review-verify',
+    suggestedTaskMode: 'validator',
+    message: 'What does this diff break?',
+  }), true);
 });
 
 test('engine contract prefers a dedicated repair route and falls back to coder when repair is not pinned', () => {

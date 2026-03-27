@@ -19,6 +19,7 @@ const {
   renderPreflight,
   renderSnapshot,
 } = require('../scripts/engine-cli');
+const { shouldUseGroundedAskReply } = require('../core/grounded-chat');
 
 test('engine CLI parses workspace, mode, and git flags without losing trailing arguments', () => {
   const parsed = parseCliArgs([
@@ -263,6 +264,13 @@ test('engine CLI answers blocked-run questions from live repo state instead of g
   assert.match(reply, /not blocked right now/i);
   assert.match(reply, /no manual review blockers detected/i);
   assert.match(reply, /next safe move/i);
+});
+
+test('grounded ask helper only triggers for explicit repo-state questions', () => {
+  assert.equal(shouldUseGroundedAskReply('Why is the current run blocked?'), true);
+  assert.equal(shouldUseGroundedAskReply('What is the next safe action right now?'), true);
+  assert.equal(shouldUseGroundedAskReply('Can you help me think through this refactor?'), false);
+  assert.equal(shouldUseGroundedAskReply('Help me draft the fix before we change anything.'), false);
 });
 
 test('engine CLI builds grounded ask and plan prompts from live repo state', () => {

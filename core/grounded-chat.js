@@ -55,6 +55,29 @@ function buildLiveStateSummary(report = {}) {
   return lines.join('\n');
 }
 
+function shouldUseGroundedAskReply(userPrompt = '') {
+  const lower = String(userPrompt || '').trim().toLowerCase();
+  if (!lower) {
+    return false;
+  }
+  if (/(why.*current run.*blocked|current run.*blocked|what.*blocking.*current run)/.test(lower)) {
+    return true;
+  }
+  if (/(what('?s| is) next|next safe action)/.test(lower)) {
+    return true;
+  }
+  if (/\b(status|summary|health)\b/.test(lower)) {
+    return true;
+  }
+  if (/(model routing|which model|which lane|which profile|manager|worker)/.test(lower)) {
+    return true;
+  }
+  if (/(latest run|what changed|what happened)/.test(lower) && /(run|repo|workspace|current|latest)/.test(lower)) {
+    return true;
+  }
+  return /(acceptance|trust|roadmap)/.test(lower) && /(status|summary|state|current|latest)/.test(lower);
+}
+
 function buildGroundedChatPrompt({ chatMode = 'ask', userPrompt = '', report = {}, built = {}, modeConfig = null } = {}) {
   const liveState = buildLiveStateSummary(report);
   const resolvedChatMode = resolveChatModeValue(chatMode);
@@ -263,4 +286,5 @@ module.exports = {
   buildGroundedReplyView,
   buildLiveStateSummary,
   clipText,
+  shouldUseGroundedAskReply,
 };

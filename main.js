@@ -169,10 +169,12 @@ const {
   inferChatModeRouting: inferCanonicalChatModeRouting,
   parseChatModeDirective: parseCanonicalChatModeDirective,
   resolveChatModeValue: resolveCanonicalChatModeValue,
+  shouldUseCodingChatContext,
 } = require('./core/engine-contract');
 const {
   buildGroundedChatPrompt,
   buildGroundedModeReply,
+  shouldUseGroundedAskReply,
 } = require('./core/grounded-chat');
 const {
   listAutomations,
@@ -1279,7 +1281,83 @@ function sendAssistantChatEvent(payload) {
   mainWindow.webContents.send('assistant:chat-event', payload);
 }
 
+const ASSISTANT_CHAT_STREAM_FLUSH_MS = 48;
+const assistantChatDeltaBuffers = new Map();
+
+function clearAssistantChatDeltaBuffer(requestId = '') {
+  const key = String(requestId || '').trim();
+  if (!key) {
+    return;
+  }
+  const entry = assistantChatDeltaBuffers.get(key);
+  if (entry?.timer) {
+    clearTimeout(entry.timer);
+  }
+  assistantChatDeltaBuffers.delete(key);
+}
+
+function flushAssistantChatDeltaBuffer(requestId = '') {
+  const key = String(requestId || '').trim();
+  if (!key) {
+    return;
+  }
+  const entry = assistantChatDeltaBuffers.get(key);
+  if (!entry) {
+    return;
+  }
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+  }
+  assistantChatDeltaBuffers.delete(key);
+  if (!entry.delta) {
+    return;
+  }
+  sendAssistantChatEvent({
+    requestId: key,
+    type: 'reply-delta',
+    delta: entry.delta,
+    createdAt: entry.createdAt || new Date().toISOString(),
+  });
+}
+
+function bufferAssistantChatDelta(event = {}) {
+  const requestId = String(event.requestId || '').trim();
+  const delta = String(event.delta || '');
+  if (!requestId || !delta) {
+    return;
+  }
+  const current = assistantChatDeltaBuffers.get(requestId) || {
+    delta: '',
+    createdAt: String(event.createdAt || '').trim(),
+    timer: null,
+  };
+  current.delta += delta;
+  current.createdAt = String(event.createdAt || current.createdAt || '').trim() || new Date().toISOString();
+  if (current.timer) {
+    clearTimeout(current.timer);
+  }
+  assistantChatDeltaBuffers.set(requestId, current);
+  if (/[.!?]\s*$/.test(current.delta) || current.delta.includes('\n') || current.delta.length >= 72) {
+    flushAssistantChatDeltaBuffer(requestId);
+    return;
+  }
+  current.timer = setTimeout(() => {
+    flushAssistantChatDeltaBuffer(requestId);
+  }, ASSISTANT_CHAT_STREAM_FLUSH_MS);
+}
+
 runtime.on('chat-event', (event) => {
+  const requestId = String(event?.requestId || '').trim();
+  if (event?.type === 'reply-delta') {
+    bufferAssistantChatDelta(event);
+    return;
+  }
+  if (requestId) {
+    flushAssistantChatDeltaBuffer(requestId);
+    if (event?.type === 'complete' || event?.type === 'error') {
+      clearAssistantChatDeltaBuffer(requestId);
+    }
+  }
   sendAssistantChatEvent(event);
 });
 
@@ -2642,11 +2720,21 @@ function runAssistantCli(workspaceRoot, args, extraEnv = {}, options = {}) {
   }
   const promptIndex = args.indexOf('--prompt');
   const prompt = promptIndex >= 0 ? String(args[promptIndex + 1] || '') : '';
-  const editorContext = buildDesktopEditorContext(workspaceRoot);
+  const includeEditorContext = shouldUseCodingChatContext({
+    chatMode: options.chatMode,
+    suggestedTaskMode: options.suggestedTaskMode,
+    suggestedLaneId: options.suggestedLaneId,
+    message: prompt,
+  });
+  const editorContext = includeEditorContext ? buildDesktopEditorContext(workspaceRoot) : {};
   runtime.setWorkspaceRoot(workspaceRoot);
   return runtime.chat(prompt, {
     env: extraEnv,
     editor_context: editorContext,
+    progress_title: 'Thinking',
+    progress_detail: includeEditorContext
+      ? 'Starting the reply with the active file and repo context.'
+      : 'Starting the reply.',
     requestId: String(options.requestId || '').trim(),
   }).then((response) => {
     const reply = response && typeof response.reply === 'string' ? response.reply.trim() : '';
@@ -7426,9 +7514,14 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     message: text,
   });
   const effectiveChatMode = resolveChatModeValue(chatGuidance.effectiveChatMode || chatMode);
+  const shouldGroundAskReply = effectiveChatMode === 'ask' && shouldUseGroundedAskReply(text);
   const chatContext = buildAssistantChatContext(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
     chatMode,
+    suggestedLaneId: String(chatGuidance.suggestedLaneId || '').trim(),
+    suggestedTaskMode: String(chatGuidance.suggestedTaskMode || '').trim(),
+    modeAllowsExecution: chatGuidance.modeAllowsExecution,
+    modeRequiresEditConfirmation: chatGuidance.modeRequiresEditConfirmation,
     attachments,
     trustedDocs,
     chatGuidance,
@@ -7456,14 +7549,15 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
 
   const explicitTicket = String(text.match(/(?:BAT<)?(\d+)>?/i)?.[1] || '').trim();
   if (!text.startsWith('/') && explicitTicket) {
-    if (!['ask', 'plan'].includes(effectiveChatMode)) {
-      // execution-capable or edit-prep modes may materialize task state below
-    } else {
-      const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
-      const ticketSummary = String(batEntry?.summary || batEntry?.desc || '').trim();
+    if (effectiveChatMode === 'plan' || shouldGroundAskReply) {
+      const report = await buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot);
       return {
         ok: true,
-        reply: `${chatMode === 'plan' ? 'Planned' : 'Discussed'} BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''} without creating a task yet. ${chatGuidance.suggestedNextAction || ''}`.trim(),
+        reply: buildGroundedModeReply({
+          chatMode: effectiveChatMode === 'plan' ? 'plan' : 'ask',
+          userPrompt: text,
+          report: report || {},
+        }),
         intentType: 'conversation-only',
         chatMode,
         effectiveChatMode,
@@ -7475,93 +7569,98 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
         labRoot,
       };
     }
-    const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
-    const explicitAction = /\bplan\b/i.test(text)
-      ? 'plan'
-      : /\b(implement|build|code|ship|fix)\b/i.test(text)
-        ? 'implement'
-        : 'run';
-    const ticketSummary = String(batEntry?.summary || batEntry?.desc || '').trim();
-    const titledObjective = ticketSummary
-      ? `${explicitAction === 'plan' ? 'Plan' : explicitAction === 'implement' ? 'Implement' : 'Work'} BAT<${explicitTicket}>: ${ticketSummary}`
-      : text;
-    const bundle = createGoalAndTask(workspaceRoot, {
-      source: 'chat',
-      objective: titledObjective,
-      title: titledObjective,
-      targetWorkspaceRoot,
-      labRoot,
-      threadId: payload.threadId || '',
-      changeSessionId: payload.changeSessionId || '',
-      metadata: {
-        workspaceRoot,
-        targetWorkspaceRoot,
-        activeView: payload.chatContext?.activeView || '',
-        compatSource: 'bat-board',
-        batTicket: explicitTicket,
-        batStatus: batEntry?.status || '',
-        batSummary: ticketSummary,
-        defaultAction: explicitAction,
-        attachments,
-        referenceAttachments: attachments,
-        trustedDocs,
-        chatGuidance,
-      },
-    });
-    const goal = bundle.goal || null;
-    const task = bundle.task || null;
-    learningJournal.recordEvent('goal-created', {
-      goalId: goal?.id || '',
-      title: goal?.title || '',
-      objective: goal?.objective || '',
-      source: 'chat',
-    });
-    learningJournal.recordEvent('task-created', {
-      taskId: task?.id || '',
-      goalId: task?.goalId || '',
-      title: task?.title || '',
-      objective: task?.objective || '',
-      source: 'chat',
-      batTicket: explicitTicket,
-    });
-    const run = task
-      ? await launchUniversalTaskRun({
-        workspaceRoot,
+    if (effectiveChatMode !== 'ask') {
+      // execution-capable or edit-prep modes may materialize task state below
+    }
+    if (effectiveChatMode !== 'ask') {
+      const batEntry = parseBatBoard(targetWorkspaceRoot).find((item) => String(item.ticket || '') === explicitTicket) || null;
+      const explicitAction = /\bplan\b/i.test(text)
+        ? 'plan'
+        : /\b(implement|build|code|ship|fix)\b/i.test(text)
+          ? 'implement'
+          : 'run';
+      const ticketSummary = String(batEntry?.summary || batEntry?.desc || '').trim();
+      const titledObjective = ticketSummary
+        ? `${explicitAction === 'plan' ? 'Plan' : explicitAction === 'implement' ? 'Implement' : 'Work'} BAT<${explicitTicket}>: ${ticketSummary}`
+        : text;
+      const bundle = createGoalAndTask(workspaceRoot, {
+        source: 'chat',
+        objective: titledObjective,
+        title: titledObjective,
         targetWorkspaceRoot,
         labRoot,
-        task,
+        threadId: payload.threadId || '',
+        changeSessionId: payload.changeSessionId || '',
+        metadata: {
+          workspaceRoot,
+          targetWorkspaceRoot,
+          activeView: payload.chatContext?.activeView || '',
+          compatSource: 'bat-board',
+          batTicket: explicitTicket,
+          batStatus: batEntry?.status || '',
+          batSummary: ticketSummary,
+          defaultAction: explicitAction,
+          attachments,
+          referenceAttachments: attachments,
+          trustedDocs,
+          chatGuidance,
+        },
+      });
+      const goal = bundle.goal || null;
+      const task = bundle.task || null;
+      learningJournal.recordEvent('goal-created', {
+        goalId: goal?.id || '',
+        title: goal?.title || '',
+        objective: goal?.objective || '',
+        source: 'chat',
+      });
+      learningJournal.recordEvent('task-created', {
+        taskId: task?.id || '',
+        goalId: task?.goalId || '',
+        title: task?.title || '',
+        objective: task?.objective || '',
+        source: 'chat',
+        batTicket: explicitTicket,
+      });
+      const run = task
+        ? await launchUniversalTaskRun({
+          workspaceRoot,
+          targetWorkspaceRoot,
+          labRoot,
+          task,
+          goal,
+          changeSessionId: payload.changeSessionId || task.changeSessionId || '',
+        })
+        : null;
+      learningJournal.recordEvent('task-run', {
+        taskId: task?.id || '',
+        goalId: task?.goalId || '',
+        runId: run?.runId || '',
+        label: run?.label || '',
+        source: 'chat',
+        batTicket: explicitTicket,
+      });
+      return {
+        ok: true,
+        reply: run?.runId
+          ? `Created an engine task for BAT<${explicitTicket}> and launched ${run.label || 'the run'} (${run.runId}).`
+          : `Created an engine task for BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''}.`,
+        intentType: run?.runId ? 'launched-run' : 'created-task',
         goal,
-        changeSessionId: payload.changeSessionId || task.changeSessionId || '',
-      })
-      : null;
-    learningJournal.recordEvent('task-run', {
-      taskId: task?.id || '',
-      goalId: task?.goalId || '',
-      runId: run?.runId || '',
-      label: run?.label || '',
-      source: 'chat',
-      batTicket: explicitTicket,
-    });
-    return {
-      ok: true,
-      reply: run?.runId
-        ? `Created an engine task for BAT<${explicitTicket}> and launched ${run.label || 'the run'} (${run.runId}).`
-        : `Created an engine task for BAT<${explicitTicket}>${ticketSummary ? ` • ${ticketSummary}` : ''}.`,
-      intentType: run?.runId ? 'launched-run' : 'created-task',
-      goal,
-      task,
-      run: run?.runId ? run : null,
-      suggestions: run?.runId
-        ? ['Review the latest run and summarize any blockers.', 'Open the changed files and show me the diff.']
-        : ['Run the newest task now.', 'Open the engine backlog in settings and verify the target.'],
-      refs: [],
-      targetWorkspaceRoot,
-      labRoot,
-    };
+        task,
+        run: run?.runId ? run : null,
+        suggestions: run?.runId
+          ? ['Review the latest run and summarize any blockers.', 'Open the changed files and show me the diff.']
+          : ['Run the newest task now.', 'Open the engine backlog in settings and verify the target.'],
+        refs: [],
+        targetWorkspaceRoot,
+        labRoot,
+      };
+    }
   }
 
-  if (!text.startsWith('/') && isActionablePrompt(text)) {
-    if (effectiveChatMode === 'ask' || effectiveChatMode === 'plan') {
+  if (!text.startsWith('/') && isActionablePrompt(text) && effectiveChatMode !== 'ask') {
+    if (effectiveChatMode === 'plan') {
       const report = await buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot);
       return {
         ok: true,
@@ -7674,7 +7773,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     };
   }
 
-  if (effectiveChatMode === 'ask' || effectiveChatMode === 'plan') {
+  if (effectiveChatMode === 'plan' || shouldGroundAskReply) {
     const report = await buildGroundedWorkspaceReport(workspaceRoot, targetWorkspaceRoot, labRoot);
     const roadmap = report?.areas?.roadmap && typeof report.areas.roadmap === 'object'
       ? report.areas.roadmap
@@ -7709,6 +7808,10 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     chatHistory,
     chatContext: {
       ...chatContext,
+      suggestedLaneId: String(chatGuidance.suggestedLaneId || chatContext.suggestedLaneId || '').trim(),
+      suggestedTaskMode: String(chatGuidance.suggestedTaskMode || chatContext.suggestedTaskMode || '').trim(),
+      modeAllowsExecution: chatGuidance.modeAllowsExecution,
+      modeRequiresEditConfirmation: chatGuidance.modeRequiresEditConfirmation,
       attachments: attachments.map((item) => ({
         kind: item.kind || '',
         name: item.originalName || item.name || '',
@@ -7934,6 +8037,9 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       }
       return runAssistantCli(targetWorkspaceRoot, ['--ai', '--prompt', prompt], env, {
         requestId: options.requestId || requestId,
+        chatMode: options.chatMode || chatMode,
+        suggestedLaneId: options.suggestedLaneId || chatGuidance.suggestedLaneId,
+        suggestedTaskMode: options.suggestedTaskMode || chatGuidance.suggestedTaskMode,
       });
     },
     getBinaryUpdateStatus: async () => initializeBinaryUpdater(),

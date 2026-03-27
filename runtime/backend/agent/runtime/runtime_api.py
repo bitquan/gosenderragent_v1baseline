@@ -1743,6 +1743,16 @@ def chat(prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     request_id = str(payload_context.get("requestId") or payload_context.get("request_id") or "").strip()
     env_overrides = dict(payload_context.get("env", {}))
     editor_context = normalize_editor_context(payload_context.get("editor_context") or payload_context.get("editorContext"))
+    progress_title = str(payload_context.get("progress_title") or payload_context.get("progressTitle") or "Thinking").strip() or "Thinking"
+    progress_detail = str(
+        payload_context.get("progress_detail")
+        or payload_context.get("progressDetail")
+        or (
+            "Starting the reply with the active file and repo context."
+            if editor_context
+            else "Starting the reply."
+        )
+    ).strip() or ("Starting the reply with the active file and repo context." if editor_context else "Starting the reply.")
 
     def emit_chat_event(event_type: str, **payload: Any) -> None:
         if not request_id:
@@ -1766,8 +1776,8 @@ def chat(prompt: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         emit_chat_event(
             "progress",
-            title="Reviewing the workspace",
-            detail="Checking the active repo context before drafting the reply." if editor_context else "Checking the request before drafting the reply.",
+            title=progress_title,
+            detail=progress_detail,
         )
         reply_parts: list[str] = []
         if editor_context:
