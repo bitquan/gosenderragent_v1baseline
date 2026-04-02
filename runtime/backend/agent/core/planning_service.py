@@ -6,7 +6,7 @@ from typing import Any
 from backend.agent.core.adapters.base import RepoAdapter, TicketMetadata
 from backend.agent.core.editor_context import build_coding_task_prompt, normalize_editor_context
 from backend.agent.core.memory_service import summarize_strategy_patterns
-from backend.agent.core.repo_inspection import is_ignored, rank_related_files
+from backend.agent.core.repo_inspection import extract_explicit_repo_paths, is_ignored, rank_related_files
 from backend.agent.core.strategies.catalog import get_strategy
 
 DOMAIN_KEYWORDS = [
@@ -77,22 +77,31 @@ def _rank_existing_targets(
 	editor_context: dict[str, Any] | None = None,
 	query: str = "",
 ) -> list[str]:
+	explicit_targets = extract_explicit_repo_paths(project_root, query, require_exists=True, limit=5)
+	candidate_pool: list[str] = []
+	seen_candidates: set[str] = set()
+	for path in [*explicit_targets, *matches]:
+		normalized = str(path or "").strip()
+		if not normalized or normalized in seen_candidates:
+			continue
+		seen_candidates.add(normalized)
+		candidate_pool.append(normalized)
 	ranked_related = rank_related_files(
 		project_root,
-		candidates=matches,
+		candidates=candidate_pool,
 		query=query,
 		editor_context=editor_context,
-		limit=max(len(matches), 8),
+		limit=max(len(candidate_pool), 8),
 	)
 	prioritized = [str(item.get("path")) for item in ranked_related if str(item.get("path"))]
 	scores: dict[str, int] = {}
-	for match in matches:
+	for match in candidate_pool:
 		lower = match.lower()
 		scores[match] = sum(1 for keyword in DOMAIN_KEYWORDS if keyword in lower)
 	keyword_ranked = [match for match, score in sorted(scores.items(), key=lambda item: item[1], reverse=True) if score > 0]
 	ordered: list[str] = []
 	seen: set[str] = set()
-	for group in (prioritized, keyword_ranked, matches):
+	for group in (prioritized, explicit_targets, keyword_ranked, candidate_pool):
 		for match in group:
 			if match in seen:
 				continue

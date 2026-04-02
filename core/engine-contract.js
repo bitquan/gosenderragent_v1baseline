@@ -3,9 +3,11 @@
 const {
   CAPABILITY_ROUTE_LANES,
   normalizeCapabilityLaneId,
+  normalizeLoopTaskModeId,
   resolveRouteTaskMode,
   resolveWrappedProfileRole,
 } = require('./route-schema');
+const { applyLocalModelGuardrailsToConfig } = require('./training-tuning');
 
 const CHAT_MODE_CONFIG = Object.freeze({
   auto: {
@@ -125,8 +127,8 @@ function taskModeFromAction(action) {
 }
 
 function normalizeTaskLoopMode(mode, action = '') {
-  const normalized = String(mode || '').trim().toLowerCase();
-  if (['repair', 'research', 'chat', 'planner', 'validator', 'summarizer', 'coder'].includes(normalized)) {
+  const normalized = normalizeLoopTaskModeId(mode);
+  if (normalized) {
     return normalized;
   }
   return taskModeFromAction(action);
@@ -171,24 +173,27 @@ function resolveTaskModeRouteKey({ taskMode = '', laneId = '' } = {}) {
 }
 
 function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', action = '', laneId = '' } = {}) {
+  const effectiveConfig = applyLocalModelGuardrailsToConfig(assistantConfig, {
+    settings: assistantConfig,
+  });
   const modelRole = resolveExecutionModelRole({ taskMode, action, laneId });
   const routeKey = resolveTaskModeRouteKey({ taskMode, laneId });
-  const routeConfig = assistantConfig.taskModeRoutes && typeof assistantConfig.taskModeRoutes === 'object'
-    ? (assistantConfig.taskModeRoutes[routeKey] || (routeKey === 'repair' ? assistantConfig.taskModeRoutes.coder : {}) || {})
+  const routeConfig = effectiveConfig.taskModeRoutes && typeof effectiveConfig.taskModeRoutes === 'object'
+    ? (effectiveConfig.taskModeRoutes[routeKey] || (routeKey === 'repair' ? effectiveConfig.taskModeRoutes.coder : {}) || {})
     : {};
   const workspace = {
-    modelProfileId: String(assistantConfig.workspaceModelProfileId || assistantConfig.modelProfileId || '').trim(),
-    modelDisplayName: String(assistantConfig.workspaceModelDisplayName || assistantConfig.modelDisplayName || '').trim(),
-    baseModel: String(assistantConfig.workspaceBaseModel || assistantConfig.baseModel || '').trim(),
-    baseProvider: String(assistantConfig.workspaceBaseProvider || assistantConfig.baseProvider || '').trim().toLowerCase(),
-    providerSource: String(assistantConfig.workspaceProviderSource || assistantConfig.providerSource || '').trim().toLowerCase(),
+    modelProfileId: String(effectiveConfig.workspaceModelProfileId || effectiveConfig.modelProfileId || '').trim(),
+    modelDisplayName: String(effectiveConfig.workspaceModelDisplayName || effectiveConfig.modelDisplayName || '').trim(),
+    baseModel: String(effectiveConfig.workspaceBaseModel || effectiveConfig.baseModel || '').trim(),
+    baseProvider: String(effectiveConfig.workspaceBaseProvider || effectiveConfig.baseProvider || '').trim().toLowerCase(),
+    providerSource: String(effectiveConfig.workspaceProviderSource || effectiveConfig.providerSource || '').trim().toLowerCase(),
   };
   const engine = {
-    modelProfileId: String(assistantConfig.engineModelProfileId || workspace.modelProfileId || '').trim(),
-    modelDisplayName: String(assistantConfig.engineModelDisplayName || workspace.modelDisplayName || '').trim(),
-    baseModel: String(assistantConfig.engineBaseModel || workspace.baseModel || '').trim(),
-    baseProvider: String(assistantConfig.engineBaseProvider || workspace.baseProvider || '').trim().toLowerCase(),
-    providerSource: String(assistantConfig.engineProviderSource || workspace.providerSource || '').trim().toLowerCase(),
+    modelProfileId: String(effectiveConfig.engineModelProfileId || workspace.modelProfileId || '').trim(),
+    modelDisplayName: String(effectiveConfig.engineModelDisplayName || workspace.modelDisplayName || '').trim(),
+    baseModel: String(effectiveConfig.engineBaseModel || workspace.baseModel || '').trim(),
+    baseProvider: String(effectiveConfig.engineBaseProvider || workspace.baseProvider || '').trim().toLowerCase(),
+    providerSource: String(effectiveConfig.engineProviderSource || workspace.providerSource || '').trim().toLowerCase(),
   };
   const activeBase = modelRole === 'engine' ? engine : workspace;
   const routeProvider = String(routeConfig.provider || '').trim().toLowerCase();
@@ -205,6 +210,7 @@ function resolveModelProfileSelection(assistantConfig = {}, { taskMode = '', act
     workspace,
     engine,
     active,
+    localModelGuardrails: effectiveConfig.localModelGuardrails || null,
   };
 }
 
@@ -218,7 +224,9 @@ function inferChatModeRouting(chatMode, message = '') {
   const hasQuestionIntent = /(^|\s)(why|what|how|explain|summarize|show me|tell me)\b/.test(lower) || /\?$/.test(lower);
   const hasPlanIntent = /\b(plan|scope|safest next slice|next slice|risks?|acceptance checks?|steps?)\b/.test(lower);
   const hasOpsIntent = /(status|summary|health|why|what happened|what is happening|what's happening|inbox|review|route|routing|model)/.test(lower);
-  const hasResearchIntent = /(docs|document|research|reference|why|how)/.test(lower);
+  const hasRepoStateIntent = /(current run|latest run|current workspace|repo state|workspace state|blocked right now|next safe action|acceptance|trust|review blocked|roadmap|what needs fixing)/.test(lower);
+  const hasDocsIntent = /(\bdocs\b|\bdocumentation\b|\breference\b|\bapi\b|\bguide\b|\bmanual\b|\bmdn\b|\bnode\b|\bpython\b|\bvs code\b|\bvscode\b|\bmicrosoft docs\b)/.test(lower);
+  const hasResearchIntent = hasDocsIntent || (/\bresearch\b/.test(lower) && !hasRepoStateIntent);
   const hasReviewIntent = /(review|diff|verify|validate)/.test(lower);
   const hasRepairIntent = /\b(repair|fix|failed|failing|broken|debug)\b/.test(lower);
   const hasEditIntent = /\b(edit|change|patch|update|refactor|implement|build|code)\b/.test(lower);

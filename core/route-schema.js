@@ -119,8 +119,41 @@ const MODEL_EXECUTION_ROLE_DEFAULTS = Object.freeze(
   }])),
 );
 
-const ROUTE_TASK_MODE_ALIASES = Object.freeze({
+const LOOP_TASK_MODE_IDS = Object.freeze(['chat', 'planner', 'coder', 'repair', 'validator', 'research', 'summarizer']);
+
+const LOOP_TASK_MODE_ALIASES = Object.freeze({
+  plan: 'planner',
+  planner: 'planner',
+  run: 'validator',
+  review: 'validator',
+  validator: 'validator',
+  repair: 'repair',
+  implement: 'coder',
   implementer: 'coder',
+  coder: 'coder',
+  summarize: 'summarizer',
+  summary: 'summarizer',
+  summarizer: 'summarizer',
+  release: 'summarizer',
+  research: 'research',
+  chat: 'chat',
+});
+
+const ROUTE_TASK_MODE_IDS = Object.freeze(['planner', 'repair', 'coder', 'validator', 'summarizer']);
+
+const ROUTE_TASK_MODE_ALIASES = Object.freeze({
+  plan: 'planner',
+  planner: 'planner',
+  run: 'validator',
+  review: 'validator',
+  validator: 'validator',
+  repair: 'repair',
+  implement: 'coder',
+  implementer: 'coder',
+  coder: 'coder',
+  summarize: 'summarizer',
+  summary: 'summarizer',
+  summarizer: 'summarizer',
   release: 'summarizer',
   research: 'planner',
   chat: 'planner',
@@ -136,10 +169,16 @@ function resolveCapabilityLane(laneId) {
   return CAPABILITY_ROUTE_LANES.find((lane) => lane.id === normalized) || null;
 }
 
+function normalizeLoopTaskModeId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const aliased = LOOP_TASK_MODE_ALIASES[normalized] || normalized;
+  return LOOP_TASK_MODE_IDS.includes(aliased) ? aliased : '';
+}
+
 function normalizeRouteTaskModeId(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const aliased = ROUTE_TASK_MODE_ALIASES[normalized] || normalized;
-  return ['planner', 'repair', 'coder', 'validator', 'summarizer'].includes(aliased) ? aliased : '';
+  return ROUTE_TASK_MODE_IDS.includes(aliased) ? aliased : '';
 }
 
 function resolveLaneLoopTaskMode(laneId) {
@@ -188,9 +227,14 @@ function resolveExecutionRoleId({ laneId = '', taskMode = '' } = {}) {
 
 module.exports = {
   CAPABILITY_ROUTE_LANES,
+  LOOP_TASK_MODE_ALIASES,
+  LOOP_TASK_MODE_IDS,
   MODEL_EXECUTION_ROLE_DEFAULTS,
+  ROUTE_TASK_MODE_ALIASES,
+  ROUTE_TASK_MODE_IDS,
   WRAPPED_PROFILE_ROLE_DEFAULTS,
   normalizeCapabilityLaneId,
+  normalizeLoopTaskModeId,
   normalizeRouteTaskModeId,
   resolveCapabilityLane,
   resolveExecutionRoleId,

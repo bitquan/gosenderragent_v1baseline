@@ -76,6 +76,7 @@ STOPWORDS = {
 MAX_TERM_COUNT = 18
 MAX_CONTENT_SCAN_BYTES = 4000
 IMPORTABLE_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+EXPLICIT_PATH_RE = re.compile(r'([A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)*\.[A-Za-z0-9_.-]+)')
 
 
 def _split_identifier_terms(value: str) -> list[str]:
@@ -144,6 +145,49 @@ def _read_candidate_excerpt(target: Path) -> str:
             return handle.read(MAX_CONTENT_SCAN_BYTES)
     except Exception:
         return ""
+
+
+def _normalize_repo_path(project_root: Path, raw_path: Any, *, require_exists: bool = True) -> str:
+    text = str(raw_path or "").strip().rstrip(")]},;:.!?")
+    if not text:
+        return ""
+    normalized = text.replace("\\", "/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if re.match(r"^[A-Za-z]:/", normalized) or normalized.startswith("/"):
+        candidate = Path(normalized).resolve()
+    else:
+        candidate = (project_root / normalized).resolve()
+    try:
+        relative = candidate.relative_to(project_root.resolve())
+    except Exception:
+        return ""
+    if require_exists and not candidate.exists():
+        return ""
+    return str(relative).replace("\\", "/")
+
+
+def extract_explicit_repo_paths(
+    project_root: Path,
+    text: str,
+    *,
+    require_exists: bool = True,
+    limit: int = 8,
+) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in EXPLICIT_PATH_RE.findall(str(text or "")):
+        normalized = _normalize_repo_path(project_root, match, require_exists=require_exists)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        values.append(normalized)
+        if len(values) >= limit:
+            break
+    return values
 
 
 def _is_test_path(path: str) -> bool:
@@ -306,6 +350,7 @@ def rank_related_files(
     limit: int = 8,
 ) -> list[dict[str, Any]]:
     items = list(candidates or iter_repo_files(project_root, ignore_dirs=ignore_dirs))
+    explicit_query_paths = extract_explicit_repo_paths(project_root, query, require_exists=True, limit=max(4, int(limit or 8)))
     expanded: list[str] = []
     seen_candidates: set[str] = set()
     for path in items:
@@ -339,6 +384,9 @@ def rank_related_files(
             terms=terms,
             content_excerpt=excerpt,
         )
+        if path in explicit_query_paths:
+            score += 220
+            reasons.append("explicit-query-path")
         if score <= 0 and terms:
             continue
         ranked_by_path[path] = {"path": path, "score": score, "reasons": reasons}

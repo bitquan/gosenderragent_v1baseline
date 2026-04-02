@@ -59,7 +59,9 @@ test('writeAcceptanceReport persists a latest report that can be read back', () 
     });
     const latest = readLatestAcceptanceReport(workspaceRoot);
 
-    assert.equal(fs.existsSync(stored.outputPath), true);
+    assert.equal(typeof stored.outputPath, 'string');
+    assert.equal(typeof stored.latestPath, 'string');
+    assert.equal(fs.existsSync(stored.latestPath), true);
     assert.equal(latest.exists, true);
     assert.equal(latest.outputPath.endsWith('latest.json'), true);
     assert.equal(latest.report.runId, 'engine_acceptance_1');
@@ -83,7 +85,11 @@ test('buildAcceptanceControlSummary surfaces smoke and next-day gate readability
   }, { exists: true });
 
   assert.equal(summary.acceptanceStatus, 'fail');
+  assert.equal(summary.capabilityState, 'blocked');
+  assert.equal(summary.capabilityLabel, 'BLOCKED');
   assert.equal(summary.smokeStatus, 'fail');
+  assert.equal(summary.smokeCapabilityState, 'blocked');
+  assert.equal(summary.smokeCapabilityLabel, 'BLOCKED');
   assert.equal(summary.blockerCount, 1);
   assert.equal(summary.nextDayStatus, 'blocked');
   assert.equal(summary.safeForNextDay, false);
@@ -140,6 +146,8 @@ test('buildAcceptanceControlSummary surfaces repo-scoped self-improvement proof 
   }, { exists: true });
 
   assert.equal(summary.selfImprovementProof.status, 'pass');
+  assert.equal(summary.selfImprovementProof.capabilityState, 'verified');
+  assert.equal(summary.selfImprovementProof.capabilityLabel, 'VERIFIED');
   assert.equal(summary.selfImprovementProof.safeCount, 5);
   assert.equal(summary.selfImprovementProof.actionCount, 5);
   assert.equal(summary.selfImprovementProof.workspaceScoped, true);

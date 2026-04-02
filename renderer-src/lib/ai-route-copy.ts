@@ -19,6 +19,13 @@ export type LocalModelProgram = {
   verifiedCount: number;
   localModelCount: number;
   benchmarkLeaderIsLocal: boolean;
+  approvedDefaultCount: number;
+  candidateOnlyCount: number;
+  largerHeadroomCount: number;
+  approvedDefaultsSummary: string;
+  candidateOnlySummary: string;
+  largerHeadroomSummary: string;
+  currentStateSummary: string;
   nextLayer: LocalModelProgramLayer;
   summary: string;
   layers: LocalModelProgramLayer[];
@@ -39,28 +46,38 @@ export type LocalModelProgramEvidence = {
   modelFoundryCandidateCount: number;
   remoteFallbackReady: boolean;
   safeModeActive: boolean;
+  approvedDefaultCount: number;
+  candidateOnlyCount: number;
+  largerHeadroomCount: number;
+  approvedDefaultsSummary: string;
+  candidateOnlySummary: string;
+  largerHeadroomSummary: string;
+  currentStateSummary: string;
 };
 
 export const AI_ROUTE_COPY = Object.freeze({
   settingsTabDescription: 'Manage selector-driven routing, bridge profiles, local model inventory, remote providers, and per-route overrides from one place.',
-  modelSetupPrompt: 'Set up the workspace coding model, engine control model, and verify the route plan is ready.',
-  enginePanelTitle: 'Chat follows the current route plan',
-  overrideMetricLabel: 'Route overrides',
-  overrideMetricActiveSummary: 'Manual route overrides are active.',
-  overrideMetricIdleSummary: 'All capability routes currently follow the active profile and route plan.',
-  resetOverridesLabel: 'Reset route overrides',
-  capabilityRoutesEyebrow: 'Capability routes',
-  capabilityRoutesTitle: 'Tune each capability route without hand-editing routing rules',
-  capabilityRoutesSummary: 'Leave a route on inherit to follow the active profile and route plan, or pin that route to the benchmark leader or a specific model.',
-  routeCardEyebrow: 'Route',
-  routeSourceOverride: 'Manual route override',
-  routeSourceInherited: 'Inherited from route plan',
-  routeSelectLabel: 'Route selection',
-  routeResetLabel: 'Reset route',
-  ladderEyebrow: 'Local model MVP ladder',
-  ladderSummary: 'This is the local-first MVP ladder for the solo-dev assistant. Higher capability blocks stay locked until the lower block has benchmark, acceptance, or promotion proof.',
-  unlockEyebrow: 'Capability unlock ladder',
-  unlockSummary: 'Use this ladder as the hard rule for widening the engine: verify the current block, then unlock the next one. If a higher block regresses, fall back to the last verified block.',
+  modelSetupPrompt: 'Open Tune Pod to finish model setup for this workspace.',
+  tunePodFitPrompt: 'Open Tune Pod to see which local models fit this PC.',
+  tunePodRoutePrompt: 'Open Tune Pod to see what still needs setup for local coding.',
+  tunePodActionLabel: 'Open Tune Pod',
+  enginePanelTitle: 'Chat uses your current model setup',
+  overrideMetricLabel: 'Manual model choices',
+  overrideMetricActiveSummary: 'Manual model choices are active.',
+  overrideMetricIdleSummary: 'Task model choices follow the current setup.',
+  resetOverridesLabel: 'Reset manual choices',
+  capabilityRoutesEyebrow: 'Task model choices',
+  capabilityRoutesTitle: 'Choose which model handles each kind of work',
+  capabilityRoutesSummary: 'Leave a task on automatic to use the current setup, or choose a specific model when you need a manual choice.',
+  routeCardEyebrow: 'Task',
+  routeSourceOverride: 'Manual choice',
+  routeSourceInherited: 'Using the current workspace setup',
+  routeSelectLabel: 'Model choice',
+  routeResetLabel: 'Reset choice',
+  ladderEyebrow: 'Advanced readiness ladder',
+  ladderSummary: 'Advanced: deeper setup progress and checks for people tuning the full local model stack.',
+  unlockEyebrow: 'Advanced setup steps',
+  unlockSummary: 'Advanced: use these steps when you need to tune the full local model stack beyond the default setup view.',
 });
 
 export function localModelProgramStatusLabel(value: string) {
@@ -137,7 +154,7 @@ export function buildLocalModelProgram(evidence: LocalModelProgramEvidence): Loc
       summary: promotionStatus === 'verified'
         ? `${evidence.promotedCandidateCount} promoted local candidate${evidence.promotedCandidateCount === 1 ? '' : 's'} already proved the promotion path.`
         : promotionStatus === 'next'
-          ? 'Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path.'
+          ? `${evidence.candidateOnlyCount > 0 ? `${evidence.candidateOnlyCount} candidate-only model${evidence.candidateOnlyCount === 1 ? ' stays' : 's stay'} visible while ` : ''}promotion still needs a clean benchmark-backed proof path.`
           : 'No verified candidate promotion path exists yet for local model bundles.',
       unlockRule: 'Only benchmark-backed local candidates should become promoted defaults.',
     },
@@ -171,7 +188,9 @@ export function buildLocalModelProgram(evidence: LocalModelProgramEvidence): Loc
       id: 'promotion',
       label: 'Unlock model promotion',
       status: promotionStatus,
-      summary: 'Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe.',
+      summary: evidence.candidateOnlyCount > 0
+        ? `Candidate-only models stay visible until the foundry path is benchmark-backed, proof-complete, and rollback-safe.`
+        : 'Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe.',
     },
     {
       id: 'self-improve',
@@ -198,6 +217,13 @@ export function buildLocalModelProgram(evidence: LocalModelProgramEvidence): Loc
     verifiedCount,
     localModelCount: evidence.localModelCount,
     benchmarkLeaderIsLocal: evidence.benchmarkLeaderIsLocal,
+    approvedDefaultCount: evidence.approvedDefaultCount,
+    candidateOnlyCount: evidence.candidateOnlyCount,
+    largerHeadroomCount: evidence.largerHeadroomCount,
+    approvedDefaultsSummary: evidence.approvedDefaultsSummary,
+    candidateOnlySummary: evidence.candidateOnlySummary,
+    largerHeadroomSummary: evidence.largerHeadroomSummary,
+    currentStateSummary: evidence.currentStateSummary,
     nextLayer,
     summary: nextLayer.status === 'verified'
       ? 'All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison.'

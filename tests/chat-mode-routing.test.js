@@ -23,10 +23,12 @@ test('desktop chat routing keeps ask and plan non-mutating while agent is gated 
 test('desktop hybrid chat can prefer remote-quality replies for conversational lanes while keeping code lanes local-first', () => {
   assert.match(mainJs, /function shouldPreferRemoteChatReplies/);
   assert.match(mainJs, /shouldUseCodingChatContext\(/);
-  assert.match(mainJs, /REMOTE_CHAT_QUALITY_LANES = new Set\(\['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary'\]\)/);
-  assert.match(mainJs, /LOCAL_FIRST_CHAT_LANES = new Set\(\['code-main', 'repair-fast', 'review-verify'\]\)/);
-  assert.match(mainJs, /chatMode === 'ask' \|\| chatMode === 'plan'/);
-  assert.match(mainJs, /runtimeMode === 'hybrid' && preferRemoteChat && hasSecret/);
+  assert.match(mainJs, /return shouldPreferRemoteChatReplyRoute\(options\)/);
+  assert.match(mainJs, /selectChatReplyBackend\(\{/);
+  assert.match(mainJs, /const sanitized = sanitizeAssistantChatText\(current\.raw, \{ streaming: true \}\)/);
+  assert.match(mainJs, /sanitizeAssistantChatText\(response && typeof response\.reply === 'string' \? response\.reply : ''\)/);
+  assert.match(mainJs, /chatMode: effectiveChatMode/);
+  assert.match(mainJs, /effectiveChatMode,/);
   assert.match(mainJs, /suggestedLaneId: options\.suggestedLaneId \|\| chatGuidance\.suggestedLaneId/);
   assert.match(mainJs, /suggestedTaskMode: options\.suggestedTaskMode \|\| chatGuidance\.suggestedTaskMode/);
 });

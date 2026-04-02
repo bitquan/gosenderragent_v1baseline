@@ -108,6 +108,10 @@ test('buildAutonomousActionSummary scores model fit, daily progress, and oversco
   assert.equal(summary.highestRiskAction.capabilityFit, 'overscoped');
   assert.equal(summary.highestRiskAction.difficultyLevel, 5);
   assert.equal(summary.highestRiskAction.modelLevel, 2);
+  assert.equal(summary.blockers.total, 1);
+  assert.equal(summary.blockers.modelFitCount, 1);
+  assert.equal(summary.unlockPlan.status, 'hold');
+  assert.equal(summary.unlockPlan.currentDifficultyCeiling, 3);
   assert.match(summary.recommendedNextSafeAction, /Rescope/i);
   assert.match(summary.summary, /overscoped/i);
 });

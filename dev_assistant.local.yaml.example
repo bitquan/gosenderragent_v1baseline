@@ -14,7 +14,7 @@ assistant_training_cpu_limit_percent: 70
 assistant_training_thread_limit: 8
 assistant_training_thermal_preset: 85
 assistant_training_live_sampling_sec: 3
-assistant_training_ollama_model: qwen2.5-coder:14b
+assistant_training_ollama_model: qwen2.5-coder:7b
 assistant_engine_model_base_model: qwen2.5-coder:7b
 assistant_engine_model_base_provider: ollama
 assistant_engine_model_provider_source: ollama

@@ -50,9 +50,9 @@ test('workbench shell exposes the four-screen chat-first layout with nested work
   assert.match(appJs, /Welcome to GoSenderr/);
   assert.match(appJs, /Explain this repo/);
   assert.match(appJs, /Plan the next change/);
-  assert.match(appJs, /Live progress/);
-  assert.match(appJs, /Reviewing the workspace/);
-  assert.match(appJs, /Separate from reply text/);
+  assert.match(appJs, /chat-progress-indicator/);
+  assert.match(appJs, /Thinking/);
+  assert.match(appJs, /Starting the reply\u2026|One moment\u2026|Mapping the next step/);
   assert.match(appJs, /workbench-review-shell/);
   assert.match(appJs, /Validation checks/);
   assert.match(appJs, /Let's build/);
@@ -207,6 +207,9 @@ test('styles define the codex-style workbench shell and theme system', () => {
   assert.match(stylesCss, /\.chat-message-body \{/);
   assert.match(stylesCss, /\.assistant-progress-card \{/);
   assert.match(stylesCss, /\.streaming-caret \{/);
+  assert.match(stylesCss, /\.chat-code-block \{/);
+  assert.match(stylesCss, /\.chat-inline-code \{/);
+  assert.match(stylesCss, /\.chat-section-heading \{/);
   assert.match(stylesCss, /\.workbench-review-layout \{/);
   assert.match(stylesCss, /\.workbench-code-preview \{/);
   assert.match(stylesCss, /\.code-editor,/);

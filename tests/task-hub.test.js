@@ -687,6 +687,69 @@ test('task hub summarizes today focus tasks and blocked rescope pressure without
   }
 });
 
+test('task hub falls back to the newest blocked rescope task when no explicit daily focus exists', () => {
+  const workspaceRoot = makeWorkspace();
+  const otherWorkspaceRoot = path.join(workspaceRoot, '..', 'other-repo');
+
+  try {
+    const blocked = createTask(workspaceRoot, {
+      source: 'engine-runtime',
+      objective: 'Rescope the blocked autonomous patch slice.',
+      targetWorkspaceRoot: workspaceRoot,
+      metadata: {
+        roadmapDay: '2026-03-16',
+      },
+    });
+    const foreignBlocked = createTask(workspaceRoot, {
+      source: 'engine-runtime',
+      objective: 'Rescope the foreign blocked slice.',
+      targetWorkspaceRoot: otherWorkspaceRoot,
+      metadata: {
+        roadmapDay: '2026-03-16',
+      },
+    });
+    updateTask(workspaceRoot, {
+      taskId: blocked.task.id,
+      patch: {
+        status: 'needs-rescope',
+        metadata: {
+          lastBlockedBy: 'model-fit',
+          lastBlockedReason: 'Task exceeds the active model envelope.',
+        },
+      },
+    });
+    updateTask(workspaceRoot, {
+      taskId: foreignBlocked.task.id,
+      patch: {
+        status: 'needs-rescope',
+        metadata: {
+          lastBlockedBy: 'model-fit',
+          lastBlockedReason: 'Foreign workspace blockers should not leak into current focus.',
+        },
+      },
+    });
+
+    const summary = buildDailyTaskSummary({
+      goals: listGoals(workspaceRoot, { includeCompat: false }).goals,
+      tasks: listTasks(workspaceRoot, { includeCompat: false }).tasks,
+    }, {
+      now: '2026-03-16T18:00:00.000Z',
+      workspaceRoot,
+      targetWorkspaceRoot: workspaceRoot,
+    });
+
+    assert.equal(summary.ok, true);
+    assert.equal(summary.status, 'warn');
+    assert.equal(summary.focusTask.title, 'Rescope the blocked autonomous patch slice');
+    assert.equal(summary.focusTask.focusSourceType, 'blocked-rescope');
+    assert.equal(summary.focusTask.blockedBy, 'model-fit');
+    assert.equal(summary.blockedRescopedCount, 1);
+    assert.match(summary.summary, /fallback focus/i);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('task hub scopes self-host expansion progress to the current workspace', () => {
   const workspaceRoot = makeWorkspace();
   const otherWorkspaceRoot = path.join(workspaceRoot, '..', 'other-repo');

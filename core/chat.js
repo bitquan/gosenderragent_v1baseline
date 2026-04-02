@@ -245,7 +245,8 @@ function buildRunAiOptions(callbacks = {}) {
     : {};
   return {
     requestId: String(callbacks.requestId || '').trim(),
-    chatMode: String(chatContext.chatMode || '').trim().toLowerCase(),
+    chatMode: String(chatContext.effectiveChatMode || chatContext.chatMode || '').trim().toLowerCase(),
+    effectiveChatMode: String(chatContext.effectiveChatMode || chatContext.chatMode || '').trim().toLowerCase(),
     suggestedLaneId: String(chatContext.suggestedLaneId || chatContext.laneId || '').trim().toLowerCase(),
     suggestedTaskMode: String(chatContext.suggestedTaskMode || '').trim().toLowerCase(),
   };

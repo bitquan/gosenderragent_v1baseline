@@ -1,6 +1,8 @@
 # GoSenderr Desktop Agent UI Surfaces and Operator Flows
 
-## Current Month 1 control-room notes
+UI priority, current gates, and cleanup status now live on `docs/BAT_FEATURE_BOARD.md`. This file is a reference map of shipped surfaces and operator flows.
+
+## Current control-room notes
 
 The shipped Monitor surface in `renderer/app.js` is the active control room for Month 1 work.
 

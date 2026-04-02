@@ -10,6 +10,7 @@ const {
   resolveLaneRouteTaskMode,
   resolveLaneWrappedProfileRole,
 } = require('./route-schema');
+const { buildCapabilityDescriptor } = require('./capability-status');
 const { buildBenchmarkIdentity, listBenchmarkRuns } = require('./benchmarks');
 const {
   buildAutonomousActionSummary,
@@ -96,6 +97,13 @@ function shortText(value, maxLength = 180) {
 
 function isReadyLikeStatus(value) {
   return ['ready', 'pass', 'green', 'open', 'strong', 'triggered', 'proven'].includes(String(value || '').trim().toLowerCase());
+}
+
+function withCapabilityDescriptor(payload = {}, options = null) {
+  return {
+    ...payload,
+    ...buildCapabilityDescriptor(options && typeof options === 'object' ? options : payload),
+  };
 }
 
 function buildAppRollbackStatus(workspaceRoot) {
@@ -436,7 +444,7 @@ function buildSelfHostProof(acceptance = {}, latestRunSummary = {}) {
   const smokeCheck = selfHostChecks.find((check) => String(check?.id || '').trim() === 'self-host-smoke') || null;
   const hasSelfHostSmoke = Boolean(smokeCheck);
   if (selfHostChecks.length === 0) {
-    return {
+    return withCapabilityDescriptor({
       status: acceptance?.exists ? 'warn' : 'idle',
       label: acceptance?.exists ? 'PARTIAL' : 'NOT RUN',
       summary: acceptance?.exists
@@ -448,11 +456,12 @@ function buildSelfHostProof(acceptance = {}, latestRunSummary = {}) {
       passedCount: 0,
       latestCheckLabel: '',
       smokeRecorded: false,
-    };
+      exists: acceptance?.exists === true,
+    });
   }
   if (failing.length > 0) {
     const topFailure = failing[0];
-    return {
+    return withCapabilityDescriptor({
       status: 'fail',
       label: 'BLOCKED',
       summary: `${failing.length}/${selfHostChecks.length} self-host proof check(s) failed. ${shortText(topFailure.summary || 'Repair the self-host proof before widening self-work.')}`,
@@ -467,10 +476,11 @@ function buildSelfHostProof(acceptance = {}, latestRunSummary = {}) {
       passedCount: passing.length,
       latestCheckLabel: String(topFailure.label || topFailure.id || '').trim(),
       smokeRecorded: hasSelfHostSmoke,
-    };
+      exists: true,
+    });
   }
   if (bootstrapCheck && testsCheck && (!hasSelfHostSmoke || String(smokeCheck?.status || '').trim().toLowerCase() !== 'pass')) {
-    return {
+    return withCapabilityDescriptor({
       status: hasSelfHostSmoke ? 'warn' : 'warn',
       label: 'PARTIAL',
       summary: hasSelfHostSmoke
@@ -484,9 +494,10 @@ function buildSelfHostProof(acceptance = {}, latestRunSummary = {}) {
       passedCount: passing.length,
       latestCheckLabel: String(testsCheck.label || testsCheck.id || '').trim(),
       smokeRecorded: hasSelfHostSmoke,
-    };
+      exists: true,
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     status: 'pass',
     label: 'PROVEN',
     summary: `Self-host proof passed. ${passing.length}/${selfHostChecks.length} self-host check(s) succeeded${hasSelfHostSmoke ? ', including smoke.' : '.'}`,
@@ -496,7 +507,8 @@ function buildSelfHostProof(acceptance = {}, latestRunSummary = {}) {
     passedCount: passing.length,
     latestCheckLabel: String((smokeCheck || testsCheck || bootstrapCheck)?.label || '').trim(),
     smokeRecorded: hasSelfHostSmoke,
-  };
+    exists: true,
+  });
 }
 
 function describeModelIdentity(identity = {}) {
@@ -1353,8 +1365,23 @@ function buildAcceptanceArea(acceptance = {}) {
     || acceptance?.overallStatus
     || '',
   ).trim().toLowerCase();
+  const smokeCapability = buildCapabilityDescriptor({
+    capabilityState: acceptanceControl.smokeCapabilityState,
+    status: acceptanceControl.smokeStatus,
+    label: acceptanceControl.smokeLabel,
+    exists: String(acceptanceControl.smokeStatus || '').trim().toLowerCase() !== 'missing',
+  });
   return {
     status: acceptanceStatus || (acceptance?.exists ? 'recorded' : 'missing'),
+    ...buildCapabilityDescriptor({
+      capabilityState: acceptanceControl.capabilityState,
+      status: acceptanceControl.nextDayStatus || acceptanceStatus,
+      label: acceptanceControl.nextDayLabel || acceptanceControl.acceptanceLabel,
+      exists: acceptance?.exists === true,
+      proven: acceptanceControl.safeForNextDay === true,
+      blocked: String(acceptanceControl.nextDayStatus || '').trim().toLowerCase() === 'blocked',
+      partial: String(acceptanceControl.nextDayStatus || '').trim().toLowerCase() === 'caution',
+    }),
     summary: shortText(
       acceptanceControl.nextDaySummary
       || acceptanceControl.acceptanceSummary
@@ -1370,6 +1397,8 @@ function buildAcceptanceArea(acceptance = {}) {
     latestAcceptanceAt: String(acceptanceControl.lastAcceptanceAt || '').trim(),
     latestSmokeStatus: String(acceptanceControl.smokeStatus || '').trim(),
     latestSmokeLabel: String(acceptanceControl.smokeLabel || '').trim(),
+    smokeCapabilityState: smokeCapability.capabilityState,
+    smokeCapabilityLabel: smokeCapability.capabilityLabel,
     latestSmokeAt: String(acceptanceControl.lastSmokeAt || '').trim(),
     smokeSummary: shortText(acceptanceControl.smokeSummary || ''),
     blockerCount: Number(acceptanceControl.blockerCount || 0),
@@ -1726,7 +1755,10 @@ function buildSystemCheck(options = {}) {
     : listBenchmarkRuns(workspaceRoot);
   const promotions = options.promotions && typeof options.promotions === 'object'
     ? options.promotions
-    : listPromotionState(workspaceRoot, { labRoot });
+    : listPromotionState(workspaceRoot, {
+      labRoot,
+      localModelProofMatrix: options.aiStatus?.localModelProofMatrix,
+    });
   const acceptanceControl = acceptance?.controlSummary && typeof acceptance.controlSummary === 'object'
     ? acceptance.controlSummary
     : {};
@@ -1825,6 +1857,12 @@ function buildSystemCheck(options = {}) {
   const localModelInventory = options.aiStatus?.localModelInventory && typeof options.aiStatus.localModelInventory === 'object'
     ? options.aiStatus.localModelInventory
     : {};
+  const localModelPolicy = options.aiStatus?.localModelPolicy && typeof options.aiStatus.localModelPolicy === 'object'
+    ? options.aiStatus.localModelPolicy
+    : (assistantConfig.modelPolicy && typeof assistantConfig.modelPolicy === 'object' ? assistantConfig.modelPolicy : {});
+  const localModelProofMatrix = options.aiStatus?.localModelProofMatrix && typeof options.aiStatus.localModelProofMatrix === 'object'
+    ? options.aiStatus.localModelProofMatrix
+    : {};
   const readiness = options.readiness && typeof options.readiness === 'object'
     ? options.readiness
     : buildReadinessSnapshot(learningJournalAugmented, promotions, acceptance, modelRoles, {
@@ -1914,6 +1952,15 @@ function buildSystemCheck(options = {}) {
     },
     learning: {
       status: String(selfImprovementProof.status || learningJournalAugmented?.trainingReadiness?.status || 'idle').trim().toLowerCase(),
+      ...buildCapabilityDescriptor({
+        capabilityState: selfImprovementProof.capabilityState,
+        status: selfImprovementProof.status || learningJournalAugmented?.trainingReadiness?.status || 'idle',
+        label: selfImprovementProof.label || '',
+        exists: selfImprovementProof.exists !== false || !!learningJournalAugmented?.trainingReadiness,
+        proven: selfImprovementProof.proven === true,
+        blocked: selfImprovementProof.blocked === true,
+        partial: selfImprovementProof.partial === true,
+      }),
       summary: shortText(
         [
           learningJournalAugmented?.trainingReadiness?.summary,
@@ -1950,11 +1997,16 @@ function buildSystemCheck(options = {}) {
     models: {
       ...modelRoles,
       status: modelProvisioning.status || modelRoles.status,
-      summary: shortText(`${modelRoles.summary}. ${modelProvisioning.summary || ''}${localModelInventory.summary ? ` ${localModelInventory.summary}` : ''}${modelFoundry.summary ? ` ${modelFoundry.summary}` : ''}`),
+      summary: shortText(`${modelRoles.summary}. ${modelProvisioning.summary || ''}${localModelInventory.summary ? ` ${localModelInventory.summary}` : ''}${localModelProofMatrix.summary ? ` ${localModelProofMatrix.summary}` : ''}${localModelPolicy.currentStateSummary ? ` ${localModelPolicy.currentStateSummary}` : ''}${modelFoundry.summary ? ` ${modelFoundry.summary}` : ''}`),
       roles: modelExecutionRoles,
       provisioning: modelProvisioning,
       integrations,
       localInventory: localModelInventory,
+      localPolicy: localModelPolicy,
+      localProofMatrix: localModelProofMatrix,
+      configReviewNotes: Array.isArray(localModelPolicy.configReviewNotes)
+        ? localModelPolicy.configReviewNotes.slice(0, 4)
+        : (Array.isArray(assistantConfig.modelConfigReviewNotes) ? assistantConfig.modelConfigReviewNotes.slice(0, 4) : []),
       benchmarkLeaderIdentity,
       foundryNextCandidateIdentity: modelFoundry?.nextCandidateIdentity || modelFoundry?.nextCandidate?.modelIdentity || null,
       promotionCandidateIdentity: promotions?.currentCandidateIdentity || null,
@@ -2030,6 +2082,9 @@ function renderSystemCheck(report, options = {}) {
     blocks.push(`[${areaId}] ${String(payload?.status || 'unknown').toUpperCase()}`);
     if (payload?.summary) {
       blocks.push(shortText(payload.summary, compact ? 160 : 240));
+    }
+    if (payload?.capabilityLabel) {
+      blocks.push(renderTextBlock('Capability', payload.capabilityLabel, { compact }));
     }
     if (areaId === 'roadmap') {
       if (payload?.currentPhase?.label) {
@@ -2223,6 +2278,34 @@ function renderSystemCheck(report, options = {}) {
           { compact },
         ));
       }
+      if (payload?.localProofMatrix?.summary) {
+        blocks.push(renderTextBlock(
+          'Engine proof matrix',
+          `${String(payload.localProofMatrix.capabilityLabel || payload.localProofMatrix.status || 'unknown').trim().toUpperCase()} | ${payload.localProofMatrix.summary}`,
+          { compact },
+        ));
+      }
+      if (payload?.localPolicy?.approvedDefaultsSummary) {
+        blocks.push(renderTextBlock('Approved defaults', payload.localPolicy.approvedDefaultsSummary, { compact }));
+      }
+      if (payload?.localPolicy?.candidateOnlySummary) {
+        blocks.push(renderTextBlock('Candidate-only', payload.localPolicy.candidateOnlySummary, { compact }));
+      }
+      if (payload?.localPolicy?.largerHeadroomSummary) {
+        blocks.push(renderTextBlock('Larger-headroom', payload.localPolicy.largerHeadroomSummary, { compact }));
+      }
+      if (payload?.localPolicy?.perModelCapSummary) {
+        blocks.push(renderTextBlock('32 GB cap', payload.localPolicy.perModelCapSummary, { compact }));
+      }
+      if (payload?.localPolicy?.activeBundleSummary) {
+        blocks.push(renderTextBlock('32 GB live-fit', payload.localPolicy.activeBundleSummary, { compact }));
+      }
+      if (payload?.localPolicy?.enforcementSummary) {
+        blocks.push(renderTextBlock('Guardrail enforcement', payload.localPolicy.enforcementSummary, { compact }));
+      }
+      if (payload?.localPolicy?.currentStateSummary) {
+        blocks.push(renderTextBlock('Config review', payload.localPolicy.currentStateSummary, { compact }));
+      }
       if (Array.isArray(payload?.localInventory?.entries)) {
         payload.localInventory.entries.slice(0, 4).forEach((entry) => {
           const profile = entry?.wrappedProfileId ? ` | profile ${String(entry.wrappedProfileId || '').trim()}` : '';
@@ -2235,6 +2318,24 @@ function renderSystemCheck(report, options = {}) {
               ? `Candidate ${String(entry.label || entry.id || 'candidate').trim()}`
               : String(entry.label || entry.wrappedProfileId || entry.id || 'Local model'),
             `${String(entry.providerSource || 'unknown').trim().toLowerCase() || 'unknown'}:${String(entry.baseModel || 'unset').trim() || 'unset'}${profile}${family} | ${String(entry.localReadiness || 'unknown').trim().toUpperCase()}${installState}${foundry}${benchmark}`,
+            { compact },
+          ));
+        });
+      }
+      if (Array.isArray(payload?.localProofMatrix?.families)) {
+        payload.localProofMatrix.families.slice(0, 3).forEach((family) => {
+          blocks.push(renderTextBlock(
+            `Proof family ${String(family?.label || family?.family || 'unknown').trim() || 'unknown'}`,
+            String(family?.summary || 'Proof family status is not recorded yet.').trim(),
+            { compact },
+          ));
+        });
+      }
+      if (Array.isArray(payload?.localProofMatrix?.entries)) {
+        payload.localProofMatrix.entries.slice(0, 3).forEach((entry) => {
+          blocks.push(renderTextBlock(
+            `Proof ${String(entry?.label || entry?.baseModel || entry?.id || 'local model').trim()}`,
+            `${String(entry?.capabilityLabel || entry?.status || 'unknown').trim().toUpperCase()} | ${String(entry?.summary || 'Proof status is not recorded yet.').trim()}${entry?.headroom?.shortSummary ? ` | ${String(entry.headroom.shortSummary || '').trim()}` : ''}`,
             { compact },
           ));
         });
@@ -2356,6 +2457,16 @@ function renderSystemCheck(report, options = {}) {
       }
       if (payload?.recommendedNextSafeAction) {
         blocks.push(renderTextBlock('Next safe action', payload.recommendedNextSafeAction, { compact }));
+      }
+      if (payload?.blockers?.summary) {
+        blocks.push(renderTextBlock('Blockers', payload.blockers.summary, { compact }));
+      }
+      if (payload?.unlockPlan?.summary) {
+        blocks.push(renderTextBlock(
+          'Unlock path',
+          `${String(payload.unlockPlan.status || 'unknown').toUpperCase()} | ceiling ${Number(payload.unlockPlan.currentDifficultyCeiling || 0)}/5 -> ${Number(payload.unlockPlan.nextDifficultyCeiling || 0)}/5 | ${payload.unlockPlan.summary}`,
+          { compact },
+        ));
       }
       if (payload?.highestRiskAction?.task || payload?.highestRiskAction?.label) {
         blocks.push(renderTextBlock(

@@ -8,7 +8,7 @@ from typing import Any
 
 from backend.agent.core.baseline_service import analyze_baseline_health, cluster_failures, load_recent_runs
 from backend.agent.core.editor_context import normalize_editor_context
-from backend.agent.core.repo_inspection import rank_related_files
+from backend.agent.core.repo_inspection import extract_explicit_repo_paths, rank_related_files
 from backend.agent.core.storage_paths import assistant_config_validation, assistant_dev_runs_dir, assistant_docs_cache_dir, assistant_docs_import_queue_path, assistant_docs_registry_dir, assistant_runs_dir, assistant_test_artifacts_dir
 
 
@@ -173,6 +173,7 @@ def _candidate_related_files(
     plan: dict[str, Any] | None,
     editor_context: dict[str, Any],
     *,
+    desc: str = "",
     validation: dict[str, Any] | None = None,
     repair: dict[str, Any] | None = None,
 ) -> list[str]:
@@ -200,6 +201,8 @@ def _candidate_related_files(
         add_candidate(item.get("path") if isinstance(item, dict) else item)
     for path in _failure_output_candidates(project_root, validation=validation, repair=repair):
         add_candidate(path, front=True)
+    for path in reversed(extract_explicit_repo_paths(project_root, desc, require_exists=True, limit=5)):
+        add_candidate(path, front=True)
     active_file = str(editor_context.get("active_file_path") or "").strip()
     if active_file:
         add_candidate(active_file, front=True)
@@ -226,6 +229,7 @@ def _normalize_related_files(
         project_root,
         plan,
         normalized_editor,
+        desc=desc,
         validation=validation,
         repair=repair,
     )

@@ -2,17 +2,21 @@
   "id": "vscode-companion-extension",
   "kind": "extension",
   "label": "VS Code Companion Extension",
-  "summary": "Starter VS Code extension scaffold for the desktop agent's workspace commands, tasks, and quick-open hooks.",
-  "version": "0.1.0",
+  "summary": "Workspace-copied GoSenderr companion with the shared chat workbench, trace or review handoff, and bounded CLI-backed safe actions.",
+  "version": "0.1.3",
   "entry": "package.json",
   "installMode": "copy",
   "contributes": [
     "vscode-command",
-    "workspace-bootstrap"
+    "workspace-bootstrap",
+    "workbench-view",
+    "bounded-safe-actions"
   ],
   "tags": [
     "extension",
     "vscode",
-    "workspace"
+    "workspace",
+    "companion",
+    "chat"
   ]
 }

@@ -168,6 +168,7 @@ const {
   getChatModeConfig,
   inferChatModeRouting: inferCanonicalChatModeRouting,
   parseChatModeDirective: parseCanonicalChatModeDirective,
+  resolveModelProfileSelection,
   resolveChatModeValue: resolveCanonicalChatModeValue,
   shouldUseCodingChatContext,
 } = require('./core/engine-contract');
@@ -176,6 +177,11 @@ const {
   buildGroundedModeReply,
   shouldUseGroundedAskReply,
 } = require('./core/grounded-chat');
+const {
+  sanitizeAssistantChatText,
+  selectChatReplyBackend,
+  shouldPreferRemoteChatReplies: shouldPreferRemoteChatReplyRoute,
+} = require('./core/chat-quality');
 const {
   listAutomations,
   upsertAutomation,
@@ -354,6 +360,10 @@ const {
   normalizeReviewSelection,
   resolveSaveApproval,
 } = require('./core/review-approval-state');
+const {
+  readStoredReviewDecisions,
+  writeStoredReviewDecisions,
+} = require('./core/review-decision-store');
 const {
   getAssistantRunsDir,
   getAssistantSchedulerLogPath,
@@ -636,15 +646,15 @@ function getDesktopSettingsPayload(workspaceRoot) {
     localAiCmdManual: store.get('localAiCmd'),
     aiManualMode,
     aiBridgeProfile,
-      aiRemoteProvider,
-      aiRemoteModel: String(store.get('aiRemoteModel') || '').trim(),
-      aiRemoteBaseUrl: String(store.get('aiRemoteBaseUrl') || aiRemoteProviderPreset.baseUrl || '').trim(),
-      aiRemoteApiKeyName: String(store.get('aiRemoteApiKeyName') || aiRemoteProviderPreset.apiKeyName || '').trim(),
-      chatComposerHeight: ui.chatComposerHeight,
-      chatTransparencyLevel: ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').toLowerCase())
-        ? String(store.get('chatTransparencyLevel')).toLowerCase()
-        : 'balanced',
-      aiWrappedProfileId,
+    aiRemoteProvider,
+    aiRemoteModel: String(store.get('aiRemoteModel') || '').trim(),
+    aiRemoteBaseUrl: String(store.get('aiRemoteBaseUrl') || aiRemoteProviderPreset.baseUrl || '').trim(),
+    aiRemoteApiKeyName: String(store.get('aiRemoteApiKeyName') || aiRemoteProviderPreset.apiKeyName || '').trim(),
+    chatComposerHeight: ui.chatComposerHeight,
+    chatTransparencyLevel: ['quiet', 'balanced', 'verbose'].includes(String(store.get('chatTransparencyLevel') || '').toLowerCase())
+      ? String(store.get('chatTransparencyLevel')).toLowerCase()
+      : 'balanced',
+    aiWrappedProfileId,
     aiWorkspaceWrappedProfileId,
     aiEngineWrappedProfileId,
     aiWrappedProfiles,
@@ -658,9 +668,9 @@ function getDesktopSettingsPayload(workspaceRoot) {
     aiProfile,
     aiRoutingPolicy,
     aiLaneOverrides,
-      chatMode: ui.chatMode,
-      chatInstructionMode: ['off', 'auto', 'custom'].includes(ui.chatInstructionMode) ? ui.chatInstructionMode : 'auto',
-      chatCustomInstructions: ui.chatCustomInstructions,
+    chatMode: ui.chatMode,
+    chatInstructionMode: ['off', 'auto', 'custom'].includes(ui.chatInstructionMode) ? ui.chatInstructionMode : 'auto',
+    chatCustomInstructions: ui.chatCustomInstructions,
     learningLivePolling: !!store.get('learningLivePolling'),
     ...tuningSettings,
     ...autonomy,
@@ -792,21 +802,21 @@ const store = createResilientStore(Store, {
     surfaceTemplate: 'board',
     safeLayoutMode: false,
     startInChatWorkspace: true,
-      chatInspectorCollapsed: true,
-      chatInspectorWidth: 380,
-      chatUtilityMode: 'context',
-      chatComposerHeight: 'comfortable',
-      chatTransparencyLevel: 'balanced',
-      showLiveWork: true,
-      chatMode: 'auto',
-      chatInstructionMode: 'auto',
-      chatCustomInstructions: '',
+    chatInspectorCollapsed: true,
+    chatInspectorWidth: 380,
+    chatUtilityMode: 'context',
+    chatComposerHeight: 'comfortable',
+    chatTransparencyLevel: 'balanced',
+    showLiveWork: true,
+    chatMode: 'auto',
+    chatInstructionMode: 'auto',
+    chatCustomInstructions: '',
     runtime: 'ollama',
     localAiCmd: '',
-      aiManualMode: false,
-      aiBridgeProfile: 'llama-bridge',
-      aiRemoteProvider: 'openai',
-      aiRemoteModel: 'gpt-5-mini',
+    aiManualMode: false,
+    aiBridgeProfile: 'llama-bridge',
+    aiRemoteProvider: 'openai',
+    aiRemoteModel: 'gpt-5-mini',
     aiRemoteBaseUrl: '',
     aiRemoteApiKeyName: '',
     aiWrappedProfileId: 'gs-dev-1-default',
@@ -1170,13 +1180,13 @@ async function maybeQueueEngineFollowupsFromRunEvent(event = {}) {
   }
   const queued = followupPlan.shouldQueue
     ? queueFollowupRecipeTasks(workspaceRoot, followupPlan.recipe, {
-        targetWorkspaceRoot,
-        labRoot: '',
-        threadId: String(event.threadId || event.operatorExecution?.threadId || '').trim(),
-        changeSessionId: String(event.changeSessionId || event.operatorExecution?.changeSessionId || '').trim(),
-        ring: 'candidate',
-        promotionState: 'candidate',
-      })
+      targetWorkspaceRoot,
+      labRoot: '',
+      threadId: String(event.threadId || event.operatorExecution?.threadId || '').trim(),
+      changeSessionId: String(event.changeSessionId || event.operatorExecution?.changeSessionId || '').trim(),
+      ring: 'candidate',
+      promotionState: 'candidate',
+    })
     : null;
   let firstRun = null;
   if (queued?.ok && followupPlan.shouldAutoRun && Array.isArray(queued.tasks) && queued.tasks.length > 0) {
@@ -1253,7 +1263,7 @@ runtime.on('run-event', (event) => {
       trusted: String(event.state || '').toLowerCase() === 'pass'
         && (Number(event.trustSignalCount || 0) > 0 || (Array.isArray(event.approvalRequests) ? event.approvalRequests.length === 0 : true)),
     });
-    Promise.resolve().then(() => maybeQueueEngineFollowupsFromRunEvent(event)).catch((_error) => {});
+    Promise.resolve().then(() => maybeQueueEngineFollowupsFromRunEvent(event)).catch((_error) => { });
   }
   pushMonitorEvent('runtime', event);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1308,14 +1318,18 @@ function flushAssistantChatDeltaBuffer(requestId = '') {
   if (entry.timer) {
     clearTimeout(entry.timer);
   }
-  assistantChatDeltaBuffers.delete(key);
   if (!entry.delta) {
+    entry.timer = null;
     return;
   }
+  const delta = entry.delta;
+  entry.delta = '';
+  entry.emittedText = String(entry.emittedText || '') + delta;
+  entry.timer = null;
   sendAssistantChatEvent({
     requestId: key,
     type: 'reply-delta',
-    delta: entry.delta,
+    delta,
     createdAt: entry.createdAt || new Date().toISOString(),
   });
 }
@@ -1327,12 +1341,18 @@ function bufferAssistantChatDelta(event = {}) {
     return;
   }
   const current = assistantChatDeltaBuffers.get(requestId) || {
+    raw: '',
+    emittedText: '',
     delta: '',
     createdAt: String(event.createdAt || '').trim(),
     timer: null,
   };
-  current.delta += delta;
+  current.raw += delta;
   current.createdAt = String(event.createdAt || current.createdAt || '').trim() || new Date().toISOString();
+  const sanitized = sanitizeAssistantChatText(current.raw, { streaming: true });
+  current.delta = sanitized.startsWith(current.emittedText)
+    ? sanitized.slice(current.emittedText.length)
+    : sanitized;
   if (current.timer) {
     clearTimeout(current.timer);
   }
@@ -2737,7 +2757,7 @@ function runAssistantCli(workspaceRoot, args, extraEnv = {}, options = {}) {
       : 'Starting the reply.',
     requestId: String(options.requestId || '').trim(),
   }).then((response) => {
-    const reply = response && typeof response.reply === 'string' ? response.reply.trim() : '';
+    const reply = sanitizeAssistantChatText(response && typeof response.reply === 'string' ? response.reply : '');
     return reply || '(AI unavailable)';
   }).catch((err) => `AI command failed to start: ${err.message}`);
 }
@@ -2899,8 +2919,9 @@ function buildChatGuidancePayload(targetWorkspaceRoot = '', context = {}) {
   };
 }
 
-function buildAssistantReplySuggestions(message, reply) {
+function buildAssistantReplySuggestions(message, reply, options = {}) {
   const lower = `${String(message || '')}\n${String(reply || '')}`.toLowerCase();
+  const chatMode = String(options.chatMode || 'auto').toLowerCase();
   const suggestions = [];
   const push = (value) => {
     const text = String(value || '').trim();
@@ -2925,9 +2946,20 @@ function buildAssistantReplySuggestions(message, reply) {
     push('/workers');
   }
   if (suggestions.length === 0) {
-    push('/next');
-    push('/approvals');
-    push('/health');
+    if (chatMode === 'plan') {
+      push('Turn this into an execution task.');
+      push('What are the risks?');
+      push('List the files most likely involved.');
+    } else if (chatMode === 'edit' || chatMode === 'agent') {
+      push('/next');
+      push('/approvals');
+      push('/health');
+    } else {
+      // ask / auto — conversational follow-ups
+      push('Tell me more.');
+      push('What should I do next?');
+      push('Show me an example.');
+    }
   }
   return suggestions.slice(0, 3);
 }
@@ -3027,52 +3059,69 @@ function getAvailableLocalAiCmd() {
   return commandExecutableExists(command, RUNTIME_ROOT) ? command : '';
 }
 
-const REMOTE_CHAT_QUALITY_POLICIES = new Set(['hybrid-default', 'best-available']);
-const REMOTE_CHAT_QUALITY_LANES = new Set(['chat-fast', 'plan-reasoning', 'research-docs', 'ops-summary']);
-const LOCAL_FIRST_CHAT_LANES = new Set(['code-main', 'repair-fast', 'review-verify']);
-const REMOTE_CHAT_QUALITY_TASK_MODES = new Set(['chat', 'planner', 'research', 'summarizer']);
-const LOCAL_FIRST_CHAT_TASK_MODES = new Set(['coder', 'repair', 'validator']);
-
 function shouldPreferRemoteChatReplies(options = {}) {
-  const aiProfile = normalizeProfileId(store.get('aiProfile'));
-  const routingPolicy = normalizeRoutingPolicy(store.get('aiRoutingPolicy'), aiProfile);
-  if (!REMOTE_CHAT_QUALITY_POLICIES.has(routingPolicy)) {
-    return false;
-  }
-
-  const laneId = String(options.suggestedLaneId || options.laneId || '').trim().toLowerCase();
-  if (LOCAL_FIRST_CHAT_LANES.has(laneId)) {
-    return false;
-  }
-  if (REMOTE_CHAT_QUALITY_LANES.has(laneId)) {
-    return true;
-  }
-
-  const taskMode = String(options.suggestedTaskMode || options.taskMode || '').trim().toLowerCase();
-  if (LOCAL_FIRST_CHAT_TASK_MODES.has(taskMode)) {
-    return false;
-  }
-  if (REMOTE_CHAT_QUALITY_TASK_MODES.has(taskMode)) {
-    return true;
-  }
-
-  const chatMode = resolveChatModeValue(options.chatMode || 'auto');
-  return chatMode === 'ask' || chatMode === 'plan';
+  return shouldPreferRemoteChatReplyRoute(options);
 }
 
-function getChatBackendConfig(workspaceRoot) {
+function buildActiveAssistantModelConfig(workspaceRoot, runtimeMode, tuningSettings = {}) {
+  const assistantConfig = readAssistantConfig(workspaceRoot || getWorkspaceRoot(), { defaultWorkspace: DEFAULT_TARGET_WORKSPACE });
+  const defaultLocalProvider = runtimeMode === 'local' ? 'local' : 'ollama';
+  const defaultLocalModel = String(
+    tuningSettings.trainingOllamaModel
+    || process.env.OLLAMA_MODEL
+    || assistantConfig.workspaceBaseModel
+    || assistantConfig.baseModel
+    || 'qwen2.5-coder:7b',
+  ).trim() || 'qwen2.5-coder:7b';
+  const taskModeRoutes = store.get('taskModeRoutes');
+  return {
+    ...assistantConfig,
+    baseModel: String(store.get('model') || assistantConfig.baseModel || defaultLocalModel).trim() || defaultLocalModel,
+    baseProvider: String(store.get('baseProvider') || assistantConfig.baseProvider || defaultLocalProvider).trim().toLowerCase() || defaultLocalProvider,
+    workspaceBaseModel: String(store.get('workspaceBaseModel') || assistantConfig.workspaceBaseModel || assistantConfig.baseModel || defaultLocalModel).trim() || defaultLocalModel,
+    workspaceBaseProvider: String(store.get('workspaceBaseProvider') || assistantConfig.workspaceBaseProvider || assistantConfig.baseProvider || defaultLocalProvider).trim().toLowerCase() || defaultLocalProvider,
+    engineBaseModel: String(store.get('engineBaseModel') || assistantConfig.engineBaseModel || assistantConfig.baseModel || defaultLocalModel).trim() || defaultLocalModel,
+    engineBaseProvider: String(store.get('engineBaseProvider') || assistantConfig.engineBaseProvider || assistantConfig.baseProvider || defaultLocalProvider).trim().toLowerCase() || defaultLocalProvider,
+    taskModeRoutes: taskModeRoutes && typeof taskModeRoutes === 'object'
+      ? taskModeRoutes
+      : (assistantConfig.taskModeRoutes && typeof assistantConfig.taskModeRoutes === 'object' ? assistantConfig.taskModeRoutes : {}),
+  };
+}
+
+function resolveLocalChatRouteModel(workspaceRoot, runtimeMode, tuningSettings = {}, options = {}) {
+  const laneId = String(options.suggestedLaneId || options.laneId || '').trim();
+  const taskMode = String(options.suggestedTaskMode || options.taskMode || '').trim();
+  if (!laneId && !taskMode) {
+    return '';
+  }
+  const selection = resolveModelProfileSelection(
+    buildActiveAssistantModelConfig(workspaceRoot, runtimeMode, tuningSettings),
+    { laneId, taskMode },
+  );
+  const provider = String(selection.active.baseProvider || selection.active.providerSource || '').trim().toLowerCase();
+  const model = String(selection.active.baseModel || '').trim();
+  if (!model) {
+    return '';
+  }
+  return !provider || provider === 'ollama' || provider === 'local' ? model : '';
+}
+
+function getChatBackendConfig(workspaceRoot, options = {}) {
   const runtimeMode = String(store.get('runtime') || 'ollama').trim().toLowerCase();
-  const tuningSettings = readTrainingTuningSettings(workspaceRoot || getWorkspaceRoot());
+  const resolvedWorkspaceRoot = workspaceRoot || getWorkspaceRoot();
+  const tuningSettings = readTrainingTuningSettings(resolvedWorkspaceRoot);
   const remoteProvider = resolveRemoteProviderPreset({
     aiRemoteProvider: store.get('aiRemoteProvider'),
     aiRemoteBaseUrl: store.get('aiRemoteBaseUrl'),
     aiRemoteApiKeyName: store.get('aiRemoteApiKeyName'),
   });
+  const routedLocalModel = resolveLocalChatRouteModel(resolvedWorkspaceRoot, runtimeMode, tuningSettings, options);
   return {
     runtimeMode,
     localCmd: getAvailableLocalAiCmd(),
     ollamaModel: String(
-      tuningSettings.trainingOllamaModel
+      routedLocalModel
+      || tuningSettings.trainingOllamaModel
       || process.env.OLLAMA_MODEL
       || 'qwen2.5-coder:7b',
     ).trim() || 'qwen2.5-coder:7b',
@@ -3605,9 +3654,9 @@ function workspaceSnapshot() {
   const latestRuntime = selectFreshestRun(runtimeRuns);
   const sharedRuntimeContext = normalizeRuntimeContext(
     latestRuntime?.runtimeContext
-      || runtimeRuns[0]?.runtimeContext
-      || recentRuns[0]?.runtimeContext
-      || {},
+    || runtimeRuns[0]?.runtimeContext
+    || recentRuns[0]?.runtimeContext
+    || {},
   );
   const taskHubRecipes = listRecipes();
   const acceptance = readLatestAcceptanceReport(statusWorkspaceRoot);
@@ -3661,7 +3710,7 @@ function workspaceSnapshot() {
     preserveKeys: [reviewSelection.approvalKey, lastReviewApprovalKey],
   });
   if (JSON.stringify(cleanedDecisions) !== JSON.stringify(reviewWithSmokeFixture.decisions || {})) {
-    store.set('reviewDecisions', cleanedDecisions);
+    persistReviewDecisions(cleanedDecisions);
     reviewWithSmokeFixture.decisions = cleanedDecisions;
   }
   const reviewer = buildReviewerSummary(targetWorkspaceRoot, {
@@ -3984,12 +4033,12 @@ function buildTaskLoopSnapshot(workspaceRoot = getWorkspaceRoot()) {
     latestExecution,
     latestRequest: latestTaskLoopSession.request
       ? {
-          laneId: latestTaskLoopSession.request.laneId,
-          laneLabel: latestTaskLoopSession.request.laneLabel,
-          task: latestTaskLoopSession.request.task,
-          taskMode: latestTaskLoopSession.request.taskMode,
-          action: latestTaskLoopSession.request.action,
-        }
+        laneId: latestTaskLoopSession.request.laneId,
+        laneLabel: latestTaskLoopSession.request.laneLabel,
+        task: latestTaskLoopSession.request.task,
+        taskMode: latestTaskLoopSession.request.taskMode,
+        action: latestTaskLoopSession.request.action,
+      }
       : null,
   };
 }
@@ -5950,9 +5999,9 @@ function readWorkspaceChangedFiles(workspaceRoot, { includeNoise = false } = {})
     return includeNoise
       ? lines
       : lines.filter((line) => {
-          const normalized = normalizeReviewPath(String(line || '').slice(2).trim().split('->').pop() || '');
-          return normalized && !isIgnoredWorkspacePath(normalized);
-        });
+        const normalized = normalizeReviewPath(String(line || '').slice(2).trim().split('->').pop() || '');
+        return normalized && !isIgnoredWorkspacePath(normalized);
+      });
   } catch (_error) {
     return [];
   }
@@ -6113,12 +6162,30 @@ function buildCurrentFileDiff(workspaceRoot, relativePath) {
 }
 
 function getReviewDecisions() {
-  const payload = normalizeReviewDecisions(store.get('reviewDecisions'));
+  const workspaceRoot = normalizeDirectory(getTargetWorkspaceRoot() || getWorkspaceRoot() || '');
+  const fallback = normalizeReviewDecisions(store.get('reviewDecisions'));
+  const stored = workspaceRoot
+    ? readStoredReviewDecisions(workspaceRoot, { fallbackDecisions: fallback })
+    : { exists: false, decisions: fallback };
+  const payload = stored.decisions;
   const current = store.get('reviewDecisions') || {};
   if (JSON.stringify(current) !== JSON.stringify(payload)) {
     store.set('reviewDecisions', payload);
   }
+  if (workspaceRoot && (!stored.exists || JSON.stringify(fallback) !== JSON.stringify(payload))) {
+    writeStoredReviewDecisions(workspaceRoot, payload);
+  }
   return payload;
+}
+
+function persistReviewDecisions(decisions = {}, options = {}) {
+  const normalized = normalizeReviewDecisions(decisions, options);
+  store.set('reviewDecisions', normalized);
+  const workspaceRoot = normalizeDirectory(getTargetWorkspaceRoot() || getWorkspaceRoot() || '');
+  if (workspaceRoot) {
+    writeStoredReviewDecisions(workspaceRoot, normalized, options);
+  }
+  return normalized;
 }
 
 function getReviewSelectionState() {
@@ -6187,7 +6254,7 @@ function ensureUiSmokeApprovalFixture(workspaceRoot) {
     note: '',
     updatedAt: new Date().toISOString(),
   };
-  store.set('reviewDecisions', decisions);
+  persistReviewDecisions(decisions);
   uiSmokeApprovalFixtureWorkspace = workspaceRoot;
   return fixturePath;
 }
@@ -6254,7 +6321,7 @@ function buildWorkspaceApprovalQueue(workspaceRoot, review, recentRuns = [], dec
     return queue;
   }
   if (!(decisionsOverride && typeof decisionsOverride === 'object')) {
-    store.set('reviewDecisions', autoApproval.decisions);
+    persistReviewDecisions(autoApproval.decisions);
   }
   return dedupeApprovalQueue(buildApprovalQueue({
     workspaceRoot,
@@ -6415,13 +6482,13 @@ function buildWorkerStates({ latestRuntime, runtimeRuns, scheduler, approvals, c
       currentTask: isRunningAction(/train/)
         ? summaryForRun(trainerRun)
         : (!trainingState.exists
-            ? 'Training dataset not exported yet'
-            : (trainingState.stale ? 'Retraining recommended' : 'Training dataset ready')),
+          ? 'Training dataset not exported yet'
+          : (trainingState.stale ? 'Retraining recommended' : 'Training dataset ready')),
       lastOutcome: lastActionResult(/train/) !== 'idle'
         ? lastActionResult(/train/)
         : (!trainingState.exists
-            ? 'No curated dataset exported yet'
-            : `${Number(trainingState.exampleCount || 0)} examples • ${trainingPendingText}`),
+          ? 'No curated dataset exported yet'
+          : `${Number(trainingState.exampleCount || 0)} examples • ${trainingPendingText}`),
     },
     {
       id: 'log-analyzer',
@@ -6493,13 +6560,13 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
     : {};
   const baseline = Object.keys(runtimeBaseline).length > 0
     ? {
-        state: String(runtimeBaseline.state || 'green'),
-        blocked: runtimeBaseline.blocked === true,
-        reason: String(runtimeBaseline.reason || ''),
-        recentFailureCount: Number(runtimeBaseline.recent_failure_count || 0),
-        clusterCount: Number(runtimeBaseline.cluster_count || 0),
-        hotspot: runtimeBaseline.hotspot && typeof runtimeBaseline.hotspot === 'object' ? runtimeBaseline.hotspot : {},
-      }
+      state: String(runtimeBaseline.state || 'green'),
+      blocked: runtimeBaseline.blocked === true,
+      reason: String(runtimeBaseline.reason || ''),
+      recentFailureCount: Number(runtimeBaseline.recent_failure_count || 0),
+      clusterCount: Number(runtimeBaseline.cluster_count || 0),
+      hotspot: runtimeBaseline.hotspot && typeof runtimeBaseline.hotspot === 'object' ? runtimeBaseline.hotspot : {},
+    }
     : (assistantDashboard.baseline || { state: 'green', blocked: false, reason: 'Baseline healthy.' });
   const baselineDetail = baseline.selfHealMode
     ? (baseline.hotspot?.summary || baseline.reason || 'Baseline self-heal is active.')
@@ -6520,10 +6587,10 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
   });
   const baselineReportDetail = engineBaselineSummary.exists
     ? [
-        engineBaselineSummary.summary,
-        engineBaselineSummary.topIssuesText ? `Top issues ${engineBaselineSummary.topIssuesText}` : '',
-        engineBaselineSummary.canonicalMarkdownPath || '',
-      ].filter(Boolean).join(' • ')
+      engineBaselineSummary.summary,
+      engineBaselineSummary.topIssuesText ? `Top issues ${engineBaselineSummary.topIssuesText}` : '',
+      engineBaselineSummary.canonicalMarkdownPath || '',
+    ].filter(Boolean).join(' • ')
     : '';
   const schedulerLog = readSchedulerLogTail(workspaceRoot);
   const schedulerBase = schedulerStatusPayload();
@@ -6533,8 +6600,8 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
     message: schedulerBase.running
       ? schedulerBase.message
       : (schedulerLog.externallyActive
-          ? `External scheduler activity detected (${schedulerLog.updatedAt || 'recent log update'}).`
-          : schedulerBase.message),
+        ? `External scheduler activity detected (${schedulerLog.updatedAt || 'recent log update'}).`
+        : schedulerBase.message),
     logTail: schedulerLog.tail,
     logPath: schedulerLog.path,
     updatedAt: schedulerLog.updatedAt,
@@ -6580,45 +6647,45 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
       : 'idle');
   const dailyEngineReportDetail = engineDailyReport.exists
     ? [
-        engineDailyReport.summary,
-        engineDailyReport.recommendedFocus ? `Focus ${engineDailyReport.recommendedFocus}` : '',
-        engineDailyReport.topIssuesText ? `Top issues ${engineDailyReport.topIssuesText}` : '',
-        engineDailyReport.canonicalMarkdownPath || '',
-      ].filter(Boolean).join(' • ')
+      engineDailyReport.summary,
+      engineDailyReport.recommendedFocus ? `Focus ${engineDailyReport.recommendedFocus}` : '',
+      engineDailyReport.topIssuesText ? `Top issues ${engineDailyReport.topIssuesText}` : '',
+      engineDailyReport.canonicalMarkdownPath || '',
+    ].filter(Boolean).join(' • ')
     : '';
   const engineValue = engineHasLiveSummary
     ? `${Number(liveEngineSummary.passRate || 0)}% pass`
     : (assistantDashboard.recent_count ? `${Number(assistantDashboard.pass_rate || 0)}% pass` : 'No runs yet');
   const engineLeadDetail = engineHasLiveSummary
     ? [
-        `${Number(liveEngineSummary.failCount || 0)} fail`,
-        `${Number(liveEngineSummary.blockedCount || 0)} blocked`,
-        `${Number(liveEngineSummary.skippedCount || 0)} skipped`,
-        `${Number(liveEngineSummary.reviewRequiredRate || 0)}% review required`,
-        `avg repairs ${Number(liveEngineSummary.averageRepairAttempts || 0)}`,
-      ].join(' • ')
+      `${Number(liveEngineSummary.failCount || 0)} fail`,
+      `${Number(liveEngineSummary.blockedCount || 0)} blocked`,
+      `${Number(liveEngineSummary.skippedCount || 0)} skipped`,
+      `${Number(liveEngineSummary.reviewRequiredRate || 0)}% review required`,
+      `avg repairs ${Number(liveEngineSummary.averageRepairAttempts || 0)}`,
+    ].join(' • ')
     : `${Number(assistantDashboard.blocked_count || 0)} blocked • ${Number(assistantDashboard.skipped_count || 0)} skipped`;
   const engineFocusDetail = engineHasLiveSummary
     ? [
-        liveEngineSummary.latestProblemSummary ? `Focus ${liveEngineSummary.latestProblemSummary}` : '',
-        engineFingerprintSummary,
-        engineDecisionSummary,
-      ].filter(Boolean).join(' • ')
+      liveEngineSummary.latestProblemSummary ? `Focus ${liveEngineSummary.latestProblemSummary}` : '',
+      engineFingerprintSummary,
+      engineDecisionSummary,
+    ].filter(Boolean).join(' • ')
     : [
-        latestRetryPolicy.action ? `retry ${latestRetryPolicy.action}` : '',
-        engineFingerprintSummary,
-        engineDecisionSummary,
-        dailyEngineReportDetail,
-      ].filter(Boolean).join(' • ');
+      latestRetryPolicy.action ? `retry ${latestRetryPolicy.action}` : '',
+      engineFingerprintSummary,
+      engineDecisionSummary,
+      dailyEngineReportDetail,
+    ].filter(Boolean).join(' • ');
   const testsState = latestRuntime?.state === 'fail'
     ? 'fail'
     : latestRuntime?.state === 'skipped'
       ? 'warning'
-    : latestRuntime?.state === 'pass'
-      ? 'ready'
-      : latestRuntime?.state === 'running'
-        ? 'running'
-        : 'idle';
+      : latestRuntime?.state === 'pass'
+        ? 'ready'
+        : latestRuntime?.state === 'running'
+          ? 'running'
+          : 'idle';
   const preflightBlocking = Number(preflight?.blockingCount || 0);
   const managerModel = String(
     assistantConfig.engineBaseModel
@@ -6703,12 +6770,12 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
       value: approvals.total > 0 ? `${approvals.total} waiting` : 'Inbox clear',
       detail: approvals.total > 0
         ? [
-            `${approvals.pending} pending`,
-            `${approvals.deferred} deferred`,
-            `${approvals.rejected} rejected`,
-            approvals.runtimeGenerated > 0 ? `${approvals.runtimeGenerated} runtime-generated` : '',
-            approvals.lowConfidence > 0 ? `${approvals.lowConfidence} low-confidence` : '',
-          ].filter(Boolean).join(' • ')
+          `${approvals.pending} pending`,
+          `${approvals.deferred} deferred`,
+          `${approvals.rejected} rejected`,
+          approvals.runtimeGenerated > 0 ? `${approvals.runtimeGenerated} runtime-generated` : '',
+          approvals.lowConfidence > 0 ? `${approvals.lowConfidence} low-confidence` : '',
+        ].filter(Boolean).join(' • ')
         : 'No manual approvals needed',
     },
     {
@@ -6759,8 +6826,8 @@ function buildManagerSnapshot(workspaceRoot, context = {}) {
       detail: [
         training.exists
           ? (Number(training.pendingRunsCount || 0) > 0
-              ? `${Number(training.pendingRunsCount || 0)} new run(s) since export`
-              : (training.stale ? 'Export is stale' : 'Dataset current'))
+            ? `${Number(training.pendingRunsCount || 0)} new run(s) since export`
+            : (training.stale ? 'Export is stale' : 'Dataset current'))
           : 'Run training export to build a curated dataset',
         training.localExport?.ready ? `Local export ${training.localExport.format || 'ready'}${training.localExport.baseModel ? ` • ${training.localExport.baseModel}` : ''}` : '',
         training.generatedAt ? `updated ${training.generatedAt}` : '',
@@ -7247,7 +7314,7 @@ function setReviewDecision(relativePath, status, note = '', approvalKey = '') {
     return { ok: false, message: 'Path is required.' };
   }
   const result = applyDecision(getReviewDecisions(), { path: normalizedPath, approvalKey }, status, note);
-  store.set('reviewDecisions', result.decisions);
+  persistReviewDecisions(result.decisions);
   return { ok: true, path: normalizedPath, approvalKey: result.key, decision: result.decision };
 }
 
@@ -7518,6 +7585,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   const chatContext = buildAssistantChatContext(targetWorkspaceRoot, {
     ...(payload.chatContext && typeof payload.chatContext === 'object' ? payload.chatContext : {}),
     chatMode,
+    effectiveChatMode,
     suggestedLaneId: String(chatGuidance.suggestedLaneId || '').trim(),
     suggestedTaskMode: String(chatGuidance.suggestedTaskMode || '').trim(),
     modeAllowsExecution: chatGuidance.modeAllowsExecution,
@@ -7528,6 +7596,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
   });
   learningJournal.recordEvent('chat-prompt', {
     text,
+    surface: 'desktop-chat',
+    source: 'desktop-chat',
     threadId: payload.threadId || '',
     changeSessionId: payload.changeSessionId || '',
     attachmentCount: attachments.length,
@@ -7790,13 +7860,13 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       effectiveChatMode,
       suggestions: effectiveChatMode === 'plan'
         ? [
-            'Turn this plan into a bounded Agent task when you are ready.',
-            'List the checks I should rerun after the slice.',
-          ]
+          'Turn this plan into a bounded Agent task when you are ready.',
+          'List the checks I should rerun after the slice.',
+        ]
         : [
-            roadmap.recommendedNextSafeAction || 'Tell me the next safe action.',
-            'Explain what changed in the latest run.',
-          ],
+          roadmap.recommendedNextSafeAction || 'Tell me the next safe action.',
+          'Explain what changed in the latest run.',
+        ],
       refs: [],
       targetWorkspaceRoot,
       labRoot,
@@ -7808,6 +7878,8 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     chatHistory,
     chatContext: {
       ...chatContext,
+      chatMode: effectiveChatMode,
+      effectiveChatMode,
       suggestedLaneId: String(chatGuidance.suggestedLaneId || chatContext.suggestedLaneId || '').trim(),
       suggestedTaskMode: String(chatGuidance.suggestedTaskMode || chatContext.suggestedTaskMode || '').trim(),
       modeAllowsExecution: chatGuidance.modeAllowsExecution,
@@ -7991,39 +8063,29 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
       return !!(secret.ok && secret.value);
     },
     runAi: async (_root, prompt, options = {}) => {
-      const { runtimeMode, localCmd, ollamaModel, remoteBaseUrl, remoteModel, remoteApiKeyName } = getChatBackendConfig(targetWorkspaceRoot);
+      const { runtimeMode, localCmd, ollamaModel, remoteBaseUrl, remoteModel, remoteApiKeyName } = getChatBackendConfig(targetWorkspaceRoot, options);
       const secret = await getSecret(remoteApiKeyName);
       const env = {};
       const hasSecret = !!(secret.ok && secret.value);
-      const preferRemoteChat = shouldPreferRemoteChatReplies(options);
+      const provider = selectChatReplyBackend({
+        runtimeMode,
+        hasRemoteKey: hasSecret,
+        hasLocalCmd: !!localCmd,
+        canUseOllama: canManageOllama(),
+        options,
+      });
 
-      if (runtimeMode === 'openai') {
-        if (hasSecret) {
-          env.AGENT_PROVIDER = 'openai';
-          env.OPENAI_API_KEY = secret.value;
-          env.OPENAI_MODEL = remoteModel;
-          if (remoteBaseUrl) {
-            env.OPENAI_BASE_URL = remoteBaseUrl;
-          }
-        }
-      } else if (runtimeMode === 'hybrid' && preferRemoteChat && hasSecret) {
+      if (provider === 'openai') {
         env.AGENT_PROVIDER = 'openai';
         env.OPENAI_API_KEY = secret.value;
         env.OPENAI_MODEL = remoteModel;
         if (remoteBaseUrl) {
           env.OPENAI_BASE_URL = remoteBaseUrl;
         }
-      } else if ((runtimeMode === 'local' || runtimeMode === 'hybrid') && localCmd) {
+      } else if (provider === 'local') {
         env.AGENT_PROVIDER = 'local';
         env.LOCAL_AI_CMD = localCmd;
         env.OPENAI_API_KEY = '';
-      } else if (runtimeMode === 'hybrid' && hasSecret && !canManageOllama()) {
-        env.AGENT_PROVIDER = 'openai';
-        env.OPENAI_API_KEY = secret.value;
-        env.OPENAI_MODEL = remoteModel;
-        if (remoteBaseUrl) {
-          env.OPENAI_BASE_URL = remoteBaseUrl;
-        }
       } else {
         env.AGENT_PROVIDER = 'ollama';
         env.OLLAMA_MODEL = ollamaModel;
@@ -8083,7 +8145,7 @@ ipcMain.handle('assistant:chat', async (_event, payload = {}) => {
     goal: null,
     task: null,
     run: null,
-    suggestions: buildAssistantReplySuggestions(text, reply),
+    suggestions: buildAssistantReplySuggestions(text, reply, { chatMode: effectiveChatMode }),
     refs: buildAssistantReplyRefs(chatContext),
     targetWorkspaceRoot,
     labRoot,

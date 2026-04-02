@@ -1,5 +1,6 @@
 'use strict';
 
+const { capabilityLabelForState, normalizeCapabilityState } = require('./capability-status');
 const {
   getChatModeConfig,
   inferChatModeRouting,
@@ -27,12 +28,19 @@ function buildLiveStateSummary(report = {}) {
   const runs = readArea(report, 'runs');
   const models = readArea(report, 'models');
   const autonomy = readArea(report, 'autonomy');
+  const acceptanceCapabilityState = normalizeCapabilityState({
+    capabilityState: acceptance.capabilityState,
+    status: acceptance.status,
+    label: acceptance.capabilityLabel || acceptance.latestAcceptanceLabel,
+    exists: acceptance.exists !== false,
+  });
+  const acceptanceCapabilityLabel = capabilityLabelForState(acceptanceCapabilityState);
   const latestRun = runs.latestRun && typeof runs.latestRun === 'object' ? runs.latestRun : {};
   const lines = [
     `Workspace: ${report.workspaceRoot || ''}`,
     `Roadmap: ${String(roadmap.status || '').toUpperCase()} | ${clipText(roadmap.summary || '', 180)}`,
     `Current phase: ${String(roadmap.currentPhase?.label || '').trim() || 'unknown'}`,
-    `Acceptance: ${String(acceptance.status || '').toUpperCase()} | ${clipText(acceptance.summary || '', 160)}`,
+    `Acceptance: ${acceptanceCapabilityLabel}${acceptance.status ? ` (${String(acceptance.status || '').toUpperCase()})` : ''} | ${clipText(acceptance.summary || '', 160)}`,
     `Trust: ${String(trust.status || '').toUpperCase()} | ${clipText(trust.summary || '', 160)}`,
   ];
   if (latestRun.task || latestRun.summary) {

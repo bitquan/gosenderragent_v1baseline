@@ -7,8 +7,10 @@ const os = require('os');
 const path = require('path');
 
 const {
+  applyLocalModelGuardrailsToConfig,
   buildCheckpointMergeCommand,
   buildModelInstallPresets,
+  buildLocalModelPolicySnapshot,
   buildLocalModelInventory,
   buildTrainingModelSelectorOptions,
   buildTrainingTrustSummary,
@@ -229,6 +231,8 @@ test('training catalog includes the low-memory pullable backup candidates for th
   assert.equal(families.has('starcoder2'), true);
   assert.equal(families.has('codegemma'), true);
   assert.equal(families.has('phi4-mini'), true);
+  assert.equal(Number(models.find((item) => item.id === 'qwen-coder-14b-q4km')?.requirements?.minimumSystemRamGb || 0), 24);
+  assert.equal(Number(models.find((item) => item.id === 'qwen-coder-14b-q4km')?.requirements?.recommendedGpuVramGb || 0), 8);
 });
 
 test('buildLocalModelInventory connects wrapped profiles and foundry candidates through one readiness path', () => {
@@ -364,6 +368,94 @@ test('buildLocalModelInventory distinguishes store-only registrations from live 
   assert.equal(inventory.entries[0].localReady, false);
 });
 
+test('buildLocalModelPolicySnapshot records approved defaults, candidate-only models, and mixed live routes', () => {
+  const snapshot = buildLocalModelPolicySnapshot({
+    baseModel: 'qwen2.5-coder:7b',
+    baseProvider: 'ollama',
+    providerSource: 'ollama',
+    workspaceBaseModel: 'qwen2.5-coder:7b',
+    workspaceBaseProvider: 'ollama',
+    workspaceProviderSource: 'ollama',
+    engineBaseModel: 'qwen2.5-coder:7b',
+    engineBaseProvider: 'ollama',
+    engineProviderSource: 'ollama',
+    taskModeRoutes: {
+      planner: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      repair: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+      validator: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+      summarizer: { provider: 'ollama', model: 'qwen2.5-coder:7b' },
+    },
+  });
+
+  assert.equal(snapshot.approvedDefaults.some((entry) => entry.ollamaModel === 'qwen2.5-coder:7b'), true);
+  assert.equal(snapshot.approvedDefaults.some((entry) => entry.ollamaModel === 'qwen2.5-coder:3b'), true);
+  assert.equal(snapshot.candidateOnlyModels.some((entry) => entry.ollamaModel === 'qwen2.5-coder:14b'), true);
+  assert.equal(snapshot.largerHeadroomModels.some((entry) => entry.ollamaModel === 'qwen2.5-coder:14b'), true);
+  assert.equal(snapshot.mixedLiveState, true);
+  assert.match(snapshot.currentStateSummary, /Live stack is mixed/i);
+  assert.match(snapshot.currentStateSummary, /qwen2\.5-coder:14b.*candidate-only/i);
+  assert.match(snapshot.approvedDefaultsSummary, /Qwen2\.5 Coder 7B baseline primary/i);
+  assert.match(snapshot.perModelCapSummary, /32 GB cap/i);
+  assert.match(snapshot.activeBundleSummary, /32 GB live-fit/i);
+  assert.match(snapshot.enforcementSummary, /requested qwen2\.5-coder:14b but runs on qwen2\.5-coder:7b/i);
+});
+
+test('applyLocalModelGuardrailsToConfig downgrades oversized local defaults across config fields and wrapped profiles', () => {
+  const guarded = applyLocalModelGuardrailsToConfig({
+    baseModel: 'qwen2.5-coder:14b',
+    baseProvider: 'ollama',
+    providerSource: 'ollama',
+    workspaceBaseModel: 'qwen2.5-coder:14b',
+    workspaceBaseProvider: 'ollama',
+    workspaceProviderSource: 'ollama',
+    engineBaseModel: 'qwen2.5-coder:14b',
+    engineBaseProvider: 'ollama',
+    engineProviderSource: 'ollama',
+    aiWorkspaceWrappedProfileId: 'gs-dev-1-default',
+    aiEngineWrappedProfileId: 'gse-1-engine',
+    aiWrappedProfiles: [
+      {
+        id: 'gs-dev-1-default',
+        role: 'workspace',
+        baseModel: 'qwen2.5-coder:14b',
+        baseProvider: 'ollama',
+        providerSource: 'ollama',
+        taskModeRoutes: {
+          coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+        },
+      },
+      {
+        id: 'gse-1-engine',
+        role: 'engine',
+        baseModel: 'qwen2.5-coder:14b',
+        baseProvider: 'ollama',
+        providerSource: 'ollama',
+        taskModeRoutes: {
+          planner: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+          validator: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+        },
+      },
+    ],
+    taskModeRoutes: {
+      planner: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+      coder: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+      validator: { provider: 'ollama', model: 'qwen2.5-coder:14b' },
+    },
+  });
+
+  assert.equal(guarded.baseModel, 'qwen2.5-coder:7b');
+  assert.equal(guarded.workspaceBaseModel, 'qwen2.5-coder:7b');
+  assert.equal(guarded.engineBaseModel, 'qwen2.5-coder:7b');
+  assert.equal(guarded.taskModeRoutes.planner.model, 'qwen2.5-coder:7b');
+  assert.equal(guarded.taskModeRoutes.coder.model, 'qwen2.5-coder:7b');
+  assert.equal(guarded.aiWrappedProfiles[0].baseModel, 'qwen2.5-coder:7b');
+  assert.equal(guarded.aiWrappedProfiles[0].taskModeRoutes.coder.model, 'qwen2.5-coder:7b');
+  assert.equal(guarded.aiWrappedProfiles[1].baseModel, 'qwen2.5-coder:7b');
+  assert.equal(guarded.aiWrappedProfiles[1].taskModeRoutes.planner.model, 'qwen2.5-coder:7b');
+  assert.equal(guarded.localModelGuardrails.blockedSections.length > 0, true);
+});
+
 test('buildLocalModelInventory discovers adapter exports and checkpoint merges from workspace artifact roots', () => {
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-training-lifecycle-'));
   const artifactsRoot = path.join(workspaceRoot, 'artifacts');
@@ -449,7 +541,7 @@ test('normalizeTrainingTuningSettings applies the Windows hardware target preset
 
   assert.equal(settings.trainingHardwareTarget, 'windows-i9-32gb-rtx4060-8gb');
   assert.equal(settings.trainingProfile, 'high');
-  assert.equal(settings.trainingOllamaModel, 'qwen2.5-coder:14b');
+  assert.equal(settings.trainingOllamaModel, 'qwen2.5-coder:7b');
   assert.equal(settings.hardwareTargetPreset.label.includes('RTX 4060'), true);
 });
 
@@ -463,6 +555,10 @@ test('buildModelInstallPresets includes curated Hugging Face metadata and downlo
   assert.equal(qwen14b.sourcePortal, 'huggingface');
   assert.match(String(qwen14b.sourceUrl || ''), /huggingface\.co\/Qwen\/Qwen2\.5-Coder-14B-Instruct-GGUF/i);
   assert.equal(qwen14b.hardwareRecommended, true);
+  assert.equal(Number(qwen14b.requirements?.minimumSystemRamGb || 0), 24);
+  assert.equal(Number(qwen14b.requirements?.recommendedGpuVramGb || 0), 8);
+  assert.match(String(qwen14b.requirementSummary || ''), /24 GB RAM min/i);
+  assert.match(String(qwen14b.requirementSummary || ''), /8 GB VRAM target/i);
   assert.match(String(qwen14b.downloadCommand || ''), /ollama pull/i);
 });
 

@@ -1,11 +1,14 @@
 'use strict';
 
-const { buildLocalModelInventory } = require('./training-tuning');
+const { applyLocalModelGuardrailsToConfig, buildLocalModelInventory, buildLocalModelPolicySnapshot } = require('./training-tuning');
+const { buildCapabilityDescriptor } = require('./capability-status');
+const { buildEngineModelProofSnapshot, buildEngineModelProofViewModel } = require('./engine-model-proof');
 const {
   CAPABILITY_ROUTE_LANES,
   MODEL_EXECUTION_ROLE_DEFAULTS,
   WRAPPED_PROFILE_ROLE_DEFAULTS,
   resolveLaneExecutionRoleId,
+  normalizeRouteTaskModeId,
   resolveLaneRouteTaskMode,
   resolveLaneWrappedProfileRole,
 } = require('./route-schema');
@@ -90,6 +93,44 @@ const LOCAL_FIRST_BLOCK_PACKS = Object.freeze([
   { taskMode: 'validator', laneId: 'review-verify', label: 'Validator' },
 ]);
 
+const LOCAL_MODEL_PROOF_CAPABILITIES = Object.freeze([
+  { id: 'ask-plan', label: 'Ask/plan' },
+  { id: 'code', label: 'Code' },
+  { id: 'repair', label: 'Repair' },
+  { id: 'review-validate', label: 'Review/validate' },
+  { id: 'docs-guided', label: 'Docs-guided' },
+  { id: 'scaffold-create', label: 'Scaffold/create' },
+  { id: 'clone-lab-autonomy', label: 'Clone-lab autonomy' },
+]);
+
+const DOCS_GUIDED_PROOF_TAGS = Object.freeze([
+  'approved-docs',
+  'docs',
+  'docs-guided',
+  'docs-scout',
+  'research-docs',
+  'trusted-docs',
+]);
+
+const SCAFFOLD_PROOF_TAGS = Object.freeze([
+  'builder',
+  'builder-proof',
+  'create-project',
+  'create_project',
+  'dummy-node-app',
+  'recipe',
+  'scaffold',
+]);
+
+const AUTONOMY_PROOF_TAGS = Object.freeze([
+  'autonomy',
+  'autonomy-proof',
+  'autonomyproof',
+  'clone-lab',
+  'clone_lab',
+  'lab-autonomy',
+]);
+
 function isLocalProvider(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === 'ollama' || normalized === 'local';
@@ -123,13 +164,7 @@ function capabilityLaneModelRole(laneId) {
 }
 
 function normalizeTaskModeId(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'implementer') {
-    return 'coder';
-  }
-  if (normalized === 'release') {
-    return 'summarizer';
-  }
+  const normalized = normalizeRouteTaskModeId(value);
   return GS_DEV1_TASK_MODES.some((item) => item.id === normalized) ? normalized : '';
 }
 
@@ -1007,6 +1042,505 @@ function buildLocalCodingBlockProof(options = {}) {
   };
 }
 
+function clipProofText(value, maxLength = 180) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) {
+    return '';
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}...` : text;
+}
+
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeProofTags(values = []) {
+  return Array.isArray(values)
+    ? Array.from(new Set(values.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)))
+    : [];
+}
+
+function inferProofModelFamily(baseModel = '', fallbackFamily = '') {
+  const fallback = String(fallbackFamily || '').trim().toLowerCase();
+  if (fallback) {
+    return fallback;
+  }
+  const normalized = String(baseModel || '').trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.startsWith('deepseek')) {
+    return 'deepseek-coder';
+  }
+  if (normalized.startsWith('qwen3')) {
+    return 'qwen3';
+  }
+  if (normalized.startsWith('qwen')) {
+    return 'qwen';
+  }
+  if (normalized.startsWith('phi')) {
+    return 'phi';
+  }
+  if (normalized.startsWith('starcoder')) {
+    return 'starcoder';
+  }
+  const family = normalized.split(/[:/]/)[0];
+  return family || normalized;
+}
+
+function collectProofFailureModes(runs = []) {
+  const counts = new Map();
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const label = clipProofText(
+      run?.summary
+      || run?.validationResult?.summary
+      || run?.validationResult?.label
+      || run?.status
+      || 'failed run',
+      120,
+    );
+    if (!label) {
+      continue;
+    }
+    counts.set(label, Number(counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .map(([label, count]) => ({ label, count }));
+}
+
+function findLocalPolicyModelEntry(baseModel = '', localModelPolicy = {}) {
+  const normalized = String(baseModel || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return [
+    ...toArray(localModelPolicy?.approvedDefaults),
+    ...toArray(localModelPolicy?.candidateOnlyModels),
+    ...toArray(localModelPolicy?.largerHeadroomModels),
+  ].find((entry) => {
+    const model = String(entry?.ollamaModel || entry?.baseModel || entry?.id || '').trim().toLowerCase();
+    return model === normalized;
+  }) || null;
+}
+
+function buildLocalModelHeadroom(baseModel = '', localModelPolicy = {}) {
+  const policyEntry = findLocalPolicyModelEntry(baseModel, localModelPolicy);
+  const target = localModelPolicy?.guardrails?.target && typeof localModelPolicy.guardrails.target === 'object'
+    ? localModelPolicy.guardrails.target
+    : {};
+  const bundleBudgetGb = Number(target.effectiveBundleBudgetGb || 0);
+  const requiredRamGb = Number(
+    policyEntry?.requirements?.recommendedSystemRamGb
+    || policyEntry?.requirements?.minimumSystemRamGb
+    || 0,
+  );
+  if (!policyEntry || !bundleBudgetGb || !requiredRamGb) {
+    return {
+      status: 'unknown',
+      capabilityState: 'missing',
+      capabilityLabel: 'MISSING',
+      requiredRamGb,
+      bundleBudgetGb,
+      marginGb: null,
+      summary: 'Headroom is not recorded yet for this model.',
+      shortSummary: 'headroom unknown',
+    };
+  }
+  const marginGb = Number((bundleBudgetGb - requiredRamGb).toFixed(1));
+  const capability = buildCapabilityDescriptor({
+    proven: marginGb >= 0 && String(policyEntry.policyState || '').trim().toLowerCase() === 'approved-default',
+    blocked: marginGb < 0,
+    partial: marginGb >= 0 && String(policyEntry.policyState || '').trim().toLowerCase() !== 'approved-default',
+    exists: true,
+  });
+  const shortSummary = `${requiredRamGb} GB RAM vs ${bundleBudgetGb} GB budget (${marginGb >= 0 ? `${marginGb} GB headroom` : `${Math.abs(marginGb)} GB over`})`;
+  return {
+    status: capability.capabilityState === 'verified'
+      ? 'verified'
+      : capability.capabilityState === 'blocked'
+        ? 'blocked'
+        : 'candidate',
+    ...capability,
+    requiredRamGb,
+    bundleBudgetGb,
+    marginGb,
+    policyState: String(policyEntry.policyState || '').trim().toLowerCase(),
+    largerHeadroom: policyEntry.largerHeadroom === true,
+    summary: `${String(policyEntry.label || baseModel).trim()} uses ${requiredRamGb} GB RAM against the ${bundleBudgetGb} GB live bundle budget, leaving ${marginGb >= 0 ? `${marginGb} GB` : `${Math.abs(marginGb)} GB over budget`}.`,
+    shortSummary,
+  };
+}
+
+function normalizeProofProviderSource(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return isLocalProvider(normalized) ? 'local' : normalized;
+}
+
+function matchProofRunToInventoryEntry(entry = {}, run = {}) {
+  const runProvider = normalizeProofProviderSource(
+    run?.providerSource || inferProviderForModel(run?.baseModel || run?.model || '', entry?.providerSource || 'ollama')
+  );
+  if (runProvider !== 'local') {
+    return false;
+  }
+  const entryBenchmarkId = String(entry?.benchmarkIdentity?.id || '').trim();
+  const runBenchmarkId = String(run?.benchmarkIdentity?.id || run?.id || run?.outputPath || '').trim();
+  if (entryBenchmarkId && runBenchmarkId && entryBenchmarkId === runBenchmarkId) {
+    return true;
+  }
+  const sourceBenchmarks = toArray(entry?.foundryCandidate?.sourceBenchmarks).map((value) => String(value || '').trim()).filter(Boolean);
+  if (runBenchmarkId && sourceBenchmarks.includes(runBenchmarkId)) {
+    return true;
+  }
+  const entryProfileId = String(entry?.wrappedProfileId || '').trim();
+  const runProfileId = String(run?.wrappedProfileId || run?.modelProfileId || run?.profileId || '').trim();
+  const entryBaseModel = String(entry?.baseModel || '').trim();
+  const runBaseModel = String(run?.baseModel || run?.model || '').trim();
+  if (entryProfileId && runProfileId && entryProfileId === runProfileId) {
+    return !entryBaseModel || !runBaseModel || entryBaseModel === runBaseModel;
+  }
+  return !!entryBaseModel && !!runBaseModel && entryBaseModel === runBaseModel;
+}
+
+function resolveAcceptanceProofPack(acceptance = {}) {
+  const control = acceptance?.controlSummary && typeof acceptance.controlSummary === 'object'
+    ? acceptance.controlSummary
+    : {};
+  const report = acceptance?.report && typeof acceptance.report === 'object'
+    ? acceptance.report
+    : {};
+  return {
+    autonomyProof: control.autonomyProof && typeof control.autonomyProof === 'object'
+      ? control.autonomyProof
+      : (report.autonomyProof && typeof report.autonomyProof === 'object' ? report.autonomyProof : (acceptance?.autonomyProof || {})),
+    builderProof: control.builderProof && typeof control.builderProof === 'object'
+      ? control.builderProof
+      : (report.builderProof && typeof report.builderProof === 'object' ? report.builderProof : (acceptance?.builderProof || {})),
+    modelParity: control.modelParity && typeof control.modelParity === 'object'
+      ? control.modelParity
+      : (report.modelParity && typeof report.modelParity === 'object' ? report.modelParity : (acceptance?.modelParity || {})),
+  };
+}
+
+function buildAcceptanceCapabilitySignal(capabilityId = '', proofPack = {}, entry = {}, activeWrappedProfile = null, currentWorkspaceBaseModel = '') {
+  const activeProfileId = String(activeWrappedProfile?.id || '').trim();
+  const currentBaseModel = String(currentWorkspaceBaseModel || '').trim();
+  const entryProfileId = String(entry?.wrappedProfileId || '').trim();
+  const entryBaseModel = String(entry?.baseModel || '').trim();
+  const isActiveEntry = (activeProfileId && entryProfileId === activeProfileId)
+    || (currentBaseModel && entryBaseModel === currentBaseModel);
+  if (!isActiveEntry) {
+    return { status: 'missing', summary: '' };
+  }
+  const parityEntries = toArray(proofPack?.modelParity?.entries);
+  const parityPass = (id) => parityEntries.some((item) => String(item?.id || '').trim().toLowerCase() === id && String(item?.status || '').trim().toLowerCase() === 'pass');
+  if (capabilityId === 'ask-plan') {
+    if (parityPass('plan')) {
+      return { status: 'verified', summary: 'Ask/plan is proven by the current model parity pack.' };
+    }
+  }
+  if (capabilityId === 'code') {
+    if (parityPass('edit')) {
+      return { status: 'verified', summary: 'Coding is proven by the current model parity pack.' };
+    }
+  }
+  if (capabilityId === 'repair') {
+    if (parityPass('repair')) {
+      return { status: 'verified', summary: 'Repair is proven by the current model parity pack.' };
+    }
+  }
+  if (capabilityId === 'review-validate') {
+    if (parityPass('validate') || parityPass('review')) {
+      return { status: 'verified', summary: 'Review/validate is proven by the current model parity pack.' };
+    }
+  }
+  if (capabilityId === 'scaffold-create') {
+    const builderStatus = String(proofPack?.builderProof?.status || '').trim().toLowerCase();
+    if (builderStatus === 'pass') {
+      return { status: 'verified', summary: String(proofPack.builderProof.summary || 'Scaffold/create is proven by the current builder proof pack.').trim() };
+    }
+    if (builderStatus) {
+      return { status: ['warn', 'partial'].includes(builderStatus) ? 'next' : 'blocked', summary: String(proofPack?.builderProof?.summary || 'Builder proof is not green yet.').trim() };
+    }
+  }
+  if (capabilityId === 'clone-lab-autonomy') {
+    const autonomyStatus = String(proofPack?.autonomyProof?.status || '').trim().toLowerCase();
+    if (autonomyStatus === 'pass') {
+      return { status: 'verified', summary: String(proofPack.autonomyProof.summary || 'Clone-lab autonomy is proven by the current autonomy proof pack.').trim() };
+    }
+    if (autonomyStatus) {
+      return { status: ['warn', 'partial'].includes(autonomyStatus) ? 'next' : 'blocked', summary: String(proofPack?.autonomyProof?.summary || 'Autonomy proof is not green yet.').trim() };
+    }
+  }
+  return { status: 'missing', summary: '' };
+}
+
+function runMatchesProofCapability(run = {}, capabilityId = '') {
+  const rawTaskMode = String(run?.taskMode || run?.mode || '').trim().toLowerCase();
+  const normalizedTaskMode = normalizeTaskModeId(rawTaskMode) || rawTaskMode;
+  const tags = normalizeProofTags(run?.benchmarkTags);
+  const searchText = [
+    ...tags,
+    String(run?.recipe || '').trim().toLowerCase(),
+    String(run?.taskId || '').trim().toLowerCase(),
+    String(run?.name || '').trim().toLowerCase(),
+    String(run?.summary || '').trim().toLowerCase(),
+  ].join(' ');
+  if (capabilityId === 'ask-plan') {
+    return normalizedTaskMode === 'planner';
+  }
+  if (capabilityId === 'code') {
+    return normalizedTaskMode === 'coder';
+  }
+  if (capabilityId === 'repair') {
+    return normalizedTaskMode === 'repair';
+  }
+  if (capabilityId === 'review-validate') {
+    return normalizedTaskMode === 'validator';
+  }
+  if (capabilityId === 'docs-guided') {
+    return rawTaskMode === 'research' || DOCS_GUIDED_PROOF_TAGS.some((tag) => searchText.includes(tag));
+  }
+  if (capabilityId === 'scaffold-create') {
+    return SCAFFOLD_PROOF_TAGS.some((tag) => searchText.includes(tag));
+  }
+  if (capabilityId === 'clone-lab-autonomy') {
+    return AUTONOMY_PROOF_TAGS.some((tag) => searchText.includes(tag));
+  }
+  return false;
+}
+
+function buildLocalModelCapabilityProof(capability = {}, entry = {}, runs = [], proofPack = {}, activeWrappedProfile = null, currentWorkspaceBaseModel = '') {
+  const matchingRuns = toArray(runs).filter((run) => runMatchesProofCapability(run, capability.id));
+  const passRuns = matchingRuns.filter((run) => benchmarkRunPassed(run));
+  const failedRuns = matchingRuns.filter((run) => !benchmarkRunPassed(run));
+  const latestPassingRun = [...passRuns].sort((left, right) => String(right?.completedAt || '').localeCompare(String(left?.completedAt || '')))[0] || null;
+  const acceptanceSignal = buildAcceptanceCapabilitySignal(capability.id, proofPack, entry, activeWrappedProfile, currentWorkspaceBaseModel);
+  let status = 'locked';
+  let summary = `${capability.label} proof is not recorded yet.`;
+  if (passRuns.length > 0 || acceptanceSignal.status === 'verified') {
+    status = 'verified';
+    summary = passRuns.length > 0
+      ? `${capability.label} proof is recorded through benchmark evidence.`
+      : acceptanceSignal.summary;
+  } else if (failedRuns.length > 0 || acceptanceSignal.status === 'blocked') {
+    status = 'blocked';
+    summary = clipProofText(
+      acceptanceSignal.summary
+      || failedRuns[0]?.summary
+      || failedRuns[0]?.validationResult?.summary
+      || `${capability.label} proof is currently failing.`,
+      140,
+    );
+  } else if (matchingRuns.length > 0 || acceptanceSignal.status === 'next') {
+    status = 'next';
+    summary = clipProofText(
+      acceptanceSignal.summary
+      || `${capability.label} proof has some evidence, but it is not green yet.`,
+      140,
+    );
+  }
+  const descriptor = buildCapabilityDescriptor({
+    proven: status === 'verified',
+    blocked: status === 'blocked',
+    partial: status === 'next',
+    exists: true,
+  });
+  return {
+    id: capability.id,
+    label: capability.label,
+    status,
+    ...descriptor,
+    runCount: matchingRuns.length,
+    passCount: passRuns.length,
+    latestCompletedAt: String(latestPassingRun?.completedAt || '').trim() || null,
+    summary,
+  };
+}
+
+function buildLocalModelProofMatrix(options = {}) {
+  const localModelInventory = options.localModelInventory && typeof options.localModelInventory === 'object'
+    ? options.localModelInventory
+    : {};
+  const localModelPolicy = options.localModelPolicy && typeof options.localModelPolicy === 'object'
+    ? options.localModelPolicy
+    : {};
+  const benchmarkRuns = toArray(options.benchmarkRuns).filter((run) => isLocalProvider(run?.providerSource || inferProviderForModel(run?.baseModel || run?.model || '', 'ollama')));
+  const proofPack = resolveAcceptanceProofPack(options.acceptance || {});
+  const activeWrappedProfile = options.activeWrappedProfile && typeof options.activeWrappedProfile === 'object'
+    ? options.activeWrappedProfile
+    : null;
+  const currentWorkspaceBaseModel = String(options.currentWorkspaceBaseModel || '').trim();
+  const inventoryEntries = toArray(localModelInventory.entries)
+    .filter((entry) => entry && typeof entry === 'object' && isLocalProvider(entry.providerSource || ''));
+  const entries = inventoryEntries.map((entry) => {
+    const relevantRuns = benchmarkRuns.filter((run) => matchProofRunToInventoryEntry(entry, run));
+    const passedRuns = relevantRuns.filter((run) => benchmarkRunPassed(run));
+    const failedRuns = relevantRuns.filter((run) => !benchmarkRunPassed(run));
+    const capabilities = LOCAL_MODEL_PROOF_CAPABILITIES.map((capability) => buildLocalModelCapabilityProof(
+      capability,
+      entry,
+      relevantRuns,
+      proofPack,
+      activeWrappedProfile,
+      currentWorkspaceBaseModel,
+    ));
+    const verifiedCapabilityCount = capabilities.filter((item) => item.status === 'verified').length;
+    const blockedCapabilities = capabilities.filter((item) => item.status === 'blocked');
+    const missingCapabilities = capabilities.filter((item) => item.status === 'locked').map((item) => item.label);
+    const attemptedCapabilities = capabilities.filter((item) => item.status !== 'locked').length;
+    const descriptor = buildCapabilityDescriptor({
+      proven: verifiedCapabilityCount === LOCAL_MODEL_PROOF_CAPABILITIES.length && LOCAL_MODEL_PROOF_CAPABILITIES.length > 0,
+      blocked: blockedCapabilities.length > 0 && verifiedCapabilityCount === 0,
+      partial: verifiedCapabilityCount > 0 || attemptedCapabilities > 0 || relevantRuns.length > 0,
+      exists: true,
+    });
+    const headroom = buildLocalModelHeadroom(entry.baseModel, localModelPolicy);
+    const failureModes = collectProofFailureModes(failedRuns);
+    const successRate = relevantRuns.length > 0 ? Math.round((passedRuns.length / relevantRuns.length) * 100) : 0;
+    const status = descriptor.capabilityState === 'verified'
+      ? 'verified'
+      : descriptor.capabilityState === 'blocked'
+        ? 'blocked'
+        : descriptor.capabilityState === 'candidate'
+          ? 'next'
+          : 'locked';
+    const summary = status === 'verified'
+      ? `${String(entry.label || entry.baseModel || 'Local model').trim()} proves all ${LOCAL_MODEL_PROOF_CAPABILITIES.length} tracked engine capabilities.`
+      : status === 'blocked'
+        ? `${String(entry.label || entry.baseModel || 'Local model').trim()} is blocked on ${blockedCapabilities.map((item) => item.label).join(', ')}.`
+        : `${String(entry.label || entry.baseModel || 'Local model').trim()} proves ${verifiedCapabilityCount}/${LOCAL_MODEL_PROOF_CAPABILITIES.length} tracked capabilities${missingCapabilities.length ? ` and still needs ${missingCapabilities.slice(0, 3).join(', ')}` : ''}.`;
+    return {
+      id: String(entry.id || entry.label || entry.baseModel || '').trim(),
+      label: String(entry.label || entry.baseModel || 'Local model').trim(),
+      kind: String(entry.kind || '').trim(),
+      wrappedProfileId: String(entry.wrappedProfileId || '').trim(),
+      baseModel: String(entry.baseModel || '').trim(),
+      providerSource: String(entry.providerSource || '').trim().toLowerCase(),
+      modelFamily: inferProofModelFamily(entry.baseModel, entry.workerFamily || entry.modelFamily),
+      workerVariantType: String(entry.workerVariantType || '').trim().toLowerCase(),
+      promotionReadiness: String(entry.promotionReadiness || '').trim().toLowerCase(),
+      localReadiness: String(entry.localReadiness || '').trim().toLowerCase(),
+      benchmarkIdentity: entry.benchmarkIdentity || null,
+      foundryCandidate: entry.foundryCandidate || null,
+      capabilityCount: LOCAL_MODEL_PROOF_CAPABILITIES.length,
+      verifiedCapabilityCount,
+      missingCapabilities,
+      blockedCapabilities: blockedCapabilities.map((item) => item.label),
+      status,
+      ...descriptor,
+      summary,
+      headroom,
+      metrics: {
+        runCount: relevantRuns.length,
+        passCount: passedRuns.length,
+        successRate,
+        averageLatencyMs: Math.round(mean(relevantRuns.map((run) => Number(run?.latencyMs || 0)))),
+        averageRepairDepth: Number(mean(relevantRuns.map((run) => Number(run?.repairDepth || 0))).toFixed(2)),
+        averageApprovalCount: Number(mean(relevantRuns.map((run) => Number(run?.approvalCount || 0))).toFixed(2)),
+      },
+      failureModes,
+      latestCompletedAt: relevantRuns.map((run) => String(run?.completedAt || '').trim()).filter(Boolean).sort().slice(-1)[0] || null,
+      capabilities,
+    };
+  }).sort((left, right) => {
+    if (right.verifiedCapabilityCount !== left.verifiedCapabilityCount) {
+      return right.verifiedCapabilityCount - left.verifiedCapabilityCount;
+    }
+    if (right.metrics.successRate !== left.metrics.successRate) {
+      return right.metrics.successRate - left.metrics.successRate;
+    }
+    return left.metrics.averageLatencyMs - right.metrics.averageLatencyMs;
+  });
+
+  const familyBuckets = new Map();
+  for (const entry of entries) {
+    const family = String(entry.modelFamily || inferProofModelFamily(entry.baseModel)).trim().toLowerCase() || 'unknown';
+    const current = familyBuckets.get(family) || {
+      family,
+      runCount: 0,
+      passCount: 0,
+      latencies: [],
+      repairDepths: [],
+      approvalCounts: [],
+      headroomMargins: [],
+      failureModes: new Map(),
+      models: new Set(),
+    };
+    current.runCount += Number(entry.metrics.runCount || 0);
+    current.passCount += Number(entry.metrics.passCount || 0);
+    current.latencies.push(Number(entry.metrics.averageLatencyMs || 0));
+    current.repairDepths.push(Number(entry.metrics.averageRepairDepth || 0));
+    current.approvalCounts.push(Number(entry.metrics.averageApprovalCount || 0));
+    current.models.add(String(entry.baseModel || '').trim());
+    if (Number.isFinite(entry.headroom?.marginGb)) {
+      current.headroomMargins.push(Number(entry.headroom.marginGb));
+    }
+    for (const failure of toArray(entry.failureModes)) {
+      const label = String(failure?.label || '').trim();
+      if (!label) {
+        continue;
+      }
+      current.failureModes.set(label, Number(current.failureModes.get(label) || 0) + Number(failure?.count || 0));
+    }
+    familyBuckets.set(family, current);
+  }
+
+  const families = Array.from(familyBuckets.values()).map((item) => {
+    const successRate = item.runCount > 0 ? Math.round((item.passCount / item.runCount) * 100) : 0;
+    const sortedFailureModes = Array.from(item.failureModes.entries()).sort((left, right) => right[1] - left[1]);
+    const minHeadroom = item.headroomMargins.length > 0 ? Math.min(...item.headroomMargins) : null;
+    const maxHeadroom = item.headroomMargins.length > 0 ? Math.max(...item.headroomMargins) : null;
+    const headroomSummary = minHeadroom === null
+      ? 'headroom unknown'
+      : minHeadroom === maxHeadroom
+        ? `${minHeadroom} GB headroom`
+        : `${minHeadroom} to ${maxHeadroom} GB headroom`;
+    return {
+      family: item.family,
+      label: item.family,
+      models: Array.from(item.models).filter(Boolean),
+      runCount: item.runCount,
+      passCount: item.passCount,
+      successRate,
+      averageLatencyMs: Math.round(mean(item.latencies)),
+      averageRepairDepth: Number(mean(item.repairDepths).toFixed(2)),
+      averageApprovalCount: Number(mean(item.approvalCounts).toFixed(2)),
+      headroomMinGb: minHeadroom,
+      headroomMaxGb: maxHeadroom,
+      topFailureMode: sortedFailureModes[0]?.[0] || '',
+      summary: `${successRate}% success | avg ${Math.round(mean(item.latencies))} ms | ${headroomSummary}${sortedFailureModes[0]?.[0] ? ` | failure ${sortedFailureModes[0][0]}` : ''}`,
+    };
+  }).sort((left, right) => {
+    if (right.successRate !== left.successRate) {
+      return right.successRate - left.successRate;
+    }
+    return left.averageLatencyMs - right.averageLatencyMs;
+  });
+
+  const activeEntry = entries.find((entry) => String(entry.wrappedProfileId || '').trim() === String(activeWrappedProfile?.id || '').trim())
+    || entries.find((entry) => String(entry.baseModel || '').trim() === currentWorkspaceBaseModel)
+    || entries[0]
+    || null;
+  const matrixDescriptor = buildCapabilityDescriptor({
+    capabilityState: activeEntry?.capabilityState || (entries.length > 0 ? 'candidate' : 'missing'),
+  });
+  return {
+    status: activeEntry?.status || 'locked',
+    ...matrixDescriptor,
+    entryCount: entries.length,
+    familyCount: families.length,
+    activeEntryId: String(activeEntry?.id || '').trim(),
+    activeEntry,
+    entries,
+    families,
+    summary: activeEntry
+      ? `${activeEntry.label} proves ${activeEntry.verifiedCapabilityCount}/${activeEntry.capabilityCount} tracked capabilities${activeEntry.missingCapabilities.length ? ` and still needs ${activeEntry.missingCapabilities.slice(0, 3).join(', ')}` : ''}.`
+      : 'No local proof candidates are recorded yet.',
+  };
+}
+
 function inferProviderForModel(model = '', fallbackProvider = 'ollama') {
   const normalized = String(model || '').trim().toLowerCase();
   if (!normalized) {
@@ -1715,10 +2249,46 @@ function buildAiStatus(options = {}) {
   const acceptance = options.acceptance && typeof options.acceptance === 'object' ? options.acceptance : {};
   const profileId = normalizeProfileId(settings.aiProfile);
   const benchmarkSummary = summarizeBenchmarks(benchmarkRuns);
-  const providers = buildProviders(settings, tuningStatus, options);
-  const wrappedProfiles = buildWrappedProfiles(settings, benchmarkSummary, providers);
-  const workspaceWrappedProfileId = normalizeWrappedProfileId(settings.aiWorkspaceWrappedProfileId || settings.aiWrappedProfileId || 'gs-dev-1-default');
-  const engineWrappedProfileId = normalizeWrappedProfileId(settings.aiEngineWrappedProfileId || 'gse-1-engine');
+  const rawProviders = buildProviders(settings, tuningStatus, options);
+  const rawWrappedProfiles = buildWrappedProfiles(settings, benchmarkSummary, rawProviders);
+  const rawWorkspaceWrappedProfileId = normalizeWrappedProfileId(settings.aiWorkspaceWrappedProfileId || settings.aiWrappedProfileId || 'gs-dev-1-default');
+  const rawEngineWrappedProfileId = normalizeWrappedProfileId(settings.aiEngineWrappedProfileId || 'gse-1-engine');
+  const rawWorkspaceWrappedProfile = rawWrappedProfiles.find((profile) => profile.id === rawWorkspaceWrappedProfileId)
+    || rawWrappedProfiles.find((profile) => profile.activeWorkspace)
+    || rawWrappedProfiles.find((profile) => profile.role === 'workspace')
+    || rawWrappedProfiles[0]
+    || null;
+  const rawEngineWrappedProfile = rawWrappedProfiles.find((profile) => profile.id === rawEngineWrappedProfileId)
+    || rawWrappedProfiles.find((profile) => profile.activeEngine)
+    || rawWrappedProfiles.find((profile) => profile.role === 'engine')
+    || rawWorkspaceWrappedProfile
+    || null;
+  const guardrailSeedSettings = {
+    ...settings,
+    baseModel: String(settings.baseModel || rawWorkspaceWrappedProfile?.baseModel || '').trim(),
+    baseProvider: String(settings.baseProvider || rawWorkspaceWrappedProfile?.baseProvider || '').trim().toLowerCase(),
+    providerSource: String(settings.providerSource || rawWorkspaceWrappedProfile?.providerSource || '').trim().toLowerCase(),
+    workspaceBaseModel: String(settings.workspaceBaseModel || rawWorkspaceWrappedProfile?.baseModel || settings.baseModel || '').trim(),
+    workspaceBaseProvider: String(settings.workspaceBaseProvider || rawWorkspaceWrappedProfile?.baseProvider || settings.baseProvider || '').trim().toLowerCase(),
+    workspaceProviderSource: String(settings.workspaceProviderSource || rawWorkspaceWrappedProfile?.providerSource || settings.providerSource || '').trim().toLowerCase(),
+    engineBaseModel: String(settings.engineBaseModel || rawEngineWrappedProfile?.baseModel || settings.workspaceBaseModel || settings.baseModel || '').trim(),
+    engineBaseProvider: String(settings.engineBaseProvider || rawEngineWrappedProfile?.baseProvider || settings.workspaceBaseProvider || settings.baseProvider || '').trim().toLowerCase(),
+    engineProviderSource: String(settings.engineProviderSource || rawEngineWrappedProfile?.providerSource || settings.workspaceProviderSource || settings.providerSource || '').trim().toLowerCase(),
+    taskModeRoutes: {
+      planner: rawEngineWrappedProfile?.taskModeRoutes?.planner || rawWorkspaceWrappedProfile?.taskModeRoutes?.planner || settings.taskModeRoutes?.planner || {},
+      repair: rawWorkspaceWrappedProfile?.taskModeRoutes?.repair || rawEngineWrappedProfile?.taskModeRoutes?.repair || settings.taskModeRoutes?.repair || {},
+      coder: rawWorkspaceWrappedProfile?.taskModeRoutes?.coder || rawEngineWrappedProfile?.taskModeRoutes?.coder || settings.taskModeRoutes?.coder || {},
+      validator: rawEngineWrappedProfile?.taskModeRoutes?.validator || rawWorkspaceWrappedProfile?.taskModeRoutes?.validator || settings.taskModeRoutes?.validator || {},
+      summarizer: rawEngineWrappedProfile?.taskModeRoutes?.summarizer || rawWorkspaceWrappedProfile?.taskModeRoutes?.summarizer || settings.taskModeRoutes?.summarizer || {},
+    },
+  };
+  const effectiveSettings = applyLocalModelGuardrailsToConfig(guardrailSeedSettings, {
+    settings: guardrailSeedSettings,
+  });
+  const providers = buildProviders(effectiveSettings, tuningStatus, options);
+  const wrappedProfiles = buildWrappedProfiles(effectiveSettings, benchmarkSummary, providers);
+  const workspaceWrappedProfileId = normalizeWrappedProfileId(effectiveSettings.aiWorkspaceWrappedProfileId || effectiveSettings.aiWrappedProfileId || 'gs-dev-1-default');
+  const engineWrappedProfileId = normalizeWrappedProfileId(effectiveSettings.aiEngineWrappedProfileId || 'gse-1-engine');
   const workspaceWrappedProfile = wrappedProfiles.find((profile) => profile.id === workspaceWrappedProfileId)
     || wrappedProfiles.find((profile) => profile.activeWorkspace)
     || wrappedProfiles.find((profile) => profile.role === 'workspace')
@@ -1732,19 +2302,19 @@ function buildAiStatus(options = {}) {
   const activeWrappedProfile = workspaceWrappedProfile;
   const telemetry = tuningStatus?.telemetry || {};
   const resourcePolicy = summarizeResourcePolicy(telemetry, providers);
-  const availableModels = buildAvailableModels(settings, tuningStatus);
-  const modelCatalog = buildModelCatalog(settings, tuningStatus, availableModels);
-  const remoteProviderPreset = resolveRemoteProviderPreset(settings);
-  const remoteModelCatalog = buildRemoteModelCatalog(settings);
-  const currentProvider = resolveCurrentProvider(String(settings.runtime || 'ollama').trim().toLowerCase() || 'ollama', providers, settings);
+  const availableModels = buildAvailableModels(effectiveSettings, tuningStatus);
+  const modelCatalog = buildModelCatalog(effectiveSettings, tuningStatus, availableModels);
+  const remoteProviderPreset = resolveRemoteProviderPreset(effectiveSettings);
+  const remoteModelCatalog = buildRemoteModelCatalog(effectiveSettings);
+  const currentProvider = resolveCurrentProvider(String(effectiveSettings.runtime || 'ollama').trim().toLowerCase() || 'ollama', providers, effectiveSettings);
   const currentModel = ['ollama', 'local'].includes(currentProvider)
-    ? String(settings.trainingOllamaModel || settings.model || '').trim()
-    : String(settings.aiRemoteModel || settings.model || remoteProviderPreset.models?.[0]?.id || '').trim();
+    ? String(effectiveSettings.trainingOllamaModel || effectiveSettings.model || '').trim()
+    : String(effectiveSettings.aiRemoteModel || effectiveSettings.model || remoteProviderPreset.models?.[0]?.id || '').trim();
   const derivedModelLabel = ['ollama', 'local'].includes(currentProvider)
     ? (availableModels.find((item) => item.model === currentModel)?.label || currentModel)
     : (remoteModelCatalog.find((item) => item.model === currentModel)?.label || currentModel);
   const baseProvisioning = buildModelProvisioningStatus({
-    settings,
+    settings: effectiveSettings,
     providers,
     availableModels,
     telemetry,
@@ -1753,7 +2323,7 @@ function buildAiStatus(options = {}) {
     workspaceProfile: workspaceWrappedProfile,
     engineProfile: engineWrappedProfile,
   });
-  const capabilityLanes = buildLaneAssignments(settings, benchmarkSummary, providers, tuningStatus, wrappedProfiles);
+  const capabilityLanes = buildLaneAssignments(effectiveSettings, benchmarkSummary, providers, tuningStatus, wrappedProfiles);
   const routeCoverage = buildLocalRouteCoverage(capabilityLanes, availableModels);
   const provisioning = routeCoverage.status !== 'verified' && routeCoverage.missingLiveModels.length > 0 && baseProvisioning.status !== 'fail'
     ? {
@@ -1776,18 +2346,51 @@ function buildAiStatus(options = {}) {
     benchmarkRuns,
     acceptance,
   });
+  const engineModelProof = buildEngineModelProofViewModel(buildEngineModelProofSnapshot({
+    workspaceRoot,
+    acceptanceState: acceptance,
+    assistantConfig: effectiveSettings,
+  }));
+  const localModelPolicy = buildLocalModelPolicySnapshot({
+    baseModel: String(rawWorkspaceWrappedProfile?.baseModel || settings.baseModel || '').trim(),
+    baseProvider: String(rawWorkspaceWrappedProfile?.baseProvider || settings.baseProvider || '').trim().toLowerCase(),
+    providerSource: String(rawWorkspaceWrappedProfile?.providerSource || settings.providerSource || '').trim().toLowerCase(),
+    workspaceBaseModel: String(rawWorkspaceWrappedProfile?.baseModel || settings.workspaceBaseModel || settings.baseModel || '').trim(),
+    workspaceBaseProvider: String(rawWorkspaceWrappedProfile?.baseProvider || settings.workspaceBaseProvider || settings.baseProvider || '').trim().toLowerCase(),
+    workspaceProviderSource: String(rawWorkspaceWrappedProfile?.providerSource || settings.workspaceProviderSource || settings.providerSource || '').trim().toLowerCase(),
+    engineBaseModel: String(rawEngineWrappedProfile?.baseModel || settings.engineBaseModel || settings.workspaceBaseModel || settings.baseModel || '').trim(),
+    engineBaseProvider: String(rawEngineWrappedProfile?.baseProvider || settings.engineBaseProvider || settings.workspaceBaseProvider || settings.baseProvider || '').trim().toLowerCase(),
+    engineProviderSource: String(rawEngineWrappedProfile?.providerSource || settings.engineProviderSource || settings.workspaceProviderSource || settings.providerSource || '').trim().toLowerCase(),
+    taskModeRoutes: {
+      planner: rawEngineWrappedProfile?.taskModeRoutes?.planner || rawWorkspaceWrappedProfile?.taskModeRoutes?.planner || settings.taskModeRoutes?.planner || {},
+      repair: rawWorkspaceWrappedProfile?.taskModeRoutes?.repair || rawEngineWrappedProfile?.taskModeRoutes?.repair || settings.taskModeRoutes?.repair || {},
+      coder: rawWorkspaceWrappedProfile?.taskModeRoutes?.coder || rawEngineWrappedProfile?.taskModeRoutes?.coder || settings.taskModeRoutes?.coder || {},
+      validator: rawEngineWrappedProfile?.taskModeRoutes?.validator || rawWorkspaceWrappedProfile?.taskModeRoutes?.validator || settings.taskModeRoutes?.validator || {},
+      summarizer: rawEngineWrappedProfile?.taskModeRoutes?.summarizer || rawWorkspaceWrappedProfile?.taskModeRoutes?.summarizer || settings.taskModeRoutes?.summarizer || {},
+    },
+  });
   const baseLocalModelInventory = buildLocalModelInventory({
     workspaceRoot,
-    settings,
+    settings: effectiveSettings,
     telemetry,
     wrappedProfiles,
     foundryStatus: options.modelFoundry,
     benchmarkSummary,
+    policySnapshot: localModelPolicy,
   });
   const localModelInventory = {
     ...baseLocalModelInventory,
+    policySnapshot: localModelPolicy,
     routeCoverage,
   };
+  const localModelProofMatrix = buildLocalModelProofMatrix({
+    localModelInventory,
+    localModelPolicy,
+    benchmarkRuns,
+    acceptance,
+    activeWrappedProfile,
+    currentWorkspaceBaseModel: String(workspaceWrappedProfile?.baseModel || effectiveSettings.workspaceBaseModel || '').trim(),
+  });
   const activeLocalInventoryEntry = localModelInventory.entries.find((entry) => (
     entry.kind === 'wrapped-profile'
     && String(entry.wrappedProfileId || '').trim() === String(activeWrappedProfile?.id || '').trim()
@@ -1808,32 +2411,36 @@ function buildAiStatus(options = {}) {
     capabilityLanes,
     modelRoles,
     localCodingProof,
+    engineModelProof,
     localModelInventory,
+    localModelPolicy,
+    localModelProofMatrix,
     providers,
     benchmarkSummary,
     wrappedProfiles,
     taskModes: GS_DEV1_TASK_MODES,
     current: {
       workspaceRoot,
-      runtime: String(settings.runtime || 'ollama').trim().toLowerCase() || 'ollama',
+      runtime: String(effectiveSettings.runtime || 'ollama').trim().toLowerCase() || 'ollama',
       provider: currentProvider,
-      modelLabel: String(settings.model || '').trim(),
+      modelLabel: String(effectiveSettings.model || '').trim(),
       derivedModelLabel,
-      ollamaModel: String(settings.trainingOllamaModel || '').trim() || 'qwen2.5-coder:7b',
+      ollamaModel: String(effectiveSettings.trainingOllamaModel || '').trim() || 'qwen2.5-coder:7b',
       remoteProvider: remoteProviderPreset.id,
       remoteBaseUrl: String(remoteProviderPreset.baseUrl || '').trim(),
-      remoteModel: String(settings.aiRemoteModel || remoteProviderPreset.models?.[0]?.id || '').trim(),
+      remoteModel: String(effectiveSettings.aiRemoteModel || remoteProviderPreset.models?.[0]?.id || '').trim(),
       remoteApiKeyName: String(remoteProviderPreset.apiKeyName || '').trim(),
-      localAiCmd: String(settings.localAiCmd || '').trim(),
-      manualMode: settings.aiManualMode === true,
-      bridgeProfile: String(settings.aiBridgeProfile || 'llama-bridge').trim().toLowerCase() || 'llama-bridge',
-      laneOverrides: normalizeLaneOverrides(settings.aiLaneOverrides),
+      localAiCmd: String(effectiveSettings.localAiCmd || '').trim(),
+      manualMode: effectiveSettings.aiManualMode === true,
+      bridgeProfile: String(effectiveSettings.aiBridgeProfile || 'llama-bridge').trim().toLowerCase() || 'llama-bridge',
+      laneOverrides: normalizeLaneOverrides(effectiveSettings.aiLaneOverrides),
       wrappedProfileId: activeWrappedProfile?.id || '',
       wrappedProfile: activeWrappedProfile,
       workspaceWrappedProfileId: workspaceWrappedProfile?.id || '',
       workspaceWrappedProfile,
       engineWrappedProfileId: engineWrappedProfile?.id || '',
       engineWrappedProfile,
+      localModelGuardrails: effectiveSettings.localModelGuardrails || localModelPolicy.guardrails || null,
       workerFamily: String(activeLocalInventoryEntry?.workerFamily || localModelInventory.workerFamilies?.primary || '').trim(),
       workerVariantId: String(activeLocalInventoryEntry?.workerVariantId || '').trim(),
       workerVariantType: String(activeLocalInventoryEntry?.workerVariantType || '').trim(),

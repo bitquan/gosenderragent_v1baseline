@@ -1,6 +1,6 @@
 # GoSenderr Desktop Agent PC Docs
 
-This folder is the operator handoff for the Windows desktop-agent repo at `E:\dev\projects\gosenderr-desktop-agent-PC`.
+Use `docs/BAT_FEATURE_BOARD.md` first for the live board, command book, cleanup backlog, and active roadmap ownership. This folder is reference material for longer operator guidance after the board points you to the right area.
 
 ## Start here
 

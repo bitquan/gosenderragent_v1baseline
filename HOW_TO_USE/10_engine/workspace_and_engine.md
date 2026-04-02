@@ -1,5 +1,7 @@
 # Workspace And Engine
 
+Use `docs/BAT_FEATURE_BOARD.md` for the active roadmap, gates, cleanup backlog, and baseline ownership. This page is a reference guide for workspace and engine terms.
+
 ## The five roots that matter
 
 `appRoot`
@@ -37,7 +39,7 @@ The app is designed around:
 
 Normal users should think in those terms, or just talk naturally in chat and let the app create them.
 
-## Phase-first roadmap view
+## Phase-first roadmap reference
 
 The MVP roadmap is now phase-first for operators:
 

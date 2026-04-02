@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -57,6 +59,38 @@ print(json.dumps({
   assert.match(String(result.content || ''), /- start in a self-host lab/);
   assert.match(String(result.content || ''), /- keep the main repo untouched/);
   assert.match(String(result.content || ''), /- use Stop to cancel active work/);
+});
+
+test('tool-loop planner keeps explicit multi-file scaffold objectives as bounded create steps', () => {
+  const result = runPythonJson(`
+import json
+from backend.agent.core.tool_loop import _planner_handler
+from backend.agent.core.orchestrator import OrchestrationTask
+
+class FakeOrchestrator:
+  def execute_tool(self, agent_name, tool_name, **kwargs):
+    if tool_name == "list_tasks":
+      return {"ok": True, "todos": [], "count": 0}
+    if tool_name == "search_repo":
+      return {"ok": True, "matches": ["renderer-src/main.tsx"], "ranked_matches": []}
+    raise AssertionError(f"unexpected tool: {tool_name}")
+
+task = OrchestrationTask(
+  objective="Create src/widgets/local-proof-widget.tsx and src/widgets/local-proof-widget.test.tsx with a tiny local proof widget starter.",
+  ticket=None,
+  context={},
+)
+payload = _planner_handler(FakeOrchestrator(), None, task, {})
+steps = [dict(item) for item in list((payload.get("payload") or {}).get("plan", {}).get("steps", []))]
+print(json.dumps(steps))
+`);
+
+  assert.equal(result.length, 2);
+  assert.deepEqual(result.map((item) => item.action), ['synthesize_edit', 'synthesize_edit']);
+  assert.deepEqual(result.map((item) => item.path), [
+    'src/widgets/local-proof-widget.tsx',
+    'src/widgets/local-proof-widget.test.tsx',
+  ]);
 });
 
   test('tool-loop planner recognizes standalone filenames and append objectives as write work', () => {
@@ -512,6 +546,56 @@ print(json.dumps({
         assert.match(String(result.summary || ''), /training-tuning\.js:1|SyntaxError/i);
       });
 
+      test('tool-loop validator keeps the bounded validation command instead of widening to npm test', () => {
+        const result = runPythonJson(`
+      import json
+      from backend.agent.core.tool_loop import _validator_handler
+      from backend.agent.core.orchestrator import OrchestrationTask
+
+      class FakeOrchestrator:
+        def __init__(self):
+          self.calls = []
+        def execute_tool(self, agent_name, tool_name, **kwargs):
+          self.calls.append({"tool": tool_name, "kwargs": dict(kwargs)})
+          if tool_name == "git_status":
+            return {"ok": True, "dirty": True}
+          if tool_name == "run_command":
+            return {
+              "ok": True,
+              "returncode": 0,
+              "stdout": "focused validation passed",
+              "stderr": "",
+            }
+          raise AssertionError(f"unexpected tool: {tool_name}")
+        def pending_approvals(self):
+          return []
+
+      task = OrchestrationTask(
+        objective="Repair the latest failed bounded run and rerun the smallest relevant validation.",
+        ticket=None,
+        context={
+          "project_root": ".",
+          "runtime_context": {
+            "failure_output": {"checks": [{"command": "node --test tests/focused-runtime.test.js"}]},
+          },
+        },
+      )
+      orchestrator = FakeOrchestrator()
+      result = _validator_handler(orchestrator, None, task, {})
+      print(json.dumps({
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "calls": orchestrator.calls,
+        "validation": ((result.get("payload") or {}).get("validation") or {}),
+      }))
+        `);
+
+        assert.equal(result.status, 'completed');
+        assert.equal(result.calls[1].tool, 'run_command');
+        assert.equal(result.calls[1].kwargs.command, 'node --test tests/focused-runtime.test.js');
+        assert.equal(result.validation.results[0].command, 'node --test tests/focused-runtime.test.js');
+      });
+
       test('tool-loop implementer can fall back to a stronger file-only prompt when weaker variants return a shell command or empty patch', () => {
         const result = runPythonJson(`
       import json
@@ -806,4 +890,107 @@ module.exports = {
         assert.equal(result.toolCalls[1].tool, 'edit_file');
         assert.equal(result.lastResult.ok, true);
         assert.match(String(result.lastResult.content || ''), /return left \+ right;/);
+      });
+
+      test('run_tool_loop records changed files from an executed edit even outside git status reporting', () => {
+        const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-loop-runtime-create-'));
+        try {
+          const result = runPythonJson(`
+      import json
+      from pathlib import Path
+      from backend.agent.core.approval import ApprovalGate
+      from backend.agent.core.tool_loop import run_tool_loop
+
+      class FakeProvider:
+        def propose_patch(self, prompt):
+          return """# Local Engine Proof
+
+Recorded through the tool loop runtime path.
+"""
+
+      result = run_tool_loop(
+        project_root=Path(${JSON.stringify(fixtureRoot.replace(/\\/g, '/'))}),
+        objective='Create LOCAL_ENGINE_PROOF.md with a short proof note.',
+        context={
+          'task_mode': 'coder',
+          'lane_id': 'code-main',
+          'steps': [
+            {'action': 'synthesize_edit', 'path': 'LOCAL_ENGINE_PROOF.md'},
+          ],
+        },
+        approval_gate=ApprovalGate(require_controlled=False, require_privileged=False),
+        provider=FakeProvider(),
+      )
+      runtime_context = dict(result.get('runtime_context') or {})
+      runtime_result = dict(result.get('runtime_result') or {})
+      review_bundle = dict(runtime_result.get('review_bundle') or {})
+      print(json.dumps({
+        'ok': result.get('ok'),
+        'status': result.get('status'),
+        'changedFiles': runtime_context.get('changed_files') or [],
+        'changeSummary': review_bundle.get('change_summary') or '',
+      }))
+        `.replace(/^ {6}/gm, ''));
+
+          assert.equal(result.ok, true);
+          assert.equal(result.status, 'completed');
+          assert.ok(Array.isArray(result.changedFiles));
+          assert.equal(result.changedFiles[0].path, 'LOCAL_ENGINE_PROOF.md');
+          assert.match(String(result.changeSummary || ''), /1 changed file\(s\) touched/i);
+          assert.match(String(result.changeSummary || ''), /LOCAL_ENGINE_PROOF\.md/);
+        } finally {
+          fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+      });
+
+      test('run_tool_loop review bundle prefers observed changed files over planned-only paths', () => {
+        const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-loop-runtime-review-'));
+        try {
+          fs.mkdirSync(path.join(fixtureRoot, 'src'), { recursive: true });
+          fs.writeFileSync(path.join(fixtureRoot, 'src', 'runtime-proof.js'), "module.exports = { repaired: false };\n", 'utf8');
+          fs.writeFileSync(path.join(fixtureRoot, 'src', 'runtime-proof.test.js'), "module.exports = { test: true };\n", 'utf8');
+          const result = runPythonJson(`
+      import json
+      from pathlib import Path
+      from backend.agent.core.approval import ApprovalGate
+      from backend.agent.core.tool_loop import run_tool_loop
+
+      class FakeProvider:
+        def propose_patch(self, prompt):
+          return """'use strict';
+
+module.exports = { repaired: true };
+"""
+
+      result = run_tool_loop(
+        project_root=Path(${JSON.stringify(fixtureRoot.replace(/\\/g, '/'))}),
+        objective='Repair src/runtime-proof.js with the smallest safe change.',
+        context={
+          'task_mode': 'repair',
+          'lane_id': 'repair-fast',
+          'steps': [
+            {'action': 'synthesize_edit', 'path': 'src/runtime-proof.js'},
+          ],
+          'editor_context': {
+            'active_file_path': 'src/runtime-proof.test.js',
+            'open_files': ['src/runtime-proof.test.js'],
+          },
+        },
+        approval_gate=ApprovalGate(require_controlled=False, require_privileged=False),
+        provider=FakeProvider(),
+      )
+      runtime_result = dict(result.get('runtime_result') or {})
+      review_bundle = dict(runtime_result.get('review_bundle') or {})
+      print(json.dumps({
+        'reviewBundle': review_bundle,
+        'changedFiles': list((result.get('runtime_context') or {}).get('changed_files') or []),
+      }))
+        `.replace(/^ {6}/gm, ''));
+
+          assert.equal(result.changedFiles[0].path, 'src/runtime-proof.js');
+          assert.match(String(result.reviewBundle.change_summary || ''), /src\/runtime-proof\.js/);
+          assert.doesNotMatch(String(result.reviewBundle.change_summary || ''), /planned file/i);
+        } finally {
+          fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
       });

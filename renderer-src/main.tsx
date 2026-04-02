@@ -2,6 +2,7 @@ import React, { useEffect, useEffectEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { AI_ROUTE_COPY, buildLocalModelProgram, localModelProgramStatusLabel } from './lib/ai-route-copy';
+import { parseChatMarkdownBlocks, tokenizeChatInlineText } from './lib/chat-markdown';
 import { shortPath, formatStamp, summarizeText, makeId } from './lib/format';
 import { createStore, useStoreValue } from './lib/store';
 import type { AssistantChatEvent, AssistantChatProgress, ChatMessage, ChatThread, InspectorState, JsonMap } from './lib/types';
@@ -345,51 +346,69 @@ function latestAssistantMessageId(thread: ChatThread | undefined) {
   return String(latest?.id || '').trim();
 }
 
-function renderChatInlineText(value: string, keyPrefix: string) {
-  return String(value || '').split('\n').map((line, index) => (
-    <React.Fragment key={`${keyPrefix}-${index}`}>
-      {index > 0 ? <br /> : null}
-      {line}
-    </React.Fragment>
-  ));
+function renderChatInlineText(value: string, keyPrefix: string): React.ReactNode[] {
+  const tokens = tokenizeChatInlineText(value);
+  const nodes: React.ReactNode[] = [];
+  let partIndex = 0;
+  for (const token of tokens) {
+    if (token.kind === 'text') {
+      token.value.split('\n').forEach((line, j) => {
+        if (j > 0) nodes.push(<br key={`${keyPrefix}-br-${partIndex++}`} />);
+        if (line) nodes.push(<React.Fragment key={`${keyPrefix}-t-${partIndex++}`}>{line}</React.Fragment>);
+      });
+      continue;
+    }
+    if (token.kind === 'code') {
+      nodes.push(<code key={`${keyPrefix}-ic-${partIndex++}`} className="chat-inline-code">{token.value}</code>);
+      continue;
+    }
+    nodes.push(<strong key={`${keyPrefix}-b-${partIndex++}`}>{token.value}</strong>);
+  }
+  return nodes;
 }
 
 function renderChatMessageBody(text: string, keyPrefix: string) {
-  const blocks = String(text || '')
-    .replace(/\r/g, '')
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
+  const blocks = parseChatMarkdownBlocks(text);
   if (blocks.length === 0) {
     return null;
   }
   return (
     <div className="chat-message-body">
       {blocks.map((block, blockIndex) => {
-        const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
-        if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line))) {
+        if (block.kind === 'code') {
+          return (
+            <pre key={`${keyPrefix}-code-${blockIndex}`} className="chat-code-block">
+              {block.language ? <span className="chat-code-lang">{block.language}</span> : null}
+              <code>{block.code}</code>
+            </pre>
+          );
+        }
+        if (block.kind === 'heading') {
+          return <p key={`${keyPrefix}-h-${blockIndex}`} className="chat-section-heading">{renderChatInlineText(block.text, `${keyPrefix}-h-${blockIndex}`)}</p>;
+        }
+        if (block.kind === 'unordered-list') {
           return (
             <ul key={`${keyPrefix}-ul-${blockIndex}`}>
-              {lines.map((line, itemIndex) => (
+              {block.items.map((item, itemIndex) => (
                 <li key={`${keyPrefix}-ul-${blockIndex}-${itemIndex}`}>
-                  {renderChatInlineText(line.replace(/^[-*]\s+/, ''), `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)}
+                  {renderChatInlineText(item, `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)}
                 </li>
               ))}
             </ul>
           );
         }
-        if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line))) {
+        if (block.kind === 'ordered-list') {
           return (
             <ol key={`${keyPrefix}-ol-${blockIndex}`}>
-              {lines.map((line, itemIndex) => (
+              {block.items.map((item, itemIndex) => (
                 <li key={`${keyPrefix}-ol-${blockIndex}-${itemIndex}`}>
-                  {renderChatInlineText(line.replace(/^\d+\.\s+/, ''), `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)}
+                  {renderChatInlineText(item, `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)}
                 </li>
               ))}
             </ol>
           );
         }
-        return <p key={`${keyPrefix}-p-${blockIndex}`}>{renderChatInlineText(block, `${keyPrefix}-p-${blockIndex}`)}</p>;
+        return <p key={`${keyPrefix}-p-${blockIndex}`}>{renderChatInlineText(block.text, `${keyPrefix}-p-${blockIndex}`)}</p>;
       })}
     </div>
   );
@@ -418,15 +437,15 @@ function buildAssistantProgressState(input: { busyChat: boolean; activeTaskRun: 
   }
   if (input.chatProgress && input.busyChat) {
     return {
-      title: String(input.chatProgress.title || 'Reviewing the workspace'),
-      detail: String(input.chatProgress.detail || 'Checking the current repo context before drafting the reply.'),
+      title: String(input.chatProgress.title || 'Thinking'),
+      detail: String(input.chatProgress.detail || ''),
       showWorkbenchAction: false,
     };
   }
   if (input.busyChat) {
     return {
-      title: 'Reviewing the workspace',
-      detail: 'Checking the current repo context before drafting the reply.',
+      title: 'Thinking',
+      detail: '',
       showWorkbenchAction: false,
     };
   }
@@ -1033,6 +1052,12 @@ function isLocalProvider(value: any) {
 
 function buildLocalModelProgramView(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
   const settings = snapshot?.settings || {};
+  const localModelPolicy = aiStatus?.localModelPolicy && typeof aiStatus.localModelPolicy === 'object'
+    ? aiStatus.localModelPolicy
+    : {};
+  const approvedDefaults = Array.isArray(localModelPolicy.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+  const candidateOnlyModels = Array.isArray(localModelPolicy.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+  const largerHeadroomModels = Array.isArray(localModelPolicy.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
   const localModels = readAiModelOptions(aiStatus, tuning, settings)
     .filter((option) => option.ready && isLocalProvider(option.provider));
   const currentProvider = String(aiStatus?.current?.provider || settings.runtime || 'ollama').trim().toLowerCase();
@@ -1073,6 +1098,13 @@ function buildLocalModelProgramView(snapshot: JsonMap | null, aiStatus: JsonMap 
     modelFoundryCandidateCount: Number(modelFoundry.candidateCount || 0),
     remoteFallbackReady,
     safeModeActive: safeMode.active === true,
+    approvedDefaultCount: approvedDefaults.length,
+    candidateOnlyCount: candidateOnlyModels.length,
+    largerHeadroomCount: largerHeadroomModels.length,
+    approvedDefaultsSummary: String(localModelPolicy.approvedDefaultsSummary || '').trim(),
+    candidateOnlySummary: String(localModelPolicy.candidateOnlySummary || '').trim(),
+    largerHeadroomSummary: String(localModelPolicy.largerHeadroomSummary || '').trim(),
+    currentStateSummary: String(localModelPolicy.currentStateSummary || '').trim(),
   });
 }
 
@@ -1117,6 +1149,37 @@ function evaluateTunePodRequirementFit(
     fits: blockers.length === 0,
     blockers,
   };
+}
+
+function buildTunePodModelPolicyMap(localModelPolicy: JsonMap | null) {
+  const modelPolicyMap = new Map<string, { label: string; status: string }>();
+  const approvedDefaults = Array.isArray(localModelPolicy?.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+  const candidateOnlyModels = Array.isArray(localModelPolicy?.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+  const largerHeadroomModels = Array.isArray(localModelPolicy?.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
+  approvedDefaults.forEach((entry: JsonMap) => {
+    const model = String(entry?.model || entry?.ollamaModel || '').trim();
+    if (model) {
+      modelPolicyMap.set(model, { label: 'approved default', status: 'ready' });
+    }
+  });
+  candidateOnlyModels.forEach((entry: JsonMap) => {
+    const model = String(entry?.model || entry?.ollamaModel || '').trim();
+    if (model) {
+      modelPolicyMap.set(model, { label: 'candidate-only', status: 'candidate' });
+    }
+  });
+  largerHeadroomModels.forEach((entry: JsonMap) => {
+    const model = String(entry?.model || entry?.ollamaModel || '').trim();
+    if (model && !modelPolicyMap.has(model)) {
+      modelPolicyMap.set(model, { label: 'larger-headroom', status: 'warning' });
+    }
+  });
+  return modelPolicyMap;
+}
+
+function readTunePodPresetPolicy(preset: JsonMap, modelPolicyMap: Map<string, { label: string; status: string }>) {
+  const presetModel = String(preset?.ollamaModel || '').trim();
+  return presetModel ? modelPolicyMap.get(presetModel) || null : null;
 }
 
 function buildTunePodGuidance(snapshot: JsonMap | null, aiStatus: JsonMap | null, tuning: JsonMap | null) {
@@ -1299,8 +1362,8 @@ function App() {
             ...current,
             liveChatProgress: {
               requestId,
-              title: String(event.title || 'Reviewing the workspace'),
-              detail: String(event.detail || 'Checking the current repo context before drafting the reply.'),
+              title: String(event.title || 'Thinking'),
+              detail: String(event.detail || 'Starting the reply with the active file and repo context.'),
               createdAt: eventAt,
             },
           };
@@ -1499,12 +1562,16 @@ function App() {
       activeChatRequestId: requestId,
       activeChatThreadId: currentThread.id,
       activeChatMessageId: assistantMessageId,
-      liveChatProgress: {
-        requestId,
-        title: 'Reviewing the workspace',
-        detail: 'Checking the current repo context before drafting the reply.',
-        createdAt,
-      },
+      liveChatProgress: (() => {
+        const mode = String(store.getState().snapshot?.settings?.chatMode || 'auto').toLowerCase();
+        const title = mode === 'plan' ? 'Planning' : mode === 'agent' ? 'Working' : mode === 'edit' ? 'Preparing' : 'Thinking';
+        const detail = mode === 'plan' ? 'Mapping the next step…'
+          : mode === 'agent' ? 'Starting the task…'
+          : mode === 'edit' ? 'Reading the file and context…'
+          : mode === 'ask' ? 'One moment…'
+          : 'Starting the reply…';
+        return { requestId, title, detail, createdAt };
+      })(),
       composerText: '',
       pendingAttachments: [],
       error: '',
@@ -3005,11 +3072,10 @@ function WorkbenchPanel(props: {
               {liveProgress ? (
                 <section className="queue-card assistant-progress-card">
                   <div className="assistant-progress-header">
-                    <div className="eyebrow">Live progress</div>
-                    <span className="status-inline-chip">Separate from reply text</span>
+                    <span className="chat-progress-indicator" aria-hidden="true" />
+                    <strong className="chat-progress-title">{liveProgress.title}</strong>
                   </div>
-                  <strong>{liveProgress.title}</strong>
-                  <p>{liveProgress.detail}</p>
+                  {liveProgress.detail ? <p className="chat-progress-detail">{liveProgress.detail}</p> : null}
                   {liveProgress.showWorkbenchAction ? (
                     <div className="row-actions">
                       <button className="ghost" onClick={props.onOpenWorkbench}>Open Workbench</button>
@@ -3473,6 +3539,13 @@ function TunePodPanel(props: {
     || selectedHardwareTargetMeta;
   const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
   const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || 'hybrid-default');
+  const localModelPolicy = props.aiStatus?.localModelPolicy && typeof props.aiStatus.localModelPolicy === 'object'
+    ? props.aiStatus.localModelPolicy
+    : {};
+  const approvedDefaults = Array.isArray(localModelPolicy.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+  const candidateOnlyModels = Array.isArray(localModelPolicy.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+  const largerHeadroomModels = Array.isArray(localModelPolicy.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
+  const modelPolicyMap = buildTunePodModelPolicyMap(localModelPolicy);
   const routePolicyMeta = aiRoutingPolicies.find((policy: JsonMap) => String(policy?.id || '') === routePolicyId) || null;
   const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
   const routePolicySummary = String(routePolicyMeta?.summary || '').trim();
@@ -3483,6 +3556,16 @@ function TunePodPanel(props: {
   const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || '');
   const remoteFallbackReady = Boolean(selectedRemoteModel.trim());
   const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
+  const engineModelProof = props.aiStatus?.engineModelProof && typeof props.aiStatus.engineModelProof === 'object'
+    ? props.aiStatus.engineModelProof
+    : {};
+  const engineProofCapabilityLabel = String(engineModelProof.capabilityLabel || '').trim();
+  const engineProofRawLabel = String(engineModelProof.label || '').trim().toUpperCase();
+  const engineProofHeadline = engineProofCapabilityLabel
+    ? (engineProofRawLabel && engineProofRawLabel !== engineProofCapabilityLabel
+        ? `${engineProofCapabilityLabel} (${engineProofRawLabel})`
+        : engineProofCapabilityLabel)
+    : (engineProofRawLabel || 'Not recorded');
   const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb
     ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM • ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` • ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ''}`
     : 'Machine telemetry is still warming up.';
@@ -3503,6 +3586,7 @@ function TunePodPanel(props: {
   const tunePodPresetFit = (preset: JsonMap) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
   const compatibleTunePodPresets = installPresets.filter((preset: JsonMap) => tunePodPresetFit(preset).fits);
   const incompatibleTunePodPresets = installPresets.filter((preset: JsonMap) => !tunePodPresetFit(preset).fits);
+  const tunePodPresetPolicy = (preset: JsonMap) => readTunePodPresetPolicy(preset, modelPolicyMap);
   const readinessCounts = (Array.isArray(tuningLifecycle?.entries) ? tuningLifecycle.entries : []).reduce((accumulator: { live: number; registered: number; staged: number; missing: number }, entry: JsonMap) => {
     const readiness = String(entry?.localReadiness || entry?.installState || '').trim().toLowerCase();
     if (readiness === 'live' || readiness === 'ready') {
@@ -3596,6 +3680,11 @@ function TunePodPanel(props: {
               <div className="eyebrow">Fallback help</div>
               <strong>{remoteFallbackReady ? 'Available when needed' : 'Local only'}</strong>
               <p>{remoteFallbackReady ? `${String(selectedRemoteProvider?.label || 'Remote')} is available as backup help or for quick comparison.` : 'No fallback help is configured. Local models are the main path right now.'}</p>
+            </article>
+            <article className="settings-hero-card">
+              <div className="eyebrow">Engine proof</div>
+              <strong>{engineProofHeadline}</strong>
+              <p>{String(engineModelProof.summary || engineModelProof.nextAction || 'Record the current Python-backed engine proof before treating this setup as verified.')}</p>
             </article>
           </div>
         </section>
@@ -4113,6 +4202,10 @@ function SettingsPanel(props: {
     }
     return accumulator;
   }, {} as Record<string, string>);
+  const localModelPolicy = props.aiStatus?.localModelPolicy && typeof props.aiStatus.localModelPolicy === 'object'
+    ? props.aiStatus.localModelPolicy
+    : null;
+  const modelPolicyMap = buildTunePodModelPolicyMap(localModelPolicy);
   const tunePodReadyModelSet = new Set(aiModelOptions.filter((option) => option.ready).map((option) => option.model));
   const tunePodPresetTargetLabels = (preset: JsonMap) => {
     const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : [])
@@ -4120,6 +4213,7 @@ function SettingsPanel(props: {
       .filter((item: string) => item && item !== 'auto');
     return targetIds.map((targetId: string) => hardwareTargetLabelMap[targetId] || targetId);
   };
+  const tunePodPresetPolicy = (preset: JsonMap) => readTunePodPresetPolicy(preset, modelPolicyMap);
   const tunePodPresetFit = (preset: JsonMap) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
   const compatibleTunePodPresets = installPresets.filter((preset: JsonMap) => tunePodPresetFit(preset).fits);
   const incompatibleTunePodPresets = installPresets.filter((preset: JsonMap) => !tunePodPresetFit(preset).fits);
@@ -5360,6 +5454,16 @@ function SettingsPanel(props: {
               <p>{compatibleTunePodPresets.length > 0 ? 'These presets match the current hardware target.' : 'No curated presets match this target yet.'}</p>
             </article>
             <article className="metric-card">
+              <div className="eyebrow">Approved defaults</div>
+              <strong>{localModelProgram.approvedDefaultCount}</strong>
+              <p>{localModelProgram.approvedDefaultsSummary || 'Approved defaults are not recorded yet.'}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Candidate-only models</div>
+              <strong>{localModelProgram.candidateOnlyCount}</strong>
+              <p>{localModelProgram.candidateOnlySummary || 'Candidate-only models are not recorded yet.'}</p>
+            </article>
+            <article className="metric-card">
               <div className="eyebrow">Local inventory</div>
               <strong>{`${Number(tuningLifecycle.readyCount || 0)} ready • ${Number(tuningLifecycle.localCount || 0)} tracked`}</strong>
               <p>{String(tuningLifecycle.summary || 'Import or stage local models to start proving the daily coding loop.')}</p>
@@ -5416,6 +5520,18 @@ function SettingsPanel(props: {
               <strong>Local inventory status</strong>
               <span>{String(tuningLifecycle.summary || 'No local inventory summary is available yet.')}</span>
             </div>
+            <div className="run-item">
+              <strong>Approved defaults</strong>
+              <span>{localModelProgram.approvedDefaultsSummary || 'Approved defaults are not recorded yet.'}</span>
+            </div>
+            <div className="run-item">
+              <strong>Candidate-only visibility</strong>
+              <span>{localModelProgram.candidateOnlySummary || 'Candidate-only models are not recorded yet.'}</span>
+            </div>
+            <div className="run-item">
+              <strong>Live policy state</strong>
+              <span>{localModelProgram.currentStateSummary || 'Live local policy state is not recorded yet.'}</span>
+            </div>
           </section>
           <section className="queue-card">
             <div className="panel-header">
@@ -5456,6 +5572,7 @@ function SettingsPanel(props: {
               const targetLabels = tunePodPresetTargetLabels(preset);
               const presetModel = String(preset.ollamaModel || '');
               const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+              const policy = tunePodPresetPolicy(preset);
               return (
                 <div key={String(preset.id || preset.label)} className="run-item">
                   <strong>{String(preset.label || preset.id || 'Preset')}</strong>
@@ -5464,6 +5581,7 @@ function SettingsPanel(props: {
                     {preset.sourceLabel ? ` • ${String(preset.sourceLabel)}` : ''}
                     {preset.requirementSummary ? ` • ${String(preset.requirementSummary)}` : ''}
                     {targetLabels.length > 0 ? ` • Fits ${targetLabels.join(' • ')}` : ''}
+                    {policy?.label ? ` • ${policy.label}` : ''}
                     {isReady ? ' • ready locally' : ' • import needed'}
                   </span>
                   <div className="row-actions">
@@ -5494,6 +5612,7 @@ function SettingsPanel(props: {
             {incompatibleTunePodPresets.slice(0, 8).map((preset: JsonMap) => {
               const targetLabels = tunePodPresetTargetLabels(preset);
               const fit = tunePodPresetFit(preset);
+              const policy = tunePodPresetPolicy(preset);
               return (
                 <div key={String(preset.id || preset.label)} className="run-item">
                   <strong>{String(preset.label || preset.id || 'Preset')}</strong>
@@ -5502,6 +5621,7 @@ function SettingsPanel(props: {
                     {preset.requirementSummary ? ` • ${String(preset.requirementSummary)}` : ''}
                     {fit.blockers.length > 0 ? ` • Needs ${fit.blockers.join(' • ')}` : ''}
                     {targetLabels.length > 0 ? ` • Better on ${targetLabels.join(' • ')}` : ' • Use a larger hardware tier'}
+                    {policy?.label ? ` • ${policy.label}` : ''}
                     {preset.sourceLabel ? ` • ${String(preset.sourceLabel)}` : ''}
                   </span>
                 </div>
@@ -5838,6 +5958,9 @@ function MonitorPanel(props: {
   const acceptance = acceptanceState?.report && typeof acceptanceState.report === 'object'
     ? acceptanceState.report
     : {};
+  const acceptanceControl = acceptanceState?.controlSummary && typeof acceptanceState.controlSummary === 'object'
+    ? acceptanceState.controlSummary
+    : {};
   const readiness = props.snapshot?.readiness && typeof props.snapshot.readiness === 'object'
     ? props.snapshot.readiness
     : {};
@@ -5873,6 +5996,23 @@ function MonitorPanel(props: {
     ? props.learningStatus.operatorSupervision
     : {};
   const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+  const engineModelProof = props.aiStatus?.engineModelProof && typeof props.aiStatus.engineModelProof === 'object'
+    ? props.aiStatus.engineModelProof
+    : {};
+  const acceptanceCapabilityLabel = String(acceptanceControl.capabilityLabel || '').trim();
+  const acceptanceRawLabel = String(acceptanceControl.acceptanceLabel || acceptance?.overallStatus || '').trim().toUpperCase();
+  const acceptanceHeadline = acceptanceCapabilityLabel
+    ? (acceptanceRawLabel && acceptanceRawLabel !== acceptanceCapabilityLabel
+        ? `${acceptanceCapabilityLabel} (${acceptanceRawLabel})`
+        : acceptanceCapabilityLabel)
+    : (acceptanceRawLabel || 'Not run yet');
+  const engineProofCapabilityLabel = String(engineModelProof.capabilityLabel || '').trim();
+  const engineProofRawLabel = String(engineModelProof.label || '').trim().toUpperCase();
+  const engineProofHeadline = engineProofCapabilityLabel
+    ? (engineProofRawLabel && engineProofRawLabel !== engineProofCapabilityLabel
+        ? `${engineProofCapabilityLabel} (${engineProofRawLabel})`
+        : engineProofCapabilityLabel)
+    : (engineProofRawLabel || 'Not recorded');
   const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
   const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
   const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === 'object'
@@ -6059,8 +6199,13 @@ function MonitorPanel(props: {
             </article>
             <article className="metric-card">
               <div className="eyebrow">Acceptance</div>
-              <strong>{acceptance?.overallStatus ? String(acceptance.overallStatus).toUpperCase() : 'Not run yet'}</strong>
-              <p>{acceptance?.summary || 'Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result.'}</p>
+              <strong>{acceptanceHeadline}</strong>
+              <p>{acceptance?.summary || acceptanceControl.nextSafeAction || 'Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result.'}</p>
+            </article>
+            <article className="metric-card">
+              <div className="eyebrow">Engine proof</div>
+              <strong>{engineProofHeadline}</strong>
+              <p>{String(engineModelProof.summary || 'Show the current Python-backed engine path and routed model proof here after the next bounded pass.')}</p>
             </article>
             <article className="metric-card">
               <div className="eyebrow">12-month baseline</div>
@@ -6108,6 +6253,32 @@ function MonitorPanel(props: {
               <p className="empty-copy">Run acceptance here or from `npm run engine:acceptance` whenever you want a fresh self-host + dummy lab gate.</p>
             </section>
           ) : null}
+          <section className="queue-card">
+            <div className="eyebrow">Engine model proof</div>
+            <div className="run-item">
+              <strong>{engineProofHeadline}</strong>
+              <span>{String(engineModelProof.summary || 'Run the proof-summary command after the next bounded pass to capture the Python runtime and routed model path.')}</span>
+            </div>
+            {String(engineModelProof.meta || '').trim() ? (
+              <div className="run-item">
+                <strong>Proof details</strong>
+                <span>{String(engineModelProof.meta || '')}</span>
+              </div>
+            ) : null}
+            {String(engineModelProof.routeSummary || '').trim() ? (
+              <div className="run-item">
+                <strong>Routed models</strong>
+                <span>{String(engineModelProof.routeSummary || '')}</span>
+              </div>
+            ) : null}
+            {String(engineModelProof.nextAction || '').trim() ? (
+              <div className="run-item">
+                <strong>Next safe action</strong>
+                <span>{String(engineModelProof.nextAction || '')}</span>
+              </div>
+            ) : null}
+            <p className="empty-copy">This card mirrors the same proof envelope shown in the companion and the CLI markdown artifact.</p>
+          </section>
           {docsVault.exists ? (
             <section className="queue-card">
               <div className="eyebrow">Trusted docs vault</div>

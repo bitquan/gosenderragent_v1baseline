@@ -85,6 +85,109 @@ test('rank_related_files promotes JS and TS implementation imports from tests', 
   }
 });
 
+test('planner ranking promotes explicit objective file paths even when strategy matches miss them', () => {
+  const pythonExecutable = resolvePythonExecutable();
+  if (!pythonExecutable) {
+    test.skip('Python runtime is unavailable for planner ranking regression coverage.');
+    return;
+  }
+
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'planner-explicit-path-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'local-proof-widget.ts'), 'export const widget = true;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'other-widget.ts'), 'export const other = true;\n', 'utf8');
+
+    const script = [
+      'from pathlib import Path',
+      'import importlib.util',
+      'import json',
+      'import sys',
+      'module_path = Path(sys.argv[1])',
+      'project_root = Path(sys.argv[2])',
+      'repo_root = Path(sys.argv[3])',
+      'sys.path.insert(0, str(repo_root / "runtime"))',
+      'spec = importlib.util.spec_from_file_location("planning_service", module_path)',
+      'module = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(module)',
+      'ranked = module._rank_existing_targets(',
+      '    ["src/other-widget.ts"],',
+      '    project_root=project_root,',
+      '    editor_context={},',
+      '    query="Update src/local-proof-widget.ts to add a bounded proof and leave other files alone.",',
+      ')',
+      'print(json.dumps(ranked))',
+    ].join('\n');
+
+    const modulePath = path.join(__dirname, '..', 'runtime', 'backend', 'agent', 'core', 'planning_service.py');
+    const repoRoot = path.join(__dirname, '..');
+    const result = childProcess.spawnSync(pythonExecutable, ['-c', script, modulePath, fixtureRoot, repoRoot], {
+      encoding: 'utf8',
+      cwd: repoRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout || 'planning explicit path regression script failed');
+    const ranked = JSON.parse(String(result.stdout || '[]').trim() || '[]');
+    assert.equal(ranked[0], 'src/local-proof-widget.ts');
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('planner ranking keeps explicit scaffold targets ahead of unrelated matches', () => {
+  const pythonExecutable = resolvePythonExecutable();
+  if (!pythonExecutable) {
+    test.skip('Python runtime is unavailable for scaffold ranking regression coverage.');
+    return;
+  }
+
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'planner-scaffold-path-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'src', 'widgets'), { recursive: true });
+    fs.mkdirSync(path.join(fixtureRoot, 'renderer-src'), { recursive: true });
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'widgets', 'local-proof-widget.tsx'), 'export function Widget() { return null; }\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'widgets', 'local-proof-widget.test.tsx'), 'export const testWidget = true;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'renderer-src', 'main.tsx'), 'export const shell = true;\n', 'utf8');
+
+    const script = [
+      'from pathlib import Path',
+      'import importlib.util',
+      'import json',
+      'import sys',
+      'module_path = Path(sys.argv[1])',
+      'project_root = Path(sys.argv[2])',
+      'repo_root = Path(sys.argv[3])',
+      'sys.path.insert(0, str(repo_root / "runtime"))',
+      'spec = importlib.util.spec_from_file_location("planning_service", module_path)',
+      'module = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(module)',
+      'ranked = module._rank_existing_targets(',
+      '    ["renderer-src/main.tsx"],',
+      '    project_root=project_root,',
+      '    editor_context={},',
+      '    query="Scaffold src/widgets/local-proof-widget.tsx and src/widgets/local-proof-widget.test.tsx as the bounded local proof target.",',
+      ')',
+      'print(json.dumps(ranked))',
+    ].join('\n');
+
+    const modulePath = path.join(__dirname, '..', 'runtime', 'backend', 'agent', 'core', 'planning_service.py');
+    const repoRoot = path.join(__dirname, '..');
+    const result = childProcess.spawnSync(pythonExecutable, ['-c', script, modulePath, fixtureRoot, repoRoot], {
+      encoding: 'utf8',
+      cwd: repoRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout || 'planning scaffold path regression script failed');
+    const ranked = JSON.parse(String(result.stdout || '[]').trim() || '[]');
+    assert.deepEqual(ranked.slice(0, 2), [
+      'src/widgets/local-proof-widget.test.tsx',
+      'src/widgets/local-proof-widget.tsx',
+    ]);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('build_runtime_context seeds repair targets from failing validation output', () => {
   const pythonExecutable = resolvePythonExecutable();
   if (!pythonExecutable) {
@@ -215,6 +318,57 @@ test('build_runtime_context reuses stable baseline sections from the previous co
     assert.equal(payload.calls.docs, 1);
     assert.equal(payload.calls.config, 1);
     assert.deepEqual(payload.first, payload.second);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('build_runtime_context seeds explicit objective paths into related files for coding work', () => {
+  const pythonExecutable = resolvePythonExecutable();
+  if (!pythonExecutable) {
+    test.skip('Python runtime is unavailable for explicit runtime-context ranking coverage.');
+    return;
+  }
+
+  const repoRoot = path.join(__dirname, '..');
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-context-explicit-path-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'target-widget.ts'), 'export const target = true;\n', 'utf8');
+    fs.writeFileSync(path.join(fixtureRoot, 'src', 'background-widget.ts'), 'export const background = true;\n', 'utf8');
+
+    const script = [
+      'from pathlib import Path',
+      'import importlib.util',
+      'import json',
+      'import sys',
+      'repo_root = Path(sys.argv[1])',
+      'project_root = Path(sys.argv[2])',
+      'sys.path.insert(0, str(repo_root / "runtime"))',
+      'module_path = repo_root / "runtime" / "backend" / "agent" / "core" / "runtime_context.py"',
+      'spec = importlib.util.spec_from_file_location("runtime_context", module_path)',
+      'module = importlib.util.module_from_spec(spec)',
+      'spec.loader.exec_module(module)',
+      'context = module.build_runtime_context(',
+      '    project_root,',
+      '    desc="Update src/target-widget.ts with a bounded local proof and keep other files unchanged.",',
+      ')',
+      'print(json.dumps({"related_files": context["related_files"], "related_details": context["related_file_details"]}))',
+    ].join('\n');
+
+    const result = childProcess.spawnSync(pythonExecutable, ['-c', script, repoRoot, fixtureRoot], {
+      encoding: 'utf8',
+      cwd: repoRoot,
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout || 'runtime explicit path regression script failed');
+    const payload = JSON.parse(String(result.stdout || '{}').trim() || '{}');
+    const details = Array.isArray(payload.related_details) ? payload.related_details : [];
+    const targetEntry = details.find((item) => item.path === 'src/target-widget.ts');
+
+    assert.equal(payload.related_files[0], 'src/target-widget.ts');
+    assert.ok(targetEntry, 'expected explicit target entry in runtime context details');
+    assert.match(String((targetEntry.reasons || []).join(' ')), /explicit-query-path/);
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }

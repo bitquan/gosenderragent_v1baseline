@@ -8,12 +8,58 @@ let workbenchController = null;
 
 const WORKBENCH_VIEW_CONTAINER_ID = 'gosenderrSidebar';
 const WORKBENCH_VIEW_ID = 'gosenderr.workbenchView';
+const WORKBENCH_SURFACE_SIDEBAR = 'sidebar';
+const WORKBENCH_SURFACE_PANEL = 'panel';
+const COMPANION_CHAT_MODE_KEY = 'gosenderr.companion.chatMode';
+const COMPANION_CHAT_MODES = ['auto', 'ask', 'plan', 'edit', 'agent'];
+
+const DEFAULT_CHAT_MODE_CONFIG = Object.freeze({
+  auto: {
+    id: 'auto',
+    label: 'Auto',
+    meta: 'Let the manager pick the right behavior for the request and current safety state.',
+    allowsExecution: true,
+    requiresEditConfirmation: false,
+  },
+  ask: {
+    id: 'ask',
+    label: 'Ask',
+    meta: 'Human-style help, explanation, and repo guidance only.',
+    allowsExecution: false,
+    requiresEditConfirmation: false,
+  },
+  plan: {
+    id: 'plan',
+    label: 'Plan',
+    meta: 'Scoped planning, risks, and next steps without launching work.',
+    allowsExecution: false,
+    requiresEditConfirmation: false,
+  },
+  edit: {
+    id: 'edit',
+    label: 'Edit',
+    meta: 'Prepare code changes and diffs, but require explicit confirmation before execution.',
+    allowsExecution: false,
+    requiresEditConfirmation: true,
+  },
+  agent: {
+    id: 'agent',
+    label: 'Agent',
+    meta: 'Bounded execution through the safe engine loop only when current gates allow it.',
+    allowsExecution: true,
+    requiresEditConfirmation: false,
+  },
+});
 
 function getVsCode() {
   if (!vscodeModule) {
     vscodeModule = require('vscode');
   }
   return vscodeModule;
+}
+
+function setVsCodeModuleForTests(moduleOrNull = null) {
+  vscodeModule = moduleOrNull || null;
 }
 
 function asArray(value) {
@@ -95,6 +141,57 @@ function loadEngineContract(repoRoot = '') {
   }
 }
 
+function resolveCompanionChatMode(repoRoot = '', value = 'auto') {
+  const contract = loadEngineContract(repoRoot);
+  if (contract && typeof contract.resolveChatModeValue === 'function') {
+    return contract.resolveChatModeValue(value);
+  }
+  const mode = String(value || 'auto').trim().toLowerCase();
+  return COMPANION_CHAT_MODES.includes(mode) ? mode : 'auto';
+}
+
+function getCompanionChatModeConfig(repoRoot = '', value = 'auto') {
+  const contract = loadEngineContract(repoRoot);
+  if (contract && typeof contract.getChatModeConfig === 'function') {
+    return contract.getChatModeConfig(value);
+  }
+  return DEFAULT_CHAT_MODE_CONFIG[resolveCompanionChatMode(repoRoot, value)] || DEFAULT_CHAT_MODE_CONFIG.auto;
+}
+
+function parseCompanionChatModeDirective(repoRoot = '', value = '') {
+  const contract = loadEngineContract(repoRoot);
+  if (contract && typeof contract.parseChatModeDirective === 'function') {
+    return contract.parseChatModeDirective(value);
+  }
+  const message = String(value || '').trim();
+  const match = message.match(/^\/(auto|ask|plan|edit|agent)(?:\s+(.*))?$/i);
+  if (!match) {
+    return { mode: '', message };
+  }
+  return {
+    mode: resolveCompanionChatMode(repoRoot, match[1]),
+    message: String(match[2] || '').trim(),
+  };
+}
+
+function inferCompanionChatModeState(repoRoot = '', chatMode = 'auto', message = '') {
+  const contract = loadEngineContract(repoRoot);
+  if (contract && typeof contract.inferChatModeRouting === 'function') {
+    return contract.inferChatModeRouting(chatMode, message);
+  }
+  const mode = resolveCompanionChatMode(repoRoot, chatMode);
+  const config = getCompanionChatModeConfig(repoRoot, mode);
+  return {
+    chatMode: mode,
+    effectiveChatMode: mode,
+    suggestedTaskMode: mode === 'plan' ? 'planner' : mode === 'edit' ? 'coder' : mode === 'agent' ? 'coder' : 'chat',
+    suggestedLaneId: mode === 'plan' ? 'plan-reasoning' : mode === 'edit' ? 'code-main' : mode === 'agent' ? 'code-main' : 'chat-fast',
+    modeAllowsExecution: config.allowsExecution,
+    modeRequiresEditConfirmation: config.requiresEditConfirmation,
+    suggestedNextAction: String(config.meta || '').trim(),
+  };
+}
+
 function resolveWorkspaceRoot(vscode) {
   const folders = asArray(vscode.workspace.workspaceFolders);
   const first = folders[0];
@@ -117,6 +214,41 @@ function buildRepairObjective(objective) {
   return `Repair the latest failed run for: ${text}`;
 }
 
+function isExplicitNewTaskRequest(value = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return false;
+  }
+  return /^\/new\b/i.test(text) || /^(new task|different task|switch task|reset task)\s*[:\-]?/i.test(text);
+}
+
+function stripNewTaskDirective(value = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  if (/^\/new\b/i.test(text)) {
+    return text.replace(/^\/new\b\s*/i, '').trim();
+  }
+  return text.replace(/^(new task|different task|switch task|reset task)\s*[:\-]?\s*/i, '').trim();
+}
+
+function buildFocusedFollowupObjective(taskFocus = '', followup = '') {
+  const focus = String(taskFocus || '').trim();
+  const text = String(followup || '').trim();
+  if (!focus) {
+    return text;
+  }
+  if (!text || text.toLowerCase() === focus.toLowerCase()) {
+    return focus;
+  }
+  return [
+    `Stay on this bounded task: ${focus}`,
+    '',
+    `Follow-up within the same task: ${text}`,
+  ].join('\n');
+}
+
 function resolveNextActionCommand(snapshot = {}) {
   return String(snapshot?.nextAction?.command || '').trim().toLowerCase();
 }
@@ -128,6 +260,21 @@ function buildReviewBundleViewModel(snapshot = {}) {
   const reason = clipText(bundle.reason || '', 180);
   const howToFix = clipText(bundle.howToFix || '', 180);
   const changeSummary = clipText(bundle.changeSummary || '', 140);
+  const approvalState = clipText(bundle.approvalState || '', 60);
+  const requestCount = Math.max(0, Number(bundle.requestCount || 0));
+  const primaryFixAction = Array.isArray(bundle.fixActions) && bundle.fixActions.length > 0
+    ? clipText(bundle.fixActions[0] || '', 80)
+    : '';
+  const primaryReviewRequest = Array.isArray(bundle.reviewRequests) && bundle.reviewRequests.length > 0
+    ? clipText(
+      bundle.reviewRequests[0]?.title
+      || bundle.reviewRequests[0]?.summary
+      || bundle.reviewRequests[0]?.objective
+      || '',
+      120,
+    )
+    : '';
+  const trustState = clipText(bundle.trustSummary?.trust_state || '', 40);
   return {
     label: decisionLabel || summary || 'No review bundle yet',
     meta: [
@@ -135,6 +282,11 @@ function buildReviewBundleViewModel(snapshot = {}) {
       reason ? `reason: ${reason}` : '',
       howToFix ? `fix: ${howToFix}` : '',
       changeSummary ? `changes: ${changeSummary}` : '',
+      approvalState ? `approval: ${approvalState}` : '',
+      primaryFixAction ? `action: ${primaryFixAction}` : '',
+      requestCount ? `${String(requestCount)} request${requestCount === 1 ? '' : 's'}` : '',
+      primaryReviewRequest ? `request: ${primaryReviewRequest}` : '',
+      trustState ? `trust: ${trustState}` : '',
       bundle.requiresManualReview ? 'manual review required' : '',
       bundle.pendingCount ? `${String(bundle.pendingCount)} pending` : '',
     ].filter(Boolean).join(' • '),
@@ -143,6 +295,11 @@ function buildReviewBundleViewModel(snapshot = {}) {
     reason,
     howToFix,
     changeSummary,
+    approvalState,
+    requestCount,
+    primaryFixAction,
+    primaryReviewRequest,
+    trustState,
   };
 }
 
@@ -195,7 +352,7 @@ function mergeCompanionMemoryHints(...values) {
 
 function buildSelfHostProofViewModel(value = {}) {
   const proof = value && typeof value === 'object' ? value : {};
-  const label = clipText(proof.label || '', 80);
+  const label = clipText(proof.capabilityLabel || proof.label || '', 80);
   const summary = clipText(proof.summary || '', 180);
   const nextAction = clipText(proof.nextAction || '', 160);
   const blockerSummary = clipText(proof.blockerSummary || '', 160);
@@ -213,7 +370,7 @@ function buildSelfHostProofViewModel(value = {}) {
 
 function buildSelfImprovementProofViewModel(value = {}) {
   const proof = value && typeof value === 'object' ? value : {};
-  const label = clipText(proof.label || '', 80);
+  const label = clipText(proof.capabilityLabel || proof.label || '', 80);
   const summary = clipText(proof.summary || '', 180);
   const nextAction = clipText(proof.nextAction || '', 160);
   return {
@@ -223,6 +380,25 @@ function buildSelfImprovementProofViewModel(value = {}) {
     ].filter(Boolean).join(' • '),
     summary,
     nextAction,
+  };
+}
+
+function buildEngineModelProofViewModel(value = {}) {
+  const proof = value && typeof value === 'object' ? value : {};
+  const label = clipText(proof.capabilityLabel || proof.label || '', 80);
+  const summary = clipText(proof.summary || '', 180);
+  const nextAction = clipText(proof.nextAction || '', 160);
+  const routeSummary = clipText(proof.routeSummary || '', 180);
+  return {
+    label: label || summary || 'No engine model proof yet',
+    meta: [
+      clipText(proof.meta || '', 160),
+      routeSummary ? `routes: ${routeSummary}` : '',
+      nextAction ? `next: ${nextAction}` : '',
+    ].filter(Boolean).join(' • '),
+    summary,
+    nextAction,
+    routeSummary,
   };
 }
 
@@ -257,10 +433,18 @@ function readCompanionGitSummary(repoRoot, workspaceRoot) {
 }
 
 function buildTaskObjective(objective, options = {}) {
+  const summary = String(objective || '').trim();
+  const chatMode = resolveCompanionChatMode(options.repoRoot || '', options.chatMode || 'auto');
+  const effectiveChatMode = resolveCompanionChatMode(options.repoRoot || '', options.effectiveChatMode || chatMode);
   return {
-    summary: String(objective || '').trim(),
+    summary,
     kind: options.retryWithResearch === true ? 'research-retry' : 'coding-task',
     source: 'vscode-companion',
+    taskFocus: String(options.taskFocus || '').trim(),
+    chatMode,
+    effectiveChatMode,
+    suggestedLaneId: String(options.suggestedLaneId || '').trim(),
+    suggestedTaskMode: String(options.suggestedTaskMode || '').trim(),
     loopSteps: ['goal', 'observe', 'research', 'propose', 'apply', 'validate', 'review', 'learn', 'continue-stop'],
   };
 }
@@ -268,6 +452,8 @@ function buildTaskObjective(objective, options = {}) {
 function buildOrchestrateRequest(objective, workspaceRoot, options = {}) {
   const text = String(objective || '').trim();
   const targetRoot = String(workspaceRoot || '').trim();
+  const chatMode = resolveCompanionChatMode(options.repoRoot || '', options.chatMode || 'auto');
+  const effectiveChatMode = resolveCompanionChatMode(options.repoRoot || '', options.effectiveChatMode || chatMode);
   const taskObjective = buildTaskObjective(text, options);
   return {
     action: 'orchestrate',
@@ -278,11 +464,25 @@ function buildOrchestrateRequest(objective, workspaceRoot, options = {}) {
     targetWorkspaceRoot: targetRoot,
     approvalGated: true,
     approvalProtectedOnly: true,
+    chatMode,
+    effectiveChatMode,
+    suggestedLaneId: String(options.suggestedLaneId || '').trim(),
+    suggestedTaskMode: String(options.suggestedTaskMode || '').trim(),
     taskObjective,
+    ui: {
+      chatMode,
+      effectiveChatMode,
+      taskFocus: String(options.taskFocus || '').trim(),
+    },
     metadata: {
       surface: 'vscode-companion',
       retry_with_research: options.retryWithResearch === true,
       source: 'integration-library/extensions/vscode-companion',
+      taskFocus: String(options.taskFocus || '').trim(),
+      chatMode,
+      effectiveChatMode,
+      suggestedLaneId: String(options.suggestedLaneId || '').trim(),
+      suggestedTaskMode: String(options.suggestedTaskMode || '').trim(),
       taskObjective,
     },
   };
@@ -331,6 +531,26 @@ function collectArtifactCandidates(snapshot = {}, result = {}, workspaceRoot = '
   })).filter((candidate) => fs.existsSync(candidate));
 }
 
+function collectReviewDecisionCandidates(snapshot = {}, workspaceRoot = '') {
+  const root = String(workspaceRoot || '').trim();
+  return uniquePaths(
+    asArray(snapshot.changedFiles).map((item) => {
+      const raw = String(item?.path || '').trim();
+      if (!raw) {
+        return '';
+      }
+      if (!root || !path.isAbsolute(raw)) {
+        return raw.replace(/\\/g, '/').replace(/^\/+/, '');
+      }
+      return path.relative(root, raw).replace(/\\/g, '/');
+    }),
+  ).map((relativePath) => ({
+    relativePath,
+    label: path.basename(relativePath),
+    description: relativePath,
+  }));
+}
+
 function resolveProviderSettingsPath(repoRoot) {
   const root = String(repoRoot || '').trim();
   if (!root) {
@@ -374,6 +594,7 @@ function readCompanionSelfHostProof(repoRoot, workspaceRoot) {
     return {};
   }
   try {
+    const { buildCapabilityDescriptor } = require(path.join(root, 'core', 'capability-status.js'));
     const { readLatestAcceptanceReport } = require(path.join(root, 'core', 'engine-acceptance.js'));
     const acceptance = readLatestAcceptanceReport(targetRoot);
     const report = acceptance?.report && typeof acceptance.report === 'object' ? acceptance.report : {};
@@ -381,38 +602,42 @@ function readCompanionSelfHostProof(repoRoot, workspaceRoot) {
     const failing = checks.filter((check) => String(check?.status || '').trim().toLowerCase() === 'fail');
     const passing = checks.filter((check) => String(check?.status || '').trim().toLowerCase() === 'pass');
     const smokeCheck = checks.find((check) => String(check?.id || '').trim() === 'self-host-smoke') || null;
+    const withCapabilityDescriptor = (payload = {}) => ({
+      ...payload,
+      ...buildCapabilityDescriptor(payload),
+    });
     if (checks.length === 0) {
-      return {
+      return withCapabilityDescriptor({
         label: acceptance?.exists ? 'PARTIAL' : 'NOT RUN',
         summary: acceptance?.exists
           ? 'No self-host proof checks are recorded in the latest acceptance bundle yet.'
           : 'No self-host proof is recorded yet.',
         nextAction: 'Run npm run engine:acceptance -- --full-self-host before widening self-work.',
         blockerSummary: '',
-      };
+      });
     }
     if (failing.length > 0) {
-      return {
+      return withCapabilityDescriptor({
         label: 'BLOCKED',
         summary: `${failing.length}/${checks.length} self-host proof check(s) failed.`,
         blockerSummary: String(failing[0]?.summary || failing[0]?.label || 'A self-host proof check failed.').trim(),
         nextAction: String(report?.nextAction || 'Repair the failing self-host proof and rerun the full self-host acceptance suite.').trim(),
-      };
+      });
     }
     if (!smokeCheck) {
-      return {
+      return withCapabilityDescriptor({
         label: 'PARTIAL',
         summary: `Self-host bootstrap/tests passed (${passing.length}/${checks.length}), but smoke proof is still missing.`,
         blockerSummary: '',
         nextAction: 'Run npm run engine:acceptance -- --full-self-host to add smoke proof.',
-      };
+      });
     }
-    return {
+    return withCapabilityDescriptor({
       label: 'PROVEN',
       summary: `Self-host proof passed (${passing.length}/${checks.length}), including smoke.`,
       blockerSummary: '',
       nextAction: 'Keep the next self-host slice bounded and rerun the same proof after meaningful self-work.',
-    };
+    });
   } catch (_error) {
     return {};
   }
@@ -427,6 +652,22 @@ function readCompanionSelfImprovementProof(repoRoot) {
     const { buildSelfImprovementSummary } = require(path.join(root, 'core', 'system-check.js'));
     const summary = buildSelfImprovementSummary(root, '', { dailyTarget: 5 });
     return summary?.proof && typeof summary.proof === 'object' ? summary.proof : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+function readCompanionEngineModelProof(repoRoot, workspaceRoot) {
+  const root = String(repoRoot || '').trim();
+  const targetRoot = String(workspaceRoot || '').trim();
+  if (!root || !targetRoot) {
+    return {};
+  }
+  try {
+    const { buildEngineModelProofSnapshot, buildEngineModelProofViewModel } = require(path.join(root, 'core', 'engine-model-proof.js'));
+    return buildEngineModelProofViewModel(buildEngineModelProofSnapshot({
+      workspaceRoot: targetRoot,
+    }));
   } catch (_error) {
     return {};
   }
@@ -510,6 +751,25 @@ function buildGroundedReplyViewModel(controller, snapshot = {}, chatModeView = {
       reply: '',
     };
   }
+  const prompt = chatModeView.effectiveMode === 'plan'
+    ? (String(controller?.lastObjective || snapshot?.task || '').trim() || 'Plan the safest next slice for the current workspace.')
+    : (String(controller?.lastObjective || snapshot?.task || '').trim() || 'What should I know about the current workspace right now?');
+  const cacheKey = JSON.stringify({
+    repoRoot,
+    workspaceRoot,
+    labRoot: String(snapshot?.selectedLabRoot || '').trim(),
+    prompt,
+    mode: String(chatModeView.mode || 'auto').trim(),
+    effectiveMode: String(chatModeView.effectiveMode || '').trim(),
+    status: String(snapshot?.status || '').trim(),
+    laneId: String(snapshot?.laneId || '').trim(),
+    changedFileCount: Number(snapshot?.changedFileCount || 0),
+    reviewSummary: String(snapshot?.reviewSummary?.summary || '').trim(),
+    nextAction: String(snapshot?.nextAction?.command || '').trim(),
+  });
+  if (controller?.groundedReplyCacheKey === cacheKey && controller?.groundedReplyCacheValue) {
+    return controller.groundedReplyCacheValue;
+  }
   try {
     const { buildGroundedReplyView } = require(path.join(repoRoot, 'core', 'grounded-chat.js'));
     const { buildSystemCheck } = require(path.join(repoRoot, 'core', 'system-check.js'));
@@ -518,20 +778,23 @@ function buildGroundedReplyViewModel(controller, snapshot = {}, chatModeView = {
       targetWorkspaceRoot: workspaceRoot,
       labRoot: String(snapshot?.selectedLabRoot || '').trim(),
     });
-      const prompt = chatModeView.effectiveMode === 'plan'
-        ? (String(controller?.lastObjective || snapshot?.task || '').trim() || 'Plan the safest next slice for the current workspace.')
-        : (String(controller?.lastObjective || snapshot?.task || '').trim() || 'What should I know about the current workspace right now?');
-      return buildGroundedReplyView({
-        chatMode: chatModeView.mode || 'auto',
-        userPrompt: prompt,
-        report,
-      });
+    const view = buildGroundedReplyView({
+      chatMode: chatModeView.mode || 'auto',
+      userPrompt: prompt,
+      report,
+    });
+    controller.groundedReplyCacheKey = cacheKey;
+    controller.groundedReplyCacheValue = view;
+    return view;
   } catch (error) {
-    return {
+    const fallback = {
       label: 'Grounded reply unavailable',
       meta: clipText(error instanceof Error ? error.message : 'Unable to load grounded reply view.', 180),
       reply: '',
     };
+    controller.groundedReplyCacheKey = cacheKey;
+    controller.groundedReplyCacheValue = fallback;
+    return fallback;
   }
 }
 
@@ -592,10 +855,24 @@ function buildStatePayload(controller) {
     readCompanionLearningMemoryHints(controller.repoRoot, controller.workspaceRoot),
   );
   const gitSummaryView = readCompanionGitSummary(controller.repoRoot, controller.workspaceRoot);
-  const chatModeView = buildChatModeViewModel(snapshot || {}, { repoRoot: controller.repoRoot });
+  const selectedChatMode = resolveCompanionChatMode(controller.repoRoot, controller.chatMode || snapshot?.chatMode || 'auto');
+  const currentModeState = inferCompanionChatModeState(controller.repoRoot, selectedChatMode, controller.lastObjective || snapshot?.task || '');
+  const chatModeView = buildChatModeViewModel({
+    ...(snapshot || {}),
+    chatMode: selectedChatMode,
+    effectiveChatMode: snapshot?.effectiveChatMode || selectedChatMode,
+  }, { repoRoot: controller.repoRoot });
+  const currentModelView = buildCompanionModelView({
+    repoRoot: controller.repoRoot,
+    workspaceRoot: controller.workspaceRoot,
+    snapshot,
+    chatMode: selectedChatMode,
+    modeState: currentModeState,
+  });
   const groundedReplyView = buildGroundedReplyViewModel(controller, snapshot || {}, chatModeView);
   const selfHostProof = readCompanionSelfHostProof(controller.repoRoot, controller.workspaceRoot);
   const selfImprovementProof = readCompanionSelfImprovementProof(controller.repoRoot);
+  const engineModelProof = readCompanionEngineModelProof(controller.repoRoot, controller.workspaceRoot);
   return {
     workspaceRoot: controller.workspaceRoot,
     repoRoot: controller.repoRoot,
@@ -603,14 +880,20 @@ function buildStatePayload(controller) {
     running: controller.running,
     statusMessage: controller.statusMessage,
     errorMessage: controller.errorMessage,
+    assistantReply: controller.lastAssistantReply,
     lastObjective: controller.lastObjective,
+    taskFocus: controller.taskFocus,
     logTail: controller.logTail,
+    selectedChatMode,
+    currentModelView,
+    threadEntries: asArray(controller.threadEntries),
     queuedFollowupView: buildQueuedFollowupViewModel(queuedFollowup || {}),
     reviewBundleView: buildReviewBundleViewModel(snapshot || {}),
     memoryHintsView: buildMemoryHintsViewModel(memoryHints),
     chatModeView,
     groundedReplyView,
     gitSummaryView,
+    engineModelProofView: buildEngineModelProofViewModel(engineModelProof),
     selfHostProofView: buildSelfHostProofViewModel(selfHostProof),
     selfImprovementProofView: buildSelfImprovementProofViewModel(selfImprovementProof),
     snapshot: snapshot ? {
@@ -635,12 +918,14 @@ function buildStatePayload(controller) {
       repairAvailable: Boolean(snapshot.repairAvailable),
       recommendedActions: asArray((controller.lastResult || {}).recommendedActions || snapshot.recommendedActions),
       taskObjective: snapshot.taskObjective || {},
+      taskFocus: snapshot.taskFocus || controller.taskFocus || '',
       failureClass: snapshot.failureClass || {},
       recoveryLadder: snapshot.recoveryLadder || {},
       checkpointRef: snapshot.checkpointRef || {},
       interruptRequest: snapshot.interruptRequest || {},
       reviewBundle: snapshot.reviewBundle || {},
-      chatMode: chatModeView.mode,
+      chatMode: snapshot.chatMode || selectedChatMode,
+      effectiveChatMode: snapshot.effectiveChatMode || chatModeView.effectiveMode,
       nextAction: snapshot.nextAction || {},
       queuedFollowup: snapshot.queuedFollowup || {},
       memoryHints,
@@ -649,366 +934,1147 @@ function buildStatePayload(controller) {
   };
 }
 
-function buildWorkbenchHtml() {
+function readCompanionAssistantConfig(repoRoot, workspaceRoot) {
+  const root = String(repoRoot || '').trim();
+  const targetRoot = String(workspaceRoot || '').trim();
+  if (!root || !targetRoot) {
+    return null;
+  }
+  try {
+    const { readAssistantConfig } = require(path.join(root, 'host', 'assistant-config.js'));
+    return readAssistantConfig(targetRoot, { defaultWorkspace: root });
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildCompanionModelView({ repoRoot = '', workspaceRoot = '', snapshot = null, chatMode = 'auto', modeState = null } = {}) {
+  const currentSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  const resolvedModeState = modeState && typeof modeState === 'object'
+    ? modeState
+    : inferCompanionChatModeState(repoRoot, chatMode, '');
+  const config = readCompanionAssistantConfig(repoRoot, workspaceRoot);
+  const contract = loadEngineContract(repoRoot);
+  const routeSelection = config && contract && typeof contract.resolveModelProfileSelection === 'function'
+    ? contract.resolveModelProfileSelection(config, {
+      taskMode: resolvedModeState?.suggestedTaskMode || currentSnapshot.taskMode || '',
+      laneId: resolvedModeState?.suggestedLaneId || currentSnapshot.laneId || '',
+      action: String(currentSnapshot.action || '').trim(),
+    })
+    : null;
+  const active = routeSelection?.active && typeof routeSelection.active === 'object' ? routeSelection.active : {};
+  const provider = String(
+    currentSnapshot.providerSource
+    || active.providerSource
+    || active.baseProvider
+    || ''
+  ).trim().toLowerCase();
+  const displayName = String(
+    currentSnapshot.modelDisplayName
+    || active.modelDisplayName
+    || currentSnapshot.modelProfileId
+    || active.modelProfileId
+    || currentSnapshot.baseModel
+    || active.baseModel
+    || ''
+  ).trim();
+  const baseModel = String(currentSnapshot.baseModel || active.baseModel || '').trim();
+  const detailParts = [
+    provider ? provider : '',
+    baseModel && baseModel !== displayName ? baseModel : '',
+    routeSelection?.modelRole ? `role:${String(routeSelection.modelRole).trim()}` : '',
+  ].filter(Boolean);
+  return {
+    label: clipText(displayName || 'No model', 42),
+    detail: clipText(detailParts.join(' • '), 120),
+    provider,
+    baseModel,
+    modelRole: String(routeSelection?.modelRole || '').trim(),
+    clickable: true,
+  };
+}
+
+function createThreadEntry(role, text, options = {}) {
+  const message = String(text || '').trim();
+  if (!message) {
+    return null;
+  }
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role: String(role || 'assistant').trim().toLowerCase(),
+    text: message,
+    meta: String(options.meta || '').trim(),
+    kind: String(options.kind || 'message').trim().toLowerCase(),
+  };
+}
+
+function appendThreadEntry(controller, role, text, options = {}) {
+  const entry = createThreadEntry(role, text, options);
+  if (!entry) {
+    return;
+  }
+  controller.threadEntries = [...asArray(controller.threadEntries), entry].slice(-40);
+}
+
+function buildCompanionResultReply(snapshot = {}, rawResult = {}, finished = {}) {
+  const runtimeLabel = clipText(snapshot?.laneLabel || snapshot?.taskMode || snapshot?.laneId || '', 80);
+  const summary = clipText(
+    rawResult.summary
+      || rawResult.message
+      || snapshot?.reviewSummary?.summary
+      || snapshot?.runSummary?.summary
+      || snapshot?.testSummary?.summary
+      || '',
+    240,
+  );
+  const nextAction = clipText(snapshot?.nextAction?.summary || snapshot?.nextAction?.label || '', 180);
+  const changedCount = Number(snapshot?.changedFileCount || asArray(snapshot?.changedFiles).length || 0);
+  const parts = [];
+  if (finished?.exitCode === 0) {
+    parts.push(runtimeLabel ? `${runtimeLabel} completed.` : 'Run completed.');
+  } else {
+    parts.push(runtimeLabel ? `${runtimeLabel} finished with a blocked or failing result.` : 'Run finished with a blocked or failing result.');
+  }
+  if (summary) {
+    parts.push(summary);
+  }
+  if (changedCount > 0) {
+    parts.push(`${String(changedCount)} touched file${changedCount === 1 ? '' : 's'} captured.`);
+  }
+  if (nextAction) {
+    parts.push(`Next: ${nextAction}`);
+  }
+  return parts.join(' ');
+}
+
+async function persistCompanionChatMode(controller, value) {
+  const nextMode = resolveCompanionChatMode(controller.repoRoot, value);
+  controller.chatMode = nextMode;
+  await controller.context.workspaceState.update(COMPANION_CHAT_MODE_KEY, nextMode);
+  return nextMode;
+}
+
+function setCompanionReply(controller, message, options = {}) {
+  const text = String(message || '').trim();
+  controller.lastAssistantReply = text;
+  if (options.record !== false && text) {
+    appendThreadEntry(controller, options.role || 'assistant', text, {
+      meta: options.meta,
+      kind: options.kind,
+    });
+  }
+  if (options.keepStatus !== true) {
+    controller.statusMessage = text || controller.statusMessage;
+  }
+  if (options.clearError !== false) {
+    controller.errorMessage = '';
+  }
+}
+
+function buildCompanionHelpText() {
+  return [
+    'Slash commands: /files, /trace, /problems, /taskhub, /sandbox, /settings, /scm, /history, /continue, /research, /repair, /self-improve, /autopilot, /next, /queue, /approve, /reject, /mode <auto|ask|plan|edit|agent>, /new.',
+    'Use /new to clear the current task focus before starting something different.',
+    'You can also start a task with /plan, /edit, /agent, /ask, or /auto followed by the request.',
+  ].join(' ');
+}
+
+function clearCompanionTaskFocus(controller, reply = 'Task focus cleared. Describe the next bounded task when you are ready.') {
+  controller.taskFocus = '';
+  controller.lastObjective = '';
+  controller.lastQueuedFollowup = null;
+  controller.errorMessage = '';
+  setCompanionReply(controller, reply);
+}
+
+async function runCompanionSlashCommand(controller, rawInput) {
+  const vscode = getVsCode();
+  const input = String(rawInput || '').trim();
+  const lower = input.toLowerCase();
+  if (/^\/new\b$/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    clearCompanionTaskFocus(controller);
+    postState(controller);
+    return true;
+  }
+  const modeMatch = input.match(/^\/mode\s+(auto|ask|plan|edit|agent)\b/i);
+  if (modeMatch) {
+    appendThreadEntry(controller, 'user', input);
+    const nextMode = await persistCompanionChatMode(controller, modeMatch[1]);
+    const config = getCompanionChatModeConfig(controller.repoRoot, nextMode);
+    setCompanionReply(controller, nextMode === 'auto'
+      ? 'Auto mode is on. I will choose when to answer, plan, prepare edits, or use the bounded agent loop.'
+      : `Switched to ${String(config.label || nextMode).trim()} mode.`);
+    postState(controller);
+    return true;
+  }
+  if (/^\/help\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    setCompanionReply(controller, buildCompanionHelpText());
+    postState(controller);
+    return true;
+  }
+  if (/^\/(approve|review\s+approve)\b/i.test(lower)) {
+    appendThreadEntry(controller, 'user', input);
+    await updateCompanionReviewDecision(controller, 'approved');
+    return true;
+  }
+  if (/^\/(reject|review\s+reject)\b/i.test(lower)) {
+    appendThreadEntry(controller, 'user', input);
+    await updateCompanionReviewDecision(controller, 'rejected');
+    return true;
+  }
+  if (/^\/continue\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    if (!controller.lastObjective) {
+      await vscode.window.showInformationMessage('Run a bounded task first so the companion has something to continue.');
+      return true;
+    }
+    await runObjective(controller, controller.lastObjective, { retryWithResearch: false });
+    return true;
+  }
+  if (/^\/(research|retry)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    if (!controller.lastObjective) {
+      await vscode.window.showInformationMessage('Run a bounded task first so the companion has something to retry.');
+      return true;
+    }
+    await runObjective(controller, controller.lastObjective, { retryWithResearch: true });
+    return true;
+  }
+  if (/^\/repair\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await runRepairLoopFromCompanion(controller.context, { announce: true });
+    return true;
+  }
+  if (/^\/(self-improve|selfimprove|improve)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await runSelfImproveInBackground(controller.context);
+    return true;
+  }
+  if (/^\/autopilot\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await runAutopilotInBackground(controller.context);
+    return true;
+  }
+  if (/^\/(next|run-next)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await runNextAction(controller.context);
+    return true;
+  }
+  if (/^\/queue\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await queueNextTask(controller.context);
+    return true;
+  }
+  if (/^\/trace\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openTraceDocument(controller);
+    return true;
+  }
+  if (/^\/files\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openTouchedFiles(controller);
+    return true;
+  }
+  if (/^\/taskhub\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openTaskHubDocument(controller);
+    return true;
+  }
+  if (/^\/problems\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await vscode.commands.executeCommand('workbench.actions.view.problems');
+    return true;
+  }
+  if (/^\/sandbox\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openSandboxArtifact(controller);
+    return true;
+  }
+  if (/^\/(settings|provider)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openProviderSettings(controller);
+    return true;
+  }
+  if (/^\/(scm|source-control)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openSourceControlView();
+    return true;
+  }
+  if (/^\/(history|git-history)\b/i.test(input)) {
+    appendThreadEntry(controller, 'user', input);
+    await openGitHistoryView();
+    return true;
+  }
+  return false;
+}
+
+async function updateCompanionReviewDecision(controller, status) {
+  const vscode = getVsCode();
+  if (!controller.repoRoot || !controller.workspaceRoot) {
+    await vscode.window.showWarningMessage('Open the GoSenderr desktop-agent repo workspace before setting review decisions.');
+    return;
+  }
+  const candidates = collectReviewDecisionCandidates(controller.lastSnapshot || {}, controller.workspaceRoot);
+  if (!candidates.length) {
+    await vscode.window.showInformationMessage('No changed files are available yet for review approval.');
+    return;
+  }
+  const selected = candidates.length === 1
+    ? candidates[0]
+    : await vscode.window.showQuickPick(candidates, {
+      placeHolder: `Choose the file to mark as ${status}.`,
+    });
+  if (!selected?.relativePath) {
+    return;
+  }
+
+  const { applyDecision } = require(path.join(controller.repoRoot, 'core', 'review-approval-state.js'));
+  const { readStoredReviewDecisions, writeStoredReviewDecisions } = require(path.join(controller.repoRoot, 'core', 'review-decision-store.js'));
+  const stored = readStoredReviewDecisions(controller.workspaceRoot);
+  const result = applyDecision(stored.decisions, { path: selected.relativePath }, status, '');
+  writeStoredReviewDecisions(controller.workspaceRoot, result.decisions);
+
+  if (controller.lastSnapshot && Array.isArray(controller.lastSnapshot.changedFiles)) {
+    controller.lastSnapshot.changedFiles = controller.lastSnapshot.changedFiles.map((item) => {
+      const itemPath = String(item?.path || '').trim();
+      const normalizedItemPath = itemPath
+        ? (path.isAbsolute(itemPath)
+            ? path.relative(controller.workspaceRoot, itemPath).replace(/\\/g, '/')
+            : itemPath.replace(/\\/g, '/').replace(/^\/+/, ''))
+        : '';
+      if (normalizedItemPath !== selected.relativePath) {
+        return item;
+      }
+      return {
+        ...item,
+        decision: status,
+        note: '',
+      };
+    });
+  }
+  controller.statusMessage = `Marked ${selected.relativePath} as ${status} in the shared review state.`;
+  controller.errorMessage = '';
+  postState(controller);
+  await vscode.window.showInformationMessage(`Marked ${selected.relativePath} as ${status}.`);
+}
+
+function buildWorkbenchHtml(surfaceKind = WORKBENCH_SURFACE_PANEL, options = {}) {
+  const isSidebar = surfaceKind === WORKBENCH_SURFACE_SIDEBAR;
+  const initialPayload = options.initialPayload && typeof options.initialPayload === 'object'
+    ? options.initialPayload
+    : {};
+  const initialPayloadJson = JSON.stringify(initialPayload).replace(/</g, '\\u003c');
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GoSenderr Workbench</title>
+    <title>GoSenderr Chat</title>
     <style>
       body {
         font-family: var(--vscode-font-family);
         color: var(--vscode-foreground);
-        background: var(--vscode-editor-background);
+        background: var(--vscode-sideBar-background, var(--vscode-editor-background));
         margin: 0;
-        padding: 16px;
+        padding: 0;
       }
-      .shell { display: grid; gap: 16px; }
-      .card {
-        border: 1px solid var(--vscode-panel-border);
-        border-radius: 12px;
-        padding: 14px;
+      * {
+        box-sizing: border-box;
+      }
+      .shell {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .surface-header {
+        display: grid;
+        gap: 10px;
+        padding: 10px 12px 6px;
+        border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
+        background: color-mix(in srgb, var(--vscode-sideBar-background) 94%, black 6%);
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+      .surface-label {
+        font-size: 12px;
+        line-height: 1;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.9;
+      }
+      .thread-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .thread-heading {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 4px;
+      }
+      .thread-title {
+        font-size: 12px;
+        line-height: 1.3;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .thread-summary {
+        font-size: 12px;
+        line-height: 1.4;
+        opacity: 0.72;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .thread-focus {
+        max-width: 100%;
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 80%, transparent);
+        background: color-mix(in srgb, var(--vscode-editor-background) 88%, var(--vscode-panel-border));
+        font-size: 11px;
+        line-height: 1.4;
+        font-weight: 600;
+        color: color-mix(in srgb, var(--vscode-foreground) 92%, transparent);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .icon-button {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 82%, transparent);
         background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-panel-border));
+        color: inherit;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        font: inherit;
+        padding: 0;
       }
-      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-      .row button {
+      .icon-button.subtle {
+        opacity: 0.82;
+      }
+      .icon-button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .conversation {
+        flex: 1;
+        overflow: auto;
+        padding: 12px 14px 140px;
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+      .transcript {
+        display: grid;
+        gap: 14px;
+      }
+      .transcript-row {
+        display: grid;
+        gap: 6px;
+      }
+      .transcript-row.user {
+        justify-items: end;
+      }
+      .user-bubble {
+        max-width: min(82%, 320px);
+        background: color-mix(in srgb, var(--vscode-button-background) 22%, var(--vscode-editor-background));
+        border: 1px solid color-mix(in srgb, var(--vscode-button-background) 26%, transparent);
+        border-radius: 18px;
+        padding: 12px 14px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .assistant-copy {
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 14px;
+      }
+      .transcript-meta {
+        font-size: 12px;
+        line-height: 1.4;
+        opacity: 0.7;
+      }
+      .status-copy {
+        font-size: 12px;
+        line-height: 1.45;
+        opacity: 0.72;
+      }
+      .activity-card {
+        display: grid;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 82%, transparent);
+        background: color-mix(in srgb, var(--vscode-editor-background) 94%, var(--vscode-panel-border));
+      }
+      .activity-label {
+        font-size: 11px;
+        line-height: 1;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        opacity: 0.74;
+      }
+      .activity-summary {
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .activity-list {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .activity-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 86%, transparent);
+        background: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--vscode-panel-border));
+        font-size: 11px;
+        line-height: 1.2;
+      }
+      .composer-wrap {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        padding: 10px 12px 12px;
+        background: linear-gradient(to top, var(--vscode-sideBar-background, var(--vscode-editor-background)) 78%, transparent);
+      }
+      .composer-shell {
+        position: relative;
+        border-radius: 16px;
+        border: 1px solid color-mix(in srgb, var(--vscode-focusBorder) 36%, var(--vscode-panel-border));
+        background: color-mix(in srgb, var(--vscode-editor-background) 96%, black 4%);
+        padding: 10px 10px 8px;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+      }
+      .action-popover {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: calc(100% + 8px);
+        display: grid;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 82%, transparent);
+        background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-panel-border));
+      }
+      .action-popover[hidden] {
+        display: none;
+      }
+      .popover-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .popover-label {
+        font-size: 12px;
+        opacity: 0.74;
+      }
+      .composer-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .composer-left {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .composer-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--vscode-panel-border) 86%, transparent);
+        background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-panel-border));
+        font-size: 12px;
+      }
+      .composer-pill.buttonish {
+        cursor: pointer;
+        color: inherit;
+      }
+      .composer-pill.buttonish:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .composer-pill-label {
+        max-width: 160px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .action-button,
+      .send-button {
         border-radius: 999px;
         border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
         background: var(--vscode-button-secondaryBackground);
         color: var(--vscode-button-secondaryForeground);
         padding: 8px 12px;
         cursor: pointer;
+        font: inherit;
       }
-      .row button.primary {
+      .action-grid {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .send-button {
         background: var(--vscode-button-background);
         color: var(--vscode-button-foreground);
+        min-width: 38px;
+        height: 38px;
+        padding: 0 12px;
       }
-      .row button:disabled {
+      .action-button:disabled,
+      .send-button:disabled {
         opacity: 0.5;
         cursor: default;
       }
-      .eyebrow {
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        font-size: 11px;
-        opacity: 0.75;
+      textarea,
+      select,
+      button {
+        font: inherit;
       }
-      h1, h2, h3, p, pre { margin: 0; }
+      textarea,
+      p,
+      pre {
+        margin: 0;
+      }
       textarea {
         width: 100%;
-        min-height: 120px;
-        resize: vertical;
-        border-radius: 12px;
-        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-        background: var(--vscode-input-background);
-        color: var(--vscode-input-foreground);
-        padding: 12px;
-        box-sizing: border-box;
+        min-height: ${isSidebar ? '92px' : '120px'};
+        resize: none;
+        border: none;
+        outline: none;
+        background: transparent;
+        color: var(--vscode-input-foreground, var(--vscode-editor-foreground));
+        padding: 6px 4px 4px;
+        line-height: 1.55;
       }
-      .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-      .meta { font-size: 12px; opacity: 0.85; }
-      .status-ok { color: var(--vscode-testing-iconPassed); }
-      .status-warn { color: var(--vscode-testing-iconQueued); }
-      .status-error { color: var(--vscode-testing-iconFailed); }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 260px;
-        overflow: auto;
-        font-family: var(--vscode-editor-font-family);
-        font-size: 12px;
+      select {
+        border: none;
+        outline: none;
+        background: transparent;
+        color: inherit;
       }
-      ul { margin: 8px 0 0 18px; padding: 0; }
-      li { margin: 4px 0; }
+      .panel-rail {
+        display: ${isSidebar ? 'none' : 'grid'};
+        gap: 10px;
+      }
     </style>
   </head>
-  <body>
+  <body class="surface-${escapeHtml(surfaceKind)}">
     <div class="shell">
-      <section class="card">
-        <div class="eyebrow">GoSenderr Workbench</div>
-        <h1>Shared desktop runtime, now exposed as a VS Code coding surface.</h1>
-        <p id="summary" class="meta" style="margin-top:8px;">Loading workspace status…</p>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Objective</div>
-        <textarea id="objective" placeholder="Describe the bounded coding task you want the engine to work on."></textarea>
-        <div class="row" style="margin-top:12px;">
-          <button id="submit" class="primary">Submit task</button>
-          <button id="continue">Continue</button>
-          <button id="retryResearch">Retry with research</button>
-          <button id="openPanel">Open wide panel</button>
+      <header class="surface-header">
+        <div class="surface-label">CHAT</div>
+        <div class="thread-header">
+          <button class="icon-button subtle" id="threadBack" disabled>&lt;</button>
+          <div class="thread-heading">
+            <div id="threadTitle" class="thread-title">START A BOUNDED CODING TASK</div>
+            <div id="summary" class="thread-summary">Open the GoSenderr desktop-agent repo workspace to start chatting with the shared runtime.</div>
+            <div id="taskFocusBadge" class="thread-focus" hidden>Task focus: waiting for the first bounded task</div>
+          </div>
+          ${isSidebar ? '<button id="openPanel" class="icon-button subtle">[]</button>' : '<div style="width:28px;height:28px;"></div>'}
         </div>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Actions</div>
-        <div class="row" style="margin-top:8px;">
-          <button id="runNextAction" class="primary">Run next safe action</button>
-          <button id="queueNextTask">Queue next task</button>
-          <button id="openSourceControl">Open Source Control</button>
-          <button id="openGitHistory">Open Git history</button>
-          <button id="openTrace">Open trace</button>
-          <button id="openFiles">Open files</button>
-          <button id="openTaskHub">Open task hub</button>
-          <button id="openProblems">Open problems</button>
-          <button id="openSandbox">Open sandbox</button>
-          <button id="openProviderSettings">Provider settings</button>
-        </div>
-      </section>
-      <section class="grid">
-        <div class="card">
-          <div class="eyebrow">Chat mode</div>
-          <h3 id="chatModeLabel">Ask</h3>
-          <p id="chatModeMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Grounded reply</div>
-          <h3 id="groundedLabel">No grounded reply yet</h3>
-          <p id="groundedMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Git</div>
-          <h3 id="gitLabel">No git summary yet</h3>
-          <p id="gitMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Runtime</div>
-          <h3 id="runtimeLabel">Waiting for workspace</h3>
-          <p id="runtimeMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Review</div>
-          <h3 id="reviewLabel">No review yet</h3>
-          <p id="reviewMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Trust</div>
-          <h3 id="trustLabel">No trust summary yet</h3>
-          <p id="trustMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-      </section>
-      <section class="grid">
-        <div class="card">
-          <div class="eyebrow">Objective</div>
-          <h3 id="objectiveLabel">No objective bundle yet</h3>
-          <p id="objectiveMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Recovery ladder</div>
-          <h3 id="recoveryLabel">No recovery state yet</h3>
-          <p id="recoveryMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Interrupt</div>
-          <h3 id="interruptLabel">No interrupt pending</h3>
-          <p id="interruptMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Review bundle</div>
-          <h3 id="bundleLabel">No review bundle yet</h3>
-          <p id="bundleMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Next safe action</div>
-          <h3 id="nextActionLabel">No engine action chosen yet</h3>
-          <p id="nextActionMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Queued follow-up</div>
-          <h3 id="queuedLabel">No queued follow-up yet</h3>
-          <p id="queuedMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Learned guidance</div>
-          <h3 id="memoryLabel">No learned guidance yet</h3>
-          <p id="memoryMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Self-host proof</div>
-          <h3 id="selfHostLabel">No self-host proof yet</h3>
-          <p id="selfHostMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-        <div class="card">
-          <div class="eyebrow">Self-improvement proof</div>
-          <h3 id="selfImproveLabel">No self-improvement proof yet</h3>
-          <p id="selfImproveMeta" class="meta" style="margin-top:8px;"></p>
-        </div>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Touched files</div>
-        <ul id="files"></ul>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Workbench artifacts</div>
-        <ul id="artifacts"></ul>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Recommended next actions</div>
-        <ul id="actions"></ul>
-      </section>
-      <section class="card">
-        <div class="eyebrow">Log tail</div>
-        <pre id="log"></pre>
-      </section>
+      </header>
+      <main class="conversation" id="conversation">
+        <section class="transcript" id="transcript"></section>
+        <section id="activityRail" class="activity-card" hidden>
+          <div id="activityLabel" class="activity-label">Run context</div>
+          <div id="activitySummary" class="activity-summary"></div>
+          <div id="activityList" class="activity-list"></div>
+        </section>
+        <section id="panelRail" class="panel-rail" hidden>
+          <div class="activity-card">
+            <div class="activity-label">Engine model proof</div>
+            <div id="proofSummary" class="activity-summary"></div>
+          </div>
+          <div class="activity-card">
+            <div class="activity-label">Latest log</div>
+            <div id="logSummary" class="activity-summary"></div>
+          </div>
+        </section>
+      </main>
+      <div class="composer-wrap">
+        <section class="composer-shell">
+          <div id="actionPopover" class="action-popover" hidden>
+            <div class="popover-row">
+              <span class="popover-label">Mode</span>
+              <label class="composer-pill">
+                <select id="modeSelect" aria-label="Companion chat mode">
+                  <option value="auto">Auto</option>
+                  <option value="ask">Ask</option>
+                  <option value="plan">Plan</option>
+                  <option value="edit">Edit</option>
+                  <option value="agent">Agent</option>
+                </select>
+              </label>
+            </div>
+            <div class="action-grid">
+              <button id="clearTaskFocus" class="action-button">New task</button>
+              <button id="continueAction" class="action-button">Continue</button>
+              <button id="repairLoop" class="action-button">Repair</button>
+              <button id="selfImprove" class="action-button">Self improve</button>
+              <button id="autopilot" class="action-button">Autopilot</button>
+              <button id="retryResearch" class="action-button">Research retry</button>
+              <button id="runNextAction" class="action-button">Next action</button>
+              <button id="queueNextTask" class="action-button">Queue task</button>
+              <button id="openFiles" class="action-button">Files</button>
+              <button id="openTrace" class="action-button">Trace</button>
+              <button id="openTaskHub" class="action-button">Task hub</button>
+              <button id="openProblems" class="action-button">Problems</button>
+              <button id="openSandbox" class="action-button">Sandbox</button>
+              <button id="openProviderSettings" class="action-button">Settings</button>
+              <button id="reviewApprove" class="action-button">Approve</button>
+              <button id="reviewReject" class="action-button">Reject</button>
+              <button id="openSourceControl" class="action-button">SCM</button>
+              <button id="openGitHistory" class="action-button">History</button>
+            </div>
+          </div>
+          <textarea id="objective" placeholder="Describe what to build"></textarea>
+          <div class="composer-controls">
+            <div class="composer-left">
+              <button id="toggleActions" class="icon-button">+</button>
+              <button id="modePill" class="composer-pill buttonish" title="Change companion mode">
+                <span id="modePillLabel" class="composer-pill-label">Agent</span>
+              </button>
+              <button id="modelPill" class="composer-pill buttonish" title="Open model and provider settings">
+                <span id="modelPillLabel" class="composer-pill-label">Loading model</span>
+              </button>
+              <button id="toggleModeMenu" class="icon-button subtle">/</button>
+            </div>
+            <button id="submit" class="send-button">&gt;</button>
+          </div>
+        </section>
+      </div>
     </div>
+    <script id="initialState" type="application/json">${initialPayloadJson}</script>
     <script>
       const vscode = acquireVsCodeApi();
+      const initialStateNode = document.getElementById('initialState');
+      const conversation = document.getElementById('conversation');
+      const transcript = document.getElementById('transcript');
       const objective = document.getElementById('objective');
       const summary = document.getElementById('summary');
-      const runtimeLabel = document.getElementById('runtimeLabel');
-      const runtimeMeta = document.getElementById('runtimeMeta');
-      const chatModeLabel = document.getElementById('chatModeLabel');
-      const chatModeMeta = document.getElementById('chatModeMeta');
-      const groundedLabel = document.getElementById('groundedLabel');
-      const groundedMeta = document.getElementById('groundedMeta');
-      const gitLabel = document.getElementById('gitLabel');
-      const gitMeta = document.getElementById('gitMeta');
-      const reviewLabel = document.getElementById('reviewLabel');
-      const reviewMeta = document.getElementById('reviewMeta');
-      const trustLabel = document.getElementById('trustLabel');
-      const trustMeta = document.getElementById('trustMeta');
-      const objectiveLabel = document.getElementById('objectiveLabel');
-      const objectiveMeta = document.getElementById('objectiveMeta');
-      const recoveryLabel = document.getElementById('recoveryLabel');
-      const recoveryMeta = document.getElementById('recoveryMeta');
-      const interruptLabel = document.getElementById('interruptLabel');
-      const interruptMeta = document.getElementById('interruptMeta');
-      const bundleLabel = document.getElementById('bundleLabel');
-      const bundleMeta = document.getElementById('bundleMeta');
-      const nextActionLabel = document.getElementById('nextActionLabel');
-      const nextActionMeta = document.getElementById('nextActionMeta');
-      const queuedLabel = document.getElementById('queuedLabel');
-      const queuedMeta = document.getElementById('queuedMeta');
-      const memoryLabel = document.getElementById('memoryLabel');
-      const memoryMeta = document.getElementById('memoryMeta');
-      const selfHostLabel = document.getElementById('selfHostLabel');
-      const selfHostMeta = document.getElementById('selfHostMeta');
-      const selfImproveLabel = document.getElementById('selfImproveLabel');
-      const selfImproveMeta = document.getElementById('selfImproveMeta');
-      const files = document.getElementById('files');
-      const artifacts = document.getElementById('artifacts');
-      const actions = document.getElementById('actions');
-      const log = document.getElementById('log');
+      const threadTitle = document.getElementById('threadTitle');
+      const taskFocusBadge = document.getElementById('taskFocusBadge');
+      const modeSelect = document.getElementById('modeSelect');
+      const modePillLabel = document.getElementById('modePillLabel');
+      const modelPillLabel = document.getElementById('modelPillLabel');
+      const actionPopover = document.getElementById('actionPopover');
+      const activityRail = document.getElementById('activityRail');
+      const activityLabel = document.getElementById('activityLabel');
+      const activitySummary = document.getElementById('activitySummary');
+      const activityList = document.getElementById('activityList');
+      const panelRail = document.getElementById('panelRail');
+      const proofSummary = document.getElementById('proofSummary');
+      const logSummary = document.getElementById('logSummary');
       const buttons = {
         submit: document.getElementById('submit'),
-        continue: document.getElementById('continue'),
+        clearTaskFocus: document.getElementById('clearTaskFocus'),
+        continueAction: document.getElementById('continueAction'),
+        repairLoop: document.getElementById('repairLoop'),
+        selfImprove: document.getElementById('selfImprove'),
+        autopilot: document.getElementById('autopilot'),
         retryResearch: document.getElementById('retryResearch'),
         runNextAction: document.getElementById('runNextAction'),
         queueNextTask: document.getElementById('queueNextTask'),
-        openSourceControl: document.getElementById('openSourceControl'),
-        openGitHistory: document.getElementById('openGitHistory'),
         openTrace: document.getElementById('openTrace'),
         openFiles: document.getElementById('openFiles'),
         openTaskHub: document.getElementById('openTaskHub'),
         openProblems: document.getElementById('openProblems'),
         openSandbox: document.getElementById('openSandbox'),
         openProviderSettings: document.getElementById('openProviderSettings'),
+        reviewApprove: document.getElementById('reviewApprove'),
+        reviewReject: document.getElementById('reviewReject'),
+        openSourceControl: document.getElementById('openSourceControl'),
+        openGitHistory: document.getElementById('openGitHistory'),
+        toggleActions: document.getElementById('toggleActions'),
+        modePill: document.getElementById('modePill'),
+        modelPill: document.getElementById('modelPill'),
+        toggleModeMenu: document.getElementById('toggleModeMenu'),
         openPanel: document.getElementById('openPanel'),
       };
+      let lastRenderedState = null;
 
-      function setList(target, values, emptyText) {
-        target.innerHTML = '';
-        const items = Array.isArray(values) ? values : [];
-        if (!items.length) {
-          const li = document.createElement('li');
-          li.textContent = emptyText;
-          target.appendChild(li);
+      function setText(target, value, fallback = '') {
+        if (target) {
+          target.textContent = value || fallback;
+        }
+      }
+
+      function setHidden(target, hidden) {
+        if (target) {
+          target.hidden = !!hidden;
+        }
+      }
+
+      function setButtonDisabled(target, disabled) {
+        if (target) {
+          target.disabled = !!disabled;
+        }
+      }
+
+      function setHtml(target, value) {
+        if (target) {
+          target.innerHTML = value || '';
+        }
+      }
+
+      function firstText(values, fallback = '') {
+        for (const value of values) {
+          const text = String(value || '').trim();
+          if (text) {
+            return text;
+          }
+        }
+        return fallback;
+      }
+
+      function scrollTranscriptToBottom() {
+        if (conversation) {
+          conversation.scrollTop = conversation.scrollHeight;
+        }
+      }
+
+      function updateComposerButtons() {
+        const ready = !!lastRenderedState?.ready;
+        const running = !!lastRenderedState?.running;
+        const hasDraft = !!String(objective?.value || '').trim();
+        const hasChangedFiles = !!(lastRenderedState?.snapshot && Array.isArray(lastRenderedState.snapshot.changedFiles) && lastRenderedState.snapshot.changedFiles.length > 0);
+        const hasArtifacts = !!(lastRenderedState?.snapshot && Array.isArray(lastRenderedState.snapshot.workbenchArtifacts) && lastRenderedState.snapshot.workbenchArtifacts.length > 0);
+        setButtonDisabled(buttons.submit, !ready || running || !hasDraft);
+        setButtonDisabled(buttons.clearTaskFocus, !lastRenderedState?.taskFocus);
+        setButtonDisabled(buttons.continueAction, !ready || running || !lastRenderedState?.lastObjective);
+        setButtonDisabled(buttons.repairLoop, !ready || running || !lastRenderedState?.lastObjective);
+        setButtonDisabled(buttons.selfImprove, !ready || running);
+        setButtonDisabled(buttons.autopilot, !ready || running);
+        setButtonDisabled(buttons.retryResearch, !ready || running || !lastRenderedState?.lastObjective);
+        setButtonDisabled(buttons.runNextAction, !ready || running || !lastRenderedState?.snapshot?.nextAction?.command);
+        setButtonDisabled(buttons.queueNextTask, !ready || running || !(lastRenderedState?.queuedFollowupView?.exists || lastRenderedState?.snapshot?.nextAction?.command));
+        setButtonDisabled(buttons.openTrace, !lastRenderedState?.snapshot);
+        setButtonDisabled(buttons.openFiles, !hasChangedFiles);
+        setButtonDisabled(buttons.openTaskHub, !ready);
+        setButtonDisabled(buttons.openProblems, false);
+        setButtonDisabled(buttons.openSandbox, !hasArtifacts);
+        setButtonDisabled(buttons.openProviderSettings, !ready);
+        setButtonDisabled(buttons.reviewApprove, !hasChangedFiles);
+        setButtonDisabled(buttons.reviewReject, !hasChangedFiles);
+        setButtonDisabled(buttons.openSourceControl, false);
+        setButtonDisabled(buttons.openGitHistory, false);
+      }
+
+      function updateObjectivePlaceholder() {
+        if (!objective) {
           return;
         }
-        for (const item of items) {
-          const li = document.createElement('li');
-          li.textContent = typeof item === 'string' ? item : (item.path || item.summary || JSON.stringify(item));
-          target.appendChild(li);
+        if (String(lastRenderedState?.taskFocus || '').trim()) {
+          objective.placeholder = 'Add a follow-up for the current task or use /new';
+          return;
+        }
+        const mode = String(modeSelect?.value || lastRenderedState?.selectedChatMode || 'auto').trim().toLowerCase();
+        if (mode === 'ask') {
+          objective.placeholder = 'Ask anything about this workspace';
+          return;
+        }
+        if (mode === 'plan') {
+          objective.placeholder = 'Plan the next safe coding slice';
+          return;
+        }
+        if (mode === 'edit') {
+          objective.placeholder = 'Describe the code change to prepare';
+          return;
+        }
+        if (mode === 'agent') {
+          objective.placeholder = 'Describe the bounded task to run';
+          return;
+        }
+        objective.placeholder = 'Describe what to build';
+      }
+
+      function postMessage(type, extra = {}) {
+        vscode.postMessage({ type, ...extra });
+      }
+
+      function toggleActionPopover(force) {
+        if (!actionPopover) {
+          return;
+        }
+        const nextHidden = typeof force === 'boolean' ? !force : !actionPopover.hidden;
+        actionPopover.hidden = nextHidden;
+      }
+
+      function bindButton(button, type, extraFactory) {
+        if (!button) {
+          return;
+        }
+        button.addEventListener('click', () => {
+          const extra = typeof extraFactory === 'function' ? extraFactory() : {};
+          postMessage(type, extra);
+        });
+      }
+
+      function renderTranscript(entries, fallbackText, fallbackMeta) {
+        if (!transcript) {
+          return;
+        }
+        const rows = Array.isArray(entries) && entries.length
+          ? entries
+          : [{ role: 'assistant', text: fallbackText, meta: fallbackMeta, kind: 'message' }];
+        transcript.innerHTML = '';
+        for (const entry of rows) {
+          const role = String(entry?.role || 'assistant').trim().toLowerCase();
+          const kind = String(entry?.kind || 'message').trim().toLowerCase();
+          const row = document.createElement('article');
+          row.className = 'transcript-row ' + role;
+          if (role === 'user') {
+            const bubble = document.createElement('div');
+            bubble.className = 'user-bubble';
+            bubble.textContent = String(entry?.text || '').trim();
+            row.appendChild(bubble);
+          } else {
+            const copy = document.createElement('div');
+            copy.className = kind === 'status' ? 'status-copy' : 'assistant-copy';
+            copy.textContent = String(entry?.text || '').trim();
+            row.appendChild(copy);
+            if (entry?.meta) {
+              const meta = document.createElement('div');
+              meta.className = 'transcript-meta';
+              meta.textContent = String(entry.meta || '').trim();
+              row.appendChild(meta);
+            }
+          }
+          transcript.appendChild(row);
+        }
+        scrollTranscriptToBottom();
+      }
+
+      function renderActivity(state, runtimeSummary, reviewSummary, gitSummary) {
+        const snapshot = state.snapshot || null;
+        const engineModelProofView = state.engineModelProofView || { label: 'No proof', summary: '', meta: '', nextAction: '' };
+        const chips = [];
+        if (state.chatModeView?.label) {
+          chips.push(state.chatModeView.label);
+        }
+        if (runtimeSummary) {
+          chips.push(runtimeSummary);
+        }
+        if (reviewSummary) {
+          chips.push(reviewSummary);
+        }
+        if (gitSummary) {
+          chips.push(gitSummary);
+        }
+        const nextAction = firstText([snapshot?.nextAction?.label, snapshot?.nextAction?.summary]);
+        const changedCount = Number(snapshot?.changedFileCount || (Array.isArray(snapshot?.changedFiles) ? snapshot.changedFiles.length : 0) || 0);
+        const shouldShow = !!(state.running || snapshot || state.errorMessage);
+        setHidden(activityRail, !shouldShow);
+        setHidden(panelRail, !shouldShow || ${isSidebar ? 'true' : 'false'});
+        if (!shouldShow) {
+          return;
+        }
+        setText(activityLabel, state.running ? 'Evaluating' : 'Recent run');
+        setText(activitySummary, firstText([
+          state.errorMessage,
+          engineModelProofView.summary,
+          snapshot?.runSummary?.summary,
+          snapshot?.reviewSummary?.summary,
+          nextAction ? 'Next: ' + nextAction : '',
+          state.statusMessage,
+        ], 'Waiting for the next bounded task.'));
+        if (activityList) {
+          activityList.innerHTML = '';
+          for (const chipText of chips.slice(0, 4)) {
+            const chip = document.createElement('span');
+            chip.className = 'activity-chip';
+            chip.textContent = chipText;
+            activityList.appendChild(chip);
+          }
+          if (engineModelProofView.label) {
+            const chip = document.createElement('span');
+            chip.className = 'activity-chip';
+            chip.textContent = 'Proof ' + engineModelProofView.label;
+            activityList.appendChild(chip);
+          }
+          if (changedCount > 0) {
+            const chip = document.createElement('span');
+            chip.className = 'activity-chip';
+            chip.textContent = changedCount + ' file' + (changedCount === 1 ? '' : 's');
+            activityList.appendChild(chip);
+          }
+        }
+        if (proofSummary) {
+          setText(proofSummary, firstText([
+            engineModelProofView.summary,
+            engineModelProofView.meta,
+            engineModelProofView.nextAction,
+          ], 'Run npm run engine:cli -- proof-summary to capture the current Python and model path proof.'));
+        }
+        if (logSummary) {
+          setText(logSummary, firstText([
+            String(state.logTail || '').trim().split(/\\r?\\n/).filter(Boolean).slice(-1)[0] || '',
+            nextAction,
+            runtimeSummary,
+          ], 'No log output captured yet.'));
         }
       }
 
       function renderState(state) {
+        lastRenderedState = state || {};
         const ready = !!state.ready;
         const running = !!state.running;
         const snapshot = state.snapshot || null;
-        summary.textContent = state.errorMessage
+        const chatModeView = state.chatModeView || { label: 'Ask', meta: 'Human-style help, explanation, and repo guidance only.' };
+        const currentModelView = state.currentModelView || { label: 'No model', detail: '' };
+        const groundedReplyView = state.groundedReplyView || { label: 'Assistant', meta: '', reply: '' };
+        const reviewBundleView = state.reviewBundleView || { decisionLabel: '', summary: '' };
+        const gitSummaryView = state.gitSummaryView || { label: 'No git summary yet' };
+        const statusText = state.errorMessage
           ? state.errorMessage
           : (state.statusMessage || (ready
-            ? 'Companion is ready to submit bounded tasks through the shared GoSenderr runtime.'
+            ? 'Companion is ready to submit bounded coding tasks through the shared GoSenderr runtime.'
             : 'Open the desktop-agent repo workspace so the companion can find the current runtime.'));
-        runtimeLabel.textContent = snapshot
-          ? [snapshot.status || 'unknown', snapshot.task || 'Latest task'].filter(Boolean).join(' • ')
+        const currentObjective = firstText([
+          state.lastObjective,
+          snapshot?.taskObjective?.summary,
+          snapshot?.task,
+        ]);
+        const taskFocusText = firstText([
+          state.taskFocus,
+          snapshot?.taskFocus,
+          currentObjective,
+        ]);
+        const followupText = taskFocusText && currentObjective && taskFocusText.toLowerCase() !== currentObjective.toLowerCase()
+          ? currentObjective
+          : '';
+        const assistantText = firstText([
+          state.assistantReply,
+          groundedReplyView.reply,
+          groundedReplyView.meta,
+          statusText,
+        ], 'Describe the change you want and send it to the shared GoSenderr runtime.');
+        const assistantMetaText = [
+          groundedReplyView.label,
+          snapshot?.laneLabel || snapshot?.laneId,
+          snapshot?.taskMode,
+          snapshot?.modelDisplayName || snapshot?.modelProfileId,
+        ].filter(Boolean).join(' • ');
+        const runtimeSummary = snapshot
+          ? [snapshot.status || 'ready', snapshot.taskMode || snapshot.laneLabel || snapshot.laneId].filter(Boolean).join(' • ')
           : (running ? 'Run in progress' : 'No run yet');
-        runtimeMeta.textContent = snapshot
-          ? [snapshot.laneLabel || snapshot.laneId, snapshot.taskMode, snapshot.modelDisplayName || snapshot.modelProfileId, snapshot.baseModel, snapshot.providerSource].filter(Boolean).join(' • ')
-          : [state.workspaceRoot || 'No workspace', state.repoRoot || 'No repo root'].filter(Boolean).join(' • ');
-        const chatModeView = state.chatModeView || { label: 'Ask', meta: 'Human-style help, explanation, and repo guidance only.' };
-        chatModeLabel.textContent = chatModeView.label || 'Ask';
-        chatModeMeta.textContent = chatModeView.meta || '';
-        const groundedReplyView = state.groundedReplyView || { label: 'No grounded reply yet', meta: '' };
-        groundedLabel.textContent = groundedReplyView.label || 'No grounded reply yet';
-        groundedMeta.textContent = groundedReplyView.meta || '';
-        const gitSummaryView = state.gitSummaryView || { label: 'No git summary yet', meta: '' };
-        gitLabel.textContent = gitSummaryView.label || 'No git summary yet';
-        gitMeta.textContent = gitSummaryView.meta || '';
-        const reviewBundleView = state.reviewBundleView || { label: 'No review bundle yet', meta: '', decisionLabel: '', summary: '' };
-        reviewLabel.textContent = reviewBundleView.decisionLabel || snapshot?.reviewSummary?.summary || 'No review verdict yet';
-        reviewMeta.textContent = [reviewBundleView.summary, snapshot?.runSummary?.summary || ''].filter(Boolean).join(' • ');
-        trustLabel.textContent = snapshot?.trustSummary?.summary || 'No trust summary yet';
-        trustMeta.textContent = snapshot?.testSummary?.summary || '';
-        objectiveLabel.textContent = snapshot?.taskObjective?.summary || 'No objective bundle yet';
-        objectiveMeta.textContent = [snapshot?.taskObjective?.kind, snapshot?.taskObjective?.source, ...(Array.isArray(snapshot?.taskObjective?.loopSteps) ? [snapshot.taskObjective.loopSteps.join(' → ')] : [])].filter(Boolean).join(' • ');
-        recoveryLabel.textContent = snapshot?.recoveryLadder?.state || 'No recovery state yet';
-        recoveryMeta.textContent = [snapshot?.recoveryLadder?.currentStep, snapshot?.recoveryLadder?.nextStep ? ('next: ' + snapshot.recoveryLadder.nextStep) : '', snapshot?.failureClass?.summary].filter(Boolean).join(' • ');
-        interruptLabel.textContent = snapshot?.interruptRequest?.active ? (snapshot.interruptRequest.summary || snapshot.interruptRequest.kind || 'Interrupt pending') : 'No interrupt pending';
-        interruptMeta.textContent = snapshot?.interruptRequest?.active ? [snapshot?.interruptRequest?.requestedAction, ...(Array.isArray(snapshot?.interruptRequest?.allowedActions) ? snapshot.interruptRequest.allowedActions : [])].filter(Boolean).join(' • ') : '';
-        bundleLabel.textContent = reviewBundleView.label;
-        bundleMeta.textContent = reviewBundleView.meta;
-        nextActionLabel.textContent = snapshot?.nextAction?.label || 'No engine action chosen yet';
-        nextActionMeta.textContent = [snapshot?.nextAction?.summary, snapshot?.nextAction?.reason ? ('reason: ' + snapshot.nextAction.reason) : '', snapshot?.nextAction?.blocked ? 'review-held' : ''].filter(Boolean).join(' • ');
-        const queuedFollowupView = state.queuedFollowupView || { exists: false, label: 'No queued follow-up yet', meta: '', hubPath: '' };
-        queuedLabel.textContent = queuedFollowupView.label || 'No queued follow-up yet';
-        queuedMeta.textContent = queuedFollowupView.meta || '';
-        const memoryHintsView = state.memoryHintsView || { label: 'No learned guidance yet', meta: '' };
-        memoryLabel.textContent = memoryHintsView.label || 'No learned guidance yet';
-        memoryMeta.textContent = memoryHintsView.meta || '';
-        const selfHostProofView = state.selfHostProofView || { label: 'No self-host proof yet', meta: '' };
-        selfHostLabel.textContent = selfHostProofView.label || 'No self-host proof yet';
-        selfHostMeta.textContent = selfHostProofView.meta || '';
-        const selfImprovementProofView = state.selfImprovementProofView || { label: 'No self-improvement proof yet', meta: '' };
-        selfImproveLabel.textContent = selfImprovementProofView.label || 'No self-improvement proof yet';
-        selfImproveMeta.textContent = selfImprovementProofView.meta || '';
-        setList(files, snapshot?.changedFiles || [], 'No changed files captured yet.');
-        setList(artifacts, snapshot?.workbenchArtifacts || [], 'No workbench artifacts captured yet.');
-        setList(actions, [snapshot?.nextAction?.summary, ...(snapshot?.recommendedActions || [])].filter(Boolean), 'No follow-up actions recorded yet.');
-        log.textContent = state.logTail || '';
+        const reviewSummary = reviewBundleView.decisionLabel || snapshot?.reviewSummary?.summary || 'No review yet';
+
+        setText(summary, followupText ? ('Latest follow-up: ' + followupText) : statusText);
+        setText(threadTitle, (taskFocusText || currentObjective || (ready ? 'Start a bounded coding task' : 'Open the GoSenderr workspace')).toUpperCase());
+        setHidden(taskFocusBadge, !taskFocusText);
+        setText(taskFocusBadge, taskFocusText ? ('Task focus: ' + taskFocusText) : '');
+        setText(modePillLabel, chatModeView.label || 'Mode');
+        setText(modelPillLabel, currentModelView.label || 'No model');
+        if (buttons.modelPill) {
+          buttons.modelPill.title = currentModelView.detail
+            ? (String(currentModelView.label || '') + ' - ' + String(currentModelView.detail || ''))
+            : String(currentModelView.label || 'Open provider settings');
+        }
+        if (modeSelect) {
+          modeSelect.value = state.selectedChatMode || chatModeView.mode || 'auto';
+        }
+        renderTranscript(state.threadEntries, assistantText, assistantMetaText);
+        renderActivity(state, runtimeSummary, reviewSummary, gitSummaryView.label || 'No git summary yet');
         if (!objective.value && state.lastObjective) {
           objective.value = state.lastObjective;
         }
-        buttons.submit.disabled = !ready || running;
-        buttons.continue.disabled = !ready || running || !state.lastObjective;
-        buttons.retryResearch.disabled = !ready || running || !state.lastObjective;
-        buttons.runNextAction.disabled = !ready || running || !snapshot?.nextAction?.command;
-        buttons.runNextAction.textContent = snapshot?.nextAction?.label || 'Run next safe action';
-        buttons.queueNextTask.disabled = !ready || running || !(snapshot?.queuedFollowup?.exists || snapshot?.nextAction?.command);
-        buttons.openSourceControl.disabled = !state.repoRoot;
-        buttons.openGitHistory.disabled = !state.repoRoot;
-        buttons.openTrace.disabled = !snapshot;
-        buttons.openFiles.disabled = !snapshot || !Array.isArray(snapshot.changedFiles) || snapshot.changedFiles.length === 0;
-        buttons.openTaskHub.disabled = !queuedFollowupView.hubPath;
-        buttons.openSandbox.disabled = !snapshot || !Array.isArray(snapshot.artifactPaths) || snapshot.artifactPaths.length === 0;
-        buttons.openProviderSettings.disabled = !state.repoRoot;
+        if (buttons.runNextAction) {
+          buttons.runNextAction.textContent = snapshot?.nextAction?.label || 'Run next safe action';
+        }
+        setButtonDisabled(buttons.modelPill, !ready);
+        updateObjectivePlaceholder();
+        updateComposerButtons();
       }
 
-      buttons.submit.addEventListener('click', () => vscode.postMessage({ type: 'submit-task', objective: objective.value }));
-      buttons.continue.addEventListener('click', () => vscode.postMessage({ type: 'continue-task' }));
-      buttons.retryResearch.addEventListener('click', () => vscode.postMessage({ type: 'retry-with-research' }));
-      buttons.runNextAction.addEventListener('click', () => vscode.postMessage({ type: 'run-next-action' }));
-      buttons.queueNextTask.addEventListener('click', () => vscode.postMessage({ type: 'queue-next-task' }));
-      buttons.openSourceControl.addEventListener('click', () => vscode.postMessage({ type: 'open-source-control' }));
-      buttons.openGitHistory.addEventListener('click', () => vscode.postMessage({ type: 'open-git-history' }));
-      buttons.openTrace.addEventListener('click', () => vscode.postMessage({ type: 'open-trace' }));
-      buttons.openFiles.addEventListener('click', () => vscode.postMessage({ type: 'open-files' }));
-      buttons.openTaskHub.addEventListener('click', () => vscode.postMessage({ type: 'open-task-hub' }));
-      buttons.openProblems.addEventListener('click', () => vscode.postMessage({ type: 'open-problems' }));
-      buttons.openSandbox.addEventListener('click', () => vscode.postMessage({ type: 'open-sandbox' }));
-      buttons.openProviderSettings.addEventListener('click', () => vscode.postMessage({ type: 'open-provider-settings' }));
-      buttons.openPanel.addEventListener('click', () => vscode.postMessage({ type: 'open-panel' }));
+      bindButton(buttons.submit, 'submit-task', () => ({ objective: objective.value }));
+      bindButton(buttons.clearTaskFocus, 'clear-task-focus');
+      bindButton(buttons.continueAction, 'continue-task');
+      bindButton(buttons.repairLoop, 'repair-loop');
+      bindButton(buttons.selfImprove, 'self-improve');
+      bindButton(buttons.autopilot, 'autopilot');
+      bindButton(buttons.retryResearch, 'retry-with-research');
+      bindButton(buttons.runNextAction, 'run-next-action');
+      bindButton(buttons.queueNextTask, 'queue-next-task');
+      bindButton(buttons.openTrace, 'open-trace');
+      bindButton(buttons.openFiles, 'open-files');
+      bindButton(buttons.openTaskHub, 'open-task-hub');
+      bindButton(buttons.openProblems, 'open-problems');
+      bindButton(buttons.openSandbox, 'open-sandbox');
+      bindButton(buttons.openProviderSettings, 'open-provider-settings');
+      bindButton(buttons.reviewApprove, 'review-approve');
+      bindButton(buttons.reviewReject, 'review-reject');
+      bindButton(buttons.openSourceControl, 'open-source-control');
+      bindButton(buttons.openGitHistory, 'open-git-history');
+      bindButton(buttons.openPanel, 'open-panel');
+
+      if (buttons.toggleActions) {
+        buttons.toggleActions.addEventListener('click', () => toggleActionPopover());
+      }
+      if (buttons.modePill) {
+        buttons.modePill.addEventListener('click', () => {
+          toggleActionPopover(true);
+          if (modeSelect) {
+            modeSelect.focus();
+          }
+        });
+      }
+      if (buttons.modelPill) {
+        buttons.modelPill.addEventListener('click', () => postMessage('open-provider-settings'));
+      }
+      if (buttons.toggleModeMenu) {
+        buttons.toggleModeMenu.addEventListener('click', () => toggleActionPopover());
+      }
+
+      if (modeSelect) {
+        modeSelect.addEventListener('change', () => {
+          postMessage('set-chat-mode', { chatMode: modeSelect.value });
+          updateObjectivePlaceholder();
+        });
+      }
+      objective.addEventListener('input', () => {
+        updateComposerButtons();
+      });
+      objective.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && buttons.submit && !buttons.submit.disabled) {
+          postMessage('submit-task', { objective: objective.value });
+        }
+        if (event.key === 'Escape') {
+          toggleActionPopover(false);
+        }
+      });
 
       window.addEventListener('message', (event) => {
         if (event?.data?.type === 'state') {
@@ -1016,7 +2082,17 @@ function buildWorkbenchHtml() {
         }
       });
 
-      vscode.postMessage({ type: 'bootstrap' });
+      try {
+        const initialState = initialStateNode ? JSON.parse(initialStateNode.textContent || '{}') : {};
+        if (initialState && typeof initialState === 'object' && Object.keys(initialState).length > 0) {
+          renderState(initialState);
+        }
+      } catch (_error) {
+      }
+
+      setTimeout(() => {
+        vscode.postMessage({ type: 'bootstrap' });
+      }, 0);
     </script>
   </body>
 </html>`;
@@ -1026,12 +2102,74 @@ function listWorkbenchSurfaces(controller) {
   return [controller.panel, controller.view].filter((surface) => surface && surface.webview);
 }
 
+function buildFallbackStatePayload(controller, error) {
+  const message = clipText(error instanceof Error ? error.message : String(error || 'Companion bootstrap failed.'), 220)
+    || 'Companion bootstrap failed.';
+  const selectedChatMode = resolveCompanionChatMode(controller.repoRoot, controller.chatMode || 'auto');
+  const chatModeView = buildChatModeViewModel({ chatMode: selectedChatMode, effectiveChatMode: selectedChatMode }, { repoRoot: controller.repoRoot });
+  return {
+    workspaceRoot: controller.workspaceRoot,
+    repoRoot: controller.repoRoot,
+    ready: Boolean(controller.workspaceRoot && controller.repoRoot),
+    running: controller.running,
+    statusMessage: controller.statusMessage || 'Companion could not finish booting.',
+    errorMessage: message,
+    assistantReply: '',
+    lastObjective: controller.lastObjective,
+    taskFocus: controller.taskFocus,
+    logTail: controller.logTail,
+    selectedChatMode,
+    currentModelView: {
+      label: 'No model',
+      detail: 'Companion bootstrap failed before model resolution.',
+      provider: '',
+      baseModel: '',
+      modelRole: '',
+      clickable: true,
+    },
+    threadEntries: asArray(controller.threadEntries),
+    queuedFollowupView: buildQueuedFollowupViewModel({}),
+    reviewBundleView: buildReviewBundleViewModel({}),
+    memoryHintsView: buildMemoryHintsViewModel({}),
+    chatModeView,
+    groundedReplyView: {
+      label: 'Companion bootstrap failed',
+      meta: message,
+      reply: '',
+    },
+    gitSummaryView: {
+      label: 'Git unavailable',
+      meta: 'Bootstrap did not complete.',
+      branch: '',
+      dirty: false,
+    },
+    engineModelProofView: buildEngineModelProofViewModel({}),
+    selfHostProofView: buildSelfHostProofViewModel({}),
+    selfImprovementProofView: buildSelfImprovementProofViewModel({}),
+    snapshot: null,
+  };
+}
+
+function setCompanionStartupError(controller, error, prefix = 'Companion startup failed.') {
+  const message = clipText(error instanceof Error ? error.message : String(error || ''), 220);
+  controller.errorMessage = message || prefix;
+  controller.statusMessage = prefix;
+}
+
+function buildCurrentWorkbenchPayload(controller) {
+  try {
+    return buildStatePayload(controller);
+  } catch (error) {
+    return buildFallbackStatePayload(controller, error);
+  }
+}
+
 function postState(controller) {
   const surfaces = listWorkbenchSurfaces(controller);
   if (!surfaces.length) {
     return;
   }
-  const payload = buildStatePayload(controller);
+  const payload = buildCurrentWorkbenchPayload(controller);
   for (const surface of surfaces) {
     void surface.webview.postMessage({
       type: 'state',
@@ -1046,72 +2184,111 @@ function getWorkbenchMessageHandler(controller) {
   }
   controller.messageHandler = async (message) => {
     const vscode = getVsCode();
-    const type = String(message?.type || '').trim();
-    if (type === 'bootstrap') {
-      await refreshControllerContext(controller);
+    try {
+      const type = String(message?.type || '').trim();
+      if (type === 'bootstrap') {
+        await refreshControllerContext(controller);
+        postState(controller);
+        return;
+      }
+      if (type === 'set-chat-mode') {
+        const nextMode = await persistCompanionChatMode(controller, message?.chatMode || 'auto');
+        const config = getCompanionChatModeConfig(controller.repoRoot, nextMode);
+        setCompanionReply(controller, nextMode === 'auto'
+          ? 'Auto mode is on. I will choose when to answer, plan, prepare edits, or use the bounded agent loop.'
+          : `Switched to ${String(config.label || nextMode).trim()} mode.`);
+        postState(controller);
+        return;
+      }
+      if (type === 'submit-task') {
+        await runObjective(controller, message?.objective || '', { retryWithResearch: false });
+        return;
+      }
+      if (type === 'clear-task-focus') {
+        clearCompanionTaskFocus(controller);
+        postState(controller);
+        return;
+      }
+      if (type === 'continue-task') {
+        await runObjective(controller, controller.lastObjective, { retryWithResearch: false });
+        return;
+      }
+      if (type === 'retry-with-research') {
+        await runObjective(controller, controller.lastObjective, { retryWithResearch: true });
+        return;
+      }
+      if (type === 'repair-loop') {
+        await runRepairLoopFromCompanion(controller.context);
+        return;
+      }
+      if (type === 'self-improve') {
+        await runSelfImproveInBackground(controller.context);
+        return;
+      }
+      if (type === 'autopilot') {
+        await runAutopilotInBackground(controller.context);
+        return;
+      }
+      if (type === 'review-approve') {
+        await updateCompanionReviewDecision(controller, 'approved');
+        return;
+      }
+      if (type === 'review-reject') {
+        await updateCompanionReviewDecision(controller, 'rejected');
+        return;
+      }
+      if (type === 'run-next-action') {
+        await runNextAction(controller.context);
+        return;
+      }
+      if (type === 'queue-next-task') {
+        await queueNextTask(controller.context);
+        return;
+      }
+      if (type === 'open-trace') {
+        await openTraceDocument(controller);
+        return;
+      }
+      if (type === 'open-files') {
+        await openTouchedFiles(controller);
+        return;
+      }
+      if (type === 'open-task-hub') {
+        await openTaskHubDocument(controller);
+        return;
+      }
+      if (type === 'open-problems') {
+        await vscode.commands.executeCommand('workbench.actions.view.problems');
+        return;
+      }
+      if (type === 'open-sandbox') {
+        await openSandboxArtifact(controller);
+        return;
+      }
+      if (type === 'open-provider-settings') {
+        await openProviderSettings(controller);
+        return;
+      }
+      if (type === 'open-source-control') {
+        await openSourceControlView();
+        return;
+      }
+      if (type === 'open-git-history') {
+        await openGitHistoryView();
+        return;
+      }
+      if (type === 'open-panel') {
+        await openWorkbenchPanel(controller.context);
+      }
+    } catch (error) {
+      setCompanionStartupError(controller, error, 'Companion request handling failed.');
       postState(controller);
-      return;
-    }
-    if (type === 'submit-task') {
-      await runObjective(controller, message?.objective || '', { retryWithResearch: false });
-      return;
-    }
-    if (type === 'continue-task') {
-      await runObjective(controller, controller.lastObjective, { retryWithResearch: false });
-      return;
-    }
-    if (type === 'retry-with-research') {
-      await runObjective(controller, controller.lastObjective, { retryWithResearch: true });
-      return;
-    }
-    if (type === 'run-next-action') {
-      await runNextAction(controller.context);
-      return;
-    }
-    if (type === 'queue-next-task') {
-      await queueNextTask(controller.context);
-      return;
-    }
-    if (type === 'open-trace') {
-      await openTraceDocument(controller);
-      return;
-    }
-    if (type === 'open-files') {
-      await openTouchedFiles(controller);
-      return;
-    }
-    if (type === 'open-task-hub') {
-      await openTaskHubDocument(controller);
-      return;
-    }
-    if (type === 'open-problems') {
-      await vscode.commands.executeCommand('workbench.actions.view.problems');
-      return;
-    }
-    if (type === 'open-sandbox') {
-      await openSandboxArtifact(controller);
-      return;
-    }
-    if (type === 'open-provider-settings') {
-      await openProviderSettings(controller);
-      return;
-    }
-    if (type === 'open-source-control') {
-      await openSourceControlView();
-      return;
-    }
-    if (type === 'open-git-history') {
-      await openGitHistoryView();
-      return;
-    }
-    if (type === 'open-panel') {
-      await openWorkbenchPanel(controller.context);
     }
   };
   return controller.messageHandler;
 }
 
-function attachWorkbenchSurface(controller, surface) {
+function attachWorkbenchSurface(controller, surface, surfaceKind = WORKBENCH_SURFACE_PANEL) {
   if (!surface || !surface.webview) {
     return;
   }
@@ -1119,12 +2296,15 @@ function attachWorkbenchSurface(controller, surface) {
     ...(surface.webview.options || {}),
     enableScripts: true,
   };
-  surface.webview.html = buildWorkbenchHtml();
-  if (controller.boundWebviews.has(surface.webview)) {
+  if (controller.boundWebviews.has(surface.webview) && controller.boundSurfaceKinds.get(surface.webview) === surfaceKind) {
     return;
   }
-  controller.boundWebviews.add(surface.webview);
-  surface.webview.onDidReceiveMessage(getWorkbenchMessageHandler(controller));
+  if (!controller.boundWebviews.has(surface.webview)) {
+    surface.webview.onDidReceiveMessage(getWorkbenchMessageHandler(controller));
+    controller.boundWebviews.add(surface.webview);
+  }
+  controller.boundSurfaceKinds.set(surface.webview, surfaceKind);
+  surface.webview.html = buildWorkbenchHtml(surfaceKind, { initialPayload: buildCurrentWorkbenchPayload(controller) });
 }
 
 async function openPathInEditor(targetPath) {
@@ -1223,10 +2403,120 @@ async function openTaskHubDocument(controller) {
   await openPathInEditor(targetPath);
 }
 
+function quoteTerminalArg(value = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '""';
+  }
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function buildCompanionCliCommand(repoRoot = '', command = 'status', options = {}) {
+  const root = String(repoRoot || '').trim();
+  if (!root) {
+    throw new Error('GoSenderr desktop-agent repo root is not available.');
+  }
+  const workspaceRoot = String(options.workspaceRoot || '').trim();
+  const labRoot = String(options.labRoot || '').trim();
+  const title = String(options.title || '').trim();
+  const trailing = asArray(options.trailing).map((entry) => String(entry || '').trim()).filter(Boolean);
+  const cliScriptPath = path.join(root, 'scripts', 'engine-cli.js');
+  const parts = [quoteTerminalArg(process.execPath), quoteTerminalArg(cliScriptPath), String(command || 'status').trim().toLowerCase() || 'status'];
+  if (workspaceRoot) {
+    parts.push('--workspace', quoteTerminalArg(workspaceRoot));
+  }
+  if (labRoot) {
+    parts.push('--lab', quoteTerminalArg(labRoot));
+  }
+  if (title) {
+    parts.push('--title', quoteTerminalArg(title));
+  }
+  for (const entry of trailing) {
+    parts.push(quoteTerminalArg(entry));
+  }
+  return parts.join(' ');
+}
+
+async function runSelfImproveInBackground(context) {
+  const vscode = getVsCode();
+  const controller = workbenchController || await ensureWorkbench(context);
+  if (!controller.repoRoot || !controller.workspaceRoot) {
+    await vscode.window.showWarningMessage('Open the GoSenderr desktop-agent repo workspace before starting background self-improvement.');
+    return;
+  }
+  if (controller.running) {
+    await vscode.window.showInformationMessage('Wait for the current companion run to finish before starting a background self-improvement pass.');
+    return;
+  }
+  const terminal = vscode.window.createTerminal({
+    name: 'GoSenderr Self Improve',
+    cwd: controller.repoRoot,
+  });
+  terminal.sendText(buildCompanionCliCommand(controller.repoRoot, 'self-improve', {
+    workspaceRoot: controller.workspaceRoot,
+  }), true);
+  terminal.sendText(buildCompanionCliCommand(controller.repoRoot, 'proof-summary', {
+    workspaceRoot: controller.workspaceRoot,
+    title: 'VS Code companion self-improve pass',
+    trailing: ['Run a bounded supervised self-improvement pass from the VS Code companion and refresh the shared proof artifact.'],
+  }), true);
+  terminal.show(true);
+  setCompanionReply(
+    controller,
+    'Started a background CLI self-improve pass in the GoSenderr Self Improve terminal. Keep coding here, then refresh the companion view to inspect the updated self-improvement proof.',
+    {
+      kind: 'status',
+      keepStatus: true,
+      meta: 'CLI-backed background pass',
+    },
+  );
+  controller.statusMessage = 'Background self-improvement is running in the GoSenderr Self Improve terminal.';
+  controller.errorMessage = '';
+  postState(controller);
+}
+
+async function runAutopilotInBackground(context) {
+  const vscode = getVsCode();
+  const controller = workbenchController || await ensureWorkbench(context);
+  if (!controller.repoRoot || !controller.workspaceRoot) {
+    await vscode.window.showWarningMessage('Open the GoSenderr desktop-agent repo workspace before starting a background autopilot pass.');
+    return;
+  }
+  if (controller.running) {
+    await vscode.window.showInformationMessage('Wait for the current companion run to finish before starting a background autopilot pass.');
+    return;
+  }
+  const terminal = vscode.window.createTerminal({
+    name: 'GoSenderr Autopilot',
+    cwd: controller.repoRoot,
+  });
+  terminal.sendText(buildCompanionCliCommand(controller.repoRoot, 'autopilot', {
+    workspaceRoot: controller.workspaceRoot,
+  }), true);
+  terminal.sendText(buildCompanionCliCommand(controller.repoRoot, 'proof-summary', {
+    workspaceRoot: controller.workspaceRoot,
+    title: 'VS Code companion autopilot pass',
+    trailing: ['Run one bounded supervised autopilot pass from the VS Code companion and refresh the shared proof artifact.'],
+  }), true);
+  terminal.show(true);
+  setCompanionReply(
+    controller,
+    'Started a background CLI autopilot pass in the GoSenderr Autopilot terminal. Keep coding here, then refresh the companion view to inspect the updated bounded-autonomy proof and next safe action.',
+    {
+      kind: 'status',
+      keepStatus: true,
+      meta: 'CLI-backed background autopilot pass',
+    },
+  );
+  controller.statusMessage = 'Background autopilot is running in the GoSenderr Autopilot terminal.';
+  controller.errorMessage = '';
+  postState(controller);
+}
+
 async function runObjective(controller, objective, options = {}) {
   const vscode = getVsCode();
-  const text = String(objective || '').trim();
-  if (!text) {
+  const rawText = String(objective || '').trim();
+  if (!rawText) {
     await vscode.window.showWarningMessage('Enter a bounded objective before running the companion.');
     return;
   }
@@ -1239,17 +2529,57 @@ async function runObjective(controller, objective, options = {}) {
     return;
   }
 
+  const directive = parseCompanionChatModeDirective(controller.repoRoot, rawText);
+  const chatMode = directive.mode
+    ? await persistCompanionChatMode(controller, directive.mode)
+    : resolveCompanionChatMode(controller.repoRoot, controller.chatMode || 'auto');
+  const candidateText = directive.mode ? String(directive.message || '').trim() : rawText;
+  const explicitNewTask = isExplicitNewTaskRequest(candidateText);
+  const text = explicitNewTask ? stripNewTaskDirective(candidateText) : candidateText;
+  if (directive.mode && !text) {
+    const config = getCompanionChatModeConfig(controller.repoRoot, chatMode);
+    setCompanionReply(controller, chatMode === 'auto'
+      ? 'Auto mode is on. I will choose when to answer, plan, prepare edits, or use the bounded agent loop.'
+      : `Switched to ${String(config.label || chatMode).trim()} mode.`);
+    postState(controller);
+    return;
+  }
+  if (explicitNewTask && !text) {
+    clearCompanionTaskFocus(controller);
+    postState(controller);
+    return;
+  }
+  if (await runCompanionSlashCommand(controller, text)) {
+    return;
+  }
+  const modeState = inferCompanionChatModeState(controller.repoRoot, chatMode, text);
+  const previousTaskFocus = explicitNewTask ? '' : String(controller.taskFocus || '').trim();
+  const taskFocus = previousTaskFocus || text;
+  const scopedObjective = previousTaskFocus ? buildFocusedFollowupObjective(previousTaskFocus, text) : text;
+
   const runtimeBridge = loadRuntimeBridge(controller.repoRoot, controller.workspaceRoot);
-  const actualObjective = options.retryWithResearch ? buildResearchObjective(text) : text;
-  const request = buildOrchestrateRequest(actualObjective, controller.workspaceRoot, options);
+  const actualObjective = options.retryWithResearch ? buildResearchObjective(scopedObjective) : scopedObjective;
+  appendThreadEntry(controller, 'user', text);
+  const request = buildOrchestrateRequest(actualObjective, controller.workspaceRoot, {
+    ...options,
+    repoRoot: controller.repoRoot,
+    taskFocus,
+    chatMode,
+    effectiveChatMode: modeState.effectiveChatMode,
+    suggestedLaneId: modeState.suggestedLaneId,
+    suggestedTaskMode: modeState.suggestedTaskMode,
+  });
+  controller.taskFocus = taskFocus;
   controller.lastObjective = text;
   controller.lastRequest = request;
   controller.lastResult = null;
   controller.lastSnapshot = null;
   controller.lastQueuedFollowup = null;
+  controller.lastAssistantReply = '';
   controller.logTail = '';
   controller.errorMessage = '';
-  controller.statusMessage = `Running ${options.retryWithResearch ? 'a research-first retry' : 'the shared dev-engine loop'} from VS Code…`;
+  controller.statusMessage = `Running ${options.retryWithResearch ? 'a research-first retry' : `${getCompanionChatModeConfig(controller.repoRoot, modeState.effectiveChatMode).label.toLowerCase()} mode`} through the shared GoSenderr loop…`;
+  appendThreadEntry(controller, 'assistant', controller.statusMessage, { kind: 'status' });
   controller.running = true;
   postState(controller);
 
@@ -1278,12 +2608,23 @@ async function runObjective(controller, objective, options = {}) {
   });
 
   controller.lastResult = rawResult;
-  controller.lastSnapshot = snapshot;
+  controller.lastSnapshot = {
+    ...snapshot,
+    taskFocus,
+    chatMode,
+    effectiveChatMode: modeState.effectiveChatMode,
+    suggestedLaneId: modeState.suggestedLaneId,
+    suggestedTaskMode: modeState.suggestedTaskMode,
+  };
   controller.statusMessage = finished?.exitCode === 0
-    ? 'GoSenderr completed the latest VS Code workbench run.'
+    ? 'GoSenderr completed the latest chat run.'
     : 'GoSenderr finished with a failing or blocked result. Open the trace and follow the recorded next action.';
   controller.errorMessage = finished?.exitCode === 0 ? '' : clipText(rawResult.message || rawResult.summary || rawResult.error || '');
   controller.logTail = `${controller.logTail}\n${String(finished?.stdout || '')}\n${String(finished?.stderr || '')}`.trim().slice(-120000);
+  setCompanionReply(controller, buildCompanionResultReply(controller.lastSnapshot, rawResult, finished), {
+    keepStatus: true,
+    meta: [controller.lastSnapshot?.modelDisplayName || controller.lastSnapshot?.modelProfileId, controller.lastSnapshot?.taskMode].filter(Boolean).join(' • '),
+  });
   postState(controller);
 }
 
@@ -1298,6 +2639,10 @@ function createWorkbenchController(context) {
     logTail: '',
     statusMessage: '',
     errorMessage: '',
+    chatMode: 'auto',
+    lastAssistantReply: '',
+    threadEntries: [],
+    taskFocus: '',
     lastObjective: '',
     lastRequest: null,
     lastResult: null,
@@ -1305,6 +2650,9 @@ function createWorkbenchController(context) {
     lastQueuedFollowup: null,
     currentOperation: null,
     boundWebviews: new WeakSet(),
+    boundSurfaceKinds: new WeakMap(),
+    groundedReplyCacheKey: '',
+    groundedReplyCacheValue: null,
     messageHandler: null,
   };
 }
@@ -1316,6 +2664,10 @@ async function refreshControllerContext(controller) {
     workspaceRoots: asArray(vscode.workspace.workspaceFolders).map((folder) => folder.uri.fsPath),
     extensionRoot: controller.context.extensionPath,
   });
+  controller.chatMode = resolveCompanionChatMode(
+    controller.repoRoot,
+    controller.context.workspaceState.get(COMPANION_CHAT_MODE_KEY, controller.chatMode || 'auto'),
+  );
   if (!controller.workspaceRoot) {
     controller.statusMessage = 'Open a workspace folder to run the GoSenderr companion.';
   } else if (!controller.repoRoot) {
@@ -1335,20 +2687,21 @@ async function openWorkbenchPanel(context) {
   if (!controller.panel) {
     controller.panel = vscode.window.createWebviewPanel(
       'gosenderrWorkbench',
-      'GoSenderr Workbench',
+      'GoSenderr Chat',
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
       },
     );
-    attachWorkbenchSurface(controller, controller.panel);
+    attachWorkbenchSurface(controller, controller.panel, WORKBENCH_SURFACE_PANEL);
     controller.panel.onDidDispose(() => {
       controller.panel = null;
     });
   }
 
   await refreshControllerContext(controller);
+  attachWorkbenchSurface(controller, controller.panel, WORKBENCH_SURFACE_PANEL);
   controller.panel.reveal(vscode.ViewColumn.Beside, true);
   postState(controller);
   return controller;
@@ -1384,6 +2737,19 @@ async function continueLastTask(context, retryWithResearch = false) {
   await runObjective(controller, controller.lastObjective, { retryWithResearch });
 }
 
+async function runRepairLoopFromCompanion(context, options = {}) {
+  const vscode = getVsCode();
+  const controller = workbenchController || await ensureWorkbench(context);
+  if (!controller.lastObjective) {
+    await vscode.window.showInformationMessage('Run a bounded task first so the companion has a repair target.');
+    return;
+  }
+  if (options.announce !== false) {
+    await vscode.window.showInformationMessage('Running a repair-oriented retry through the shared GoSenderr loop.');
+  }
+  await runObjective(controller, buildRepairObjective(controller.lastObjective), { retryWithResearch: false });
+}
+
 async function runNextAction(context) {
   const vscode = getVsCode();
   const controller = workbenchController || await ensureWorkbench(context);
@@ -1401,8 +2767,7 @@ async function runNextAction(context) {
     return;
   }
   if (command === 'repair-loop') {
-    await vscode.window.showInformationMessage('Running a repair-oriented retry through the shared GoSenderr loop.');
-    await runObjective(controller, buildRepairObjective(controller.lastObjective), { retryWithResearch: false });
+    await runRepairLoopFromCompanion(context, { announce: true });
     return;
   }
   if (command === 'open-files') {
@@ -1473,7 +2838,7 @@ function activate(context) {
       }
       const controller = workbenchController;
       controller.view = webviewView;
-      attachWorkbenchSurface(controller, webviewView);
+      attachWorkbenchSurface(controller, webviewView, WORKBENCH_SURFACE_SIDEBAR);
       const disposables = [];
       if (typeof webviewView.onDidDispose === 'function') {
         disposables.push(webviewView.onDidDispose(() => {
@@ -1485,12 +2850,18 @@ function activate(context) {
       if (typeof webviewView.onDidChangeVisibility === 'function') {
         disposables.push(webviewView.onDidChangeVisibility(() => {
           if (webviewView.visible) {
+            attachWorkbenchSurface(controller, webviewView, WORKBENCH_SURFACE_SIDEBAR);
             postState(controller);
           }
         }));
       }
       context.subscriptions.push(...disposables);
       void refreshControllerContext(controller).then(() => {
+        attachWorkbenchSurface(controller, webviewView, WORKBENCH_SURFACE_SIDEBAR);
+        postState(controller);
+      }).catch((error) => {
+        setCompanionStartupError(controller, error);
+        attachWorkbenchSurface(controller, webviewView, WORKBENCH_SURFACE_SIDEBAR);
         postState(controller);
       });
     },
@@ -1502,6 +2873,9 @@ function activate(context) {
     vscode.commands.registerCommand('gosenderr.openWorkbench', async () => {
       await openWorkbench(context);
     }),
+    vscode.commands.registerCommand('gosenderr.openWorkbenchPanel', async () => {
+      await openWorkbenchPanel(context);
+    }),
     vscode.commands.registerCommand('gosenderr.submitTask', async () => {
       await submitTaskFromInput(context);
     }),
@@ -1510,6 +2884,23 @@ function activate(context) {
     }),
     vscode.commands.registerCommand('gosenderr.retryWithResearch', async () => {
       await continueLastTask(context, true);
+    }),
+    vscode.commands.registerCommand('gosenderr.repairLoop', async () => {
+      await runRepairLoopFromCompanion(context, { announce: true });
+    }),
+    vscode.commands.registerCommand('gosenderr.selfImprove', async () => {
+      await runSelfImproveInBackground(context);
+    }),
+    vscode.commands.registerCommand('gosenderr.autopilot', async () => {
+      await runAutopilotInBackground(context);
+    }),
+    vscode.commands.registerCommand('gosenderr.reviewApprove', async () => {
+      const controller = workbenchController || await ensureWorkbench(context);
+      await updateCompanionReviewDecision(controller, 'approved');
+    }),
+    vscode.commands.registerCommand('gosenderr.reviewReject', async () => {
+      const controller = workbenchController || await ensureWorkbench(context);
+      await updateCompanionReviewDecision(controller, 'rejected');
     }),
     vscode.commands.registerCommand('gosenderr.runNextAction', async () => {
       await runNextAction(context);
@@ -1571,17 +2962,26 @@ module.exports = {
   buildResearchObjective,
   buildRepairObjective,
   buildMemoryHintsViewModel,
+  buildEngineModelProofViewModel,
   buildSelfHostProofViewModel,
   buildSelfImprovementProofViewModel,
   buildReviewBundleViewModel,
   buildQueuedFollowupViewModel,
   buildChatModeViewModel,
   buildGroundedReplyViewModel,
+  buildWorkbenchHtml,
+  buildStatePayload,
+  buildCompanionCliCommand,
   collectWorkspaceFileCandidates,
+  openTraceDocument,
   queueNextTaskLoopFollowupInWorkspace,
   resolveNextActionCommand,
   resolveCompanionRepoRoot,
   resolveTaskHubDocumentPath,
+  setVsCodeModuleForTests,
+  updateCompanionReviewDecision,
+  WORKBENCH_SURFACE_SIDEBAR,
+  WORKBENCH_SURFACE_PANEL,
   WORKBENCH_VIEW_CONTAINER_ID,
   WORKBENCH_VIEW_ID,
 };

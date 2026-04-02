@@ -179,7 +179,11 @@ test('mvp readiness maps a fully healthy workspace to the 12-month baseline end 
   assert.match(readiness.summary, /5-phase MVP readiness is 100%/i);
   assert.equal(readiness.selfHostExpansion.eligible, false);
   assert.equal(readiness.selfHostExpansionProgress.label, 'NOT USED');
+  assert.equal(readiness.selfImprovementProof.capabilityState, 'verified');
+  assert.equal(readiness.selfImprovementProof.capabilityLabel, 'VERIFIED');
   assert.equal(readiness.modelParity.label, 'PROVEN');
+  assert.equal(readiness.modelParity.capabilityState, 'verified');
+  assert.equal(readiness.modelParity.capabilityLabel, 'VERIFIED');
   assert.equal(readiness.nextPhasePreview, null);
   assert.ok(readiness.phases.some((item) => item.id === 'phase-1-safe-engine-core' && item.status === 'ready'));
   assert.ok(readiness.milestones.some((item) => item.id === 'month-2-gse1-engine-brain' && item.status === 'ready'));
@@ -288,6 +292,8 @@ test('mvp readiness blocks Month 1 when the engine baseline is still unsafe', ()
   assert.match(readiness.summary, /phase 1/i);
   assert.equal(readiness.selfHostExpansion.eligible, false);
   assert.equal(readiness.selfHostExpansionProgress.label, 'NOT USED');
+  assert.equal(readiness.operatorBaselineAcceptance.capabilityState, 'candidate');
+  assert.equal(readiness.operatorBaselineAcceptance.capabilityLabel, 'CANDIDATE-ONLY');
   assert.match(readiness.phaseCloseout.summary, /Close Phase 1/i);
   assert.equal(readiness.nextPhasePreview.id, 'phase-2-assisted-coding-parity');
   assert.match(readiness.hardGate.reasons.join(' '), /operator baseline acceptance|acceptance/i);

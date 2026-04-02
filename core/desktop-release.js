@@ -19,6 +19,60 @@ const VERSION_COLLATOR = new Intl.Collator(undefined, {
   sensitivity: 'base',
 });
 
+function compareReleaseVersions(left, right) {
+  const normalizedLeft = String(left || '').trim();
+  const normalizedRight = String(right || '').trim();
+  if (normalizedLeft && normalizedRight) {
+    return VERSION_COLLATOR.compare(normalizedLeft, normalizedRight);
+  }
+  if (normalizedLeft) {
+    return 1;
+  }
+  if (normalizedRight) {
+    return -1;
+  }
+  return 0;
+}
+
+function normalizeReleasePlatform(platform) {
+  const normalized = String(platform || '').trim().toLowerCase();
+  if (['win32', 'darwin', 'linux'].includes(normalized)) {
+    return normalized;
+  }
+  return 'default';
+}
+
+function preferredArtifactSuffixes(platform = process.platform) {
+  switch (normalizeReleasePlatform(platform)) {
+    case 'win32':
+      return ['.exe', '.zip', '.dmg', '.appimage', '.blockmap'];
+    case 'darwin':
+      return ['.dmg', '.zip', '.exe', '.appimage', '.blockmap'];
+    case 'linux':
+      return ['.appimage', '.zip', '.exe', '.dmg', '.blockmap'];
+    default:
+      return ['.zip', '.exe', '.dmg', '.appimage', '.blockmap'];
+  }
+}
+
+function compatibleArtifactSuffixes(platform = process.platform) {
+  switch (normalizeReleasePlatform(platform)) {
+    case 'win32':
+      return ['.exe', '.zip'];
+    case 'darwin':
+      return ['.dmg', '.zip'];
+    case 'linux':
+      return ['.appimage', '.zip'];
+    default:
+      return ['.zip', '.exe', '.dmg', '.appimage'];
+  }
+}
+
+function isArtifactCompatibleWithPlatform(fileName, platform = process.platform) {
+  const lower = String(fileName || '').toLowerCase();
+  return compatibleArtifactSuffixes(platform).some((suffix) => lower.endsWith(suffix));
+}
+
 function normalizeManifestScalar(raw) {
   const text = String(raw || '').trim();
   if (!text) {
@@ -164,22 +218,13 @@ function manifestDownloadUrls(manifest) {
   return urls;
 }
 
-function artifactPriority(fileName) {
+function artifactPriority(fileName, options = {}) {
   const lower = String(fileName || '').toLowerCase();
-  if (lower.endsWith('.dmg')) {
-    return 0;
-  }
-  if (lower.endsWith('.zip')) {
-    return 1;
-  }
-  if (lower.endsWith('.exe')) {
-    return 2;
-  }
-  if (lower.endsWith('.appimage')) {
-    return 3;
-  }
-  if (lower.endsWith('.blockmap')) {
-    return 4;
+  const suffixes = preferredArtifactSuffixes(options.platform);
+  for (let index = 0; index < suffixes.length; index += 1) {
+    if (lower.endsWith(suffixes[index])) {
+      return index;
+    }
   }
   return 10;
 }
@@ -220,10 +265,14 @@ function listReleaseArtifacts(directory) {
     });
 }
 
-function getLatestStagedRelease(workspaceRoot) {
+function getLatestStagedRelease(workspaceRoot, options = {}) {
   const releaseDir = getConfiguredAssistantDesktopReleaseDir(workspaceRoot);
   const artifacts = listReleaseArtifacts(releaseDir).filter((item) => !String(item.name).toLowerCase().endsWith('.blockmap'));
-  const latest = resolvePreferredReleaseArtifact(artifacts);
+  const groups = groupedArtifactsByVersion(artifacts);
+  const latestGroup = groups.find((group) => group.items.some((item) => isArtifactCompatibleWithPlatform(item.name, options.platform)))
+    || groups[0]
+    || null;
+  const latest = latestGroup ? resolvePreferredReleaseArtifact(latestGroup.items, options) : null;
   return {
     releaseDir,
     artifacts,
@@ -231,7 +280,7 @@ function getLatestStagedRelease(workspaceRoot) {
   };
 }
 
-function resolvePreferredReleaseArtifact(artifacts) {
+function resolvePreferredReleaseArtifact(artifacts, options = {}) {
   const candidates = Array.isArray(artifacts)
     ? artifacts.filter((item) => !String(item?.name || '').toLowerCase().endsWith('.blockmap'))
     : [];
@@ -241,7 +290,7 @@ function resolvePreferredReleaseArtifact(artifacts) {
   return candidates
     .slice()
     .sort((left, right) => {
-      const priorityGap = artifactPriority(left.name) - artifactPriority(right.name);
+      const priorityGap = artifactPriority(left.name, options) - artifactPriority(right.name, options);
       if (priorityGap !== 0) {
         return priorityGap;
       }
@@ -249,12 +298,16 @@ function resolvePreferredReleaseArtifact(artifacts) {
     })[0] || null;
 }
 
-function getLiveChannelStatus(workspaceRoot) {
+function getLiveChannelStatus(workspaceRoot, options = {}) {
   const channelDir = getConfiguredAssistantDesktopLiveChannelDir(workspaceRoot);
   const artifacts = listReleaseArtifacts(channelDir);
   const manifestPath = channelDir ? path.join(channelDir, 'latest-mac.yml') : '';
   const manifestExists = !!(manifestPath && fs.existsSync(manifestPath));
-  const latest = artifacts.find((item) => !String(item.name).toLowerCase().endsWith('.blockmap')) || null;
+  const groups = groupedArtifactsByVersion(artifacts);
+  const latestGroup = groups.find((group) => group.items.some((item) => isArtifactCompatibleWithPlatform(item.name, options.platform)))
+    || groups[0]
+    || null;
+  const latest = latestGroup ? resolvePreferredReleaseArtifact(latestGroup.items, options) : null;
   return {
     channelDir,
     artifacts,
@@ -315,7 +368,7 @@ function stageDesktopReleaseArtifacts(workspaceRoot, options = {}) {
     sourceDir,
     releaseDir,
     copied,
-    latest: getLatestStagedRelease(workspaceRoot).latest,
+    latest: getLatestStagedRelease(workspaceRoot, options).latest,
     message: copied.length
       ? `Staged ${copied.length} desktop release artifact(s) into ${releaseDir}.`
       : `Desktop release artifacts are already staged in ${releaseDir}.`,
@@ -387,7 +440,7 @@ async function downloadLatestReleaseFromFeed(workspaceRoot, options = {}) {
     releaseDir,
     version: manifest.version || '',
     downloaded,
-    latest: getLatestStagedRelease(workspaceRoot).latest,
+    latest: getLatestStagedRelease(workspaceRoot, options).latest,
     message: `Downloaded desktop release ${manifest.version || 'unknown'} into ${releaseDir}.`,
   };
 }
@@ -407,11 +460,15 @@ function groupedArtifactsByVersion(artifacts) {
       mtimeMs: Math.max(...items.map((item) => item.mtimeMs || 0)),
     }))
     .sort((left, right) => {
+      const versionGap = compareReleaseVersions(String(right.version || ''), String(left.version || ''));
+      if (versionGap !== 0) {
+        return versionGap;
+      }
       const mtimeGap = right.mtimeMs - left.mtimeMs;
       if (mtimeGap !== 0) {
         return mtimeGap;
       }
-      return VERSION_COLLATOR.compare(String(right.version || ''), String(left.version || ''));
+      return 0;
     });
 }
 
@@ -568,8 +625,8 @@ function promoteLatestStagedRelease(workspaceRoot, options = {}) {
   };
 }
 
-function getStagedReleaseStatus(workspaceRoot) {
-  const staged = getLatestStagedRelease(workspaceRoot);
+function getStagedReleaseStatus(workspaceRoot, options = {}) {
+  const staged = getLatestStagedRelease(workspaceRoot, options);
   return {
     ...staged,
     history: buildReleaseHistoryEntries(staged.artifacts),
@@ -587,13 +644,13 @@ function getStagedReleaseByVersion(workspaceRoot, version, options = {}) {
     releaseDir,
     version: normalizedVersion,
     artifacts,
-    preferred: resolvePreferredReleaseArtifact(artifacts),
+    preferred: resolvePreferredReleaseArtifact(artifacts, options),
     entry: history.find((item) => item.version === normalizedVersion) || null,
   };
 }
 
-function getLiveChannelReleaseStatus(workspaceRoot) {
-  const live = getLiveChannelStatus(workspaceRoot);
+function getLiveChannelReleaseStatus(workspaceRoot, options = {}) {
+  const live = getLiveChannelStatus(workspaceRoot, options);
   const channelMeta = readJson(live.channelDir ? path.join(live.channelDir, 'channel.json') : '', {});
   const promotedVersion = String(channelMeta?.version || live.latest?.version || '');
   return {
@@ -606,6 +663,7 @@ function getLiveChannelReleaseStatus(workspaceRoot) {
 
 module.exports = {
   buildReleaseHistoryEntries,
+  compareReleaseVersions,
   downloadLatestReleaseFromFeed,
   getLiveChannelStatus,
   getLiveChannelReleaseStatus,

@@ -79,10 +79,42 @@ print(json.dumps({
 }))
 `);
 
-  assert.equal(result.implementer_model, 'qwen2.5-coder:14b');
+  assert.equal(result.implementer_model, 'qwen2.5-coder:7b');
   assert.equal(result.implementer_fallback_model, 'qwen2.5-coder:3b');
   assert.equal(result.repair_model, 'qwen2.5-coder:7b');
   assert.equal(result.repair_fallback_model, 'qwen2.5-coder:3b');
+});
+
+test('runtime model routing downgrades oversized local task-mode routes to the 32 GB-safe default bundle', () => {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-routing-guardrail-'));
+  try {
+    fs.writeFileSync(path.join(workspaceRoot, 'dev_assistant.yaml'), [
+      'assistant_task_mode_coder_provider: ollama',
+      'assistant_task_mode_coder_model: qwen2.5-coder:14b',
+      'assistant_task_mode_coder_fallback_provider: ollama',
+      'assistant_task_mode_coder_fallback_model: qwen2.5-coder:14b',
+    ].join('\n'), 'utf8');
+
+    const result = runPythonJson(`
+import json
+from pathlib import Path
+from backend.agent.core.model_routing import resolve_agent_model_route
+
+root = Path(r"${workspaceRoot.replace(/\\/g, '\\\\')}")
+coder = resolve_agent_model_route("implementer", root)
+print(json.dumps({
+  "provider": coder.provider,
+  "model": coder.model,
+  "fallback_model": coder.fallback_model,
+}))
+`, { PROJECT_ROOT: workspaceRoot });
+
+    assert.equal(result.provider, 'ollama');
+    assert.equal(result.model, 'qwen2.5-coder:7b');
+    assert.equal(result.fallback_model, 'qwen2.5-coder:7b');
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
 });
 
 test('runtime model routing keeps default fallback providers on local routes', () => {
@@ -108,13 +140,13 @@ print(json.dumps({
 `);
 
   assert.equal(result.planner_fallback_provider, 'ollama');
-  assert.equal(result.planner_fallback_model, 'qwen2.5-coder:14b');
+  assert.equal(result.planner_fallback_model, 'qwen2.5-coder:7b');
   assert.equal(result.implementer_fallback_provider, 'ollama');
   assert.equal(result.validator_fallback_provider, 'ollama');
-  assert.equal(result.validator_fallback_model, 'qwen2.5-coder:14b');
+  assert.equal(result.validator_fallback_model, 'qwen2.5-coder:7b');
   assert.equal(result.repair_fallback_provider, 'ollama');
   assert.equal(result.release_fallback_provider, 'ollama');
-  assert.equal(result.release_fallback_model, 'qwen2.5-coder:14b');
+  assert.equal(result.release_fallback_model, 'qwen2.5-coder:7b');
 });
 
 test('runtime model routing honors flat assistant task-mode config written by the desktop host', () => {

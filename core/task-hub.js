@@ -1921,16 +1921,23 @@ function buildDailyTaskSummary(taskHub = {}, options = {}) {
       }
       return taskUpdateTimestamp(right) - taskUpdateTimestamp(left);
     });
-  const focusTask = focusCandidates[0] || null;
+  const blockedRescopedTasks = visibleTasks
+    .filter((task) => isTaskUpdatedOnRoadmapDay(task, roadmapDay))
+    .filter((task) => isBlockedOrRescopedTask(task))
+    .sort((left, right) => taskUpdateTimestamp(right) - taskUpdateTimestamp(left));
+  const explicitFocusTask = focusCandidates[0] || null;
+  const blockedFallbackTask = !explicitFocusTask ? blockedRescopedTasks[0] || null : null;
+  const focusTask = explicitFocusTask || blockedFallbackTask;
+  const focusSourceType = explicitFocusTask
+    ? 'daily-focus'
+    : blockedFallbackTask
+      ? 'blocked-rescope'
+      : '';
   const focusGoal = focusTask
     ? visibleGoals.find((goal) => goal.id === focusTask.goalId) || null
     : dailyGoals
       .filter((goal) => String(goal?.metadata?.roadmapDay || '').trim() === roadmapDay || localDayKey(goal?.updatedAt || goal?.createdAt || options.now || Date.now()) === roadmapDay)
       .sort((left, right) => taskUpdateTimestamp(right) - taskUpdateTimestamp(left))[0] || null;
-  const blockedRescopedTasks = visibleTasks
-    .filter((task) => isTaskUpdatedOnRoadmapDay(task, roadmapDay))
-    .filter((task) => isBlockedOrRescopedTask(task))
-    .sort((left, right) => taskUpdateTimestamp(right) - taskUpdateTimestamp(left));
   const focusSource = focusTask || focusGoal || {};
   const focusTitle = String(focusSource.title || focusSource.objective || '').trim();
   const focusStatus = String(focusTask?.status || focusGoal?.status || '').trim().toLowerCase();
@@ -1938,7 +1945,9 @@ function buildDailyTaskSummary(taskHub = {}, options = {}) {
     ? (blockedRescopedTasks.length > 0 ? 'warn' : 'ready')
     : (blockedRescopedTasks.length > 0 ? 'warn' : 'idle');
   const summary = focusTitle
-    ? blockedRescopedTasks.length > 0
+    ? focusSourceType === 'blocked-rescope'
+      ? `Today's fallback focus is "${focusTitle}" because no explicit daily focus task is marked and ${blockedRescopedTasks.length} blocked or needs-rescope task(s) still need follow-up.`
+      : blockedRescopedTasks.length > 0
       ? `Today's focus is "${focusTitle}". ${blockedRescopedTasks.length} blocked or needs-rescope task(s) still need follow-up.`
       : `Today's focus is "${focusTitle}". No blocked or needs-rescope task is currently holding it.`
     : blockedRescopedTasks.length > 0
@@ -1961,6 +1970,9 @@ function buildDailyTaskSummary(taskHub = {}, options = {}) {
           updatedAt: String(focusTask?.updatedAt || focusGoal?.updatedAt || '').trim(),
           roadmapMonth: String(focusTask?.metadata?.roadmapMonth || focusGoal?.metadata?.roadmapMonth || '').trim(),
           roadmapDay: String(focusTask?.metadata?.roadmapDay || focusGoal?.metadata?.roadmapDay || roadmapDay).trim(),
+          focusSourceType,
+          blockedBy: String(focusTask?.metadata?.lastBlockedBy || '').trim().toLowerCase(),
+          blockedReason: String(focusTask?.metadata?.lastBlockedReason || '').trim(),
         }
       : null,
     dailyTaskCount: dailyTasks.filter((task) => isTaskUpdatedOnRoadmapDay(task, roadmapDay)).length,

@@ -1,10 +1,16 @@
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
+
+type CompanionRuntime = {
+  activate: (context: vscode.ExtensionContext) => unknown;
+  deactivate?: () => unknown;
+};
+
+const runtime = require('../extension.js') as CompanionRuntime;
 
 export function activate(context: vscode.ExtensionContext) {
-  const disposable = vscode.commands.registerCommand('gosenderr.openDesktopAgent', async () => {
-    await vscode.window.showInformationMessage('Open the GoSenderr Desktop Agent and sync the current workspace.');
-  });
-  context.subscriptions.push(disposable);
+  return runtime.activate(context);
 }
 
-export function deactivate() {}
+export function deactivate() {
+  return runtime.deactivate?.();
+}

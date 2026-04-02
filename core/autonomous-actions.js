@@ -915,6 +915,103 @@ function buildRecommendedNextSafeAction(summary = {}) {
   return 'Advance with another bounded autonomous slice at or below the current model level and keep acceptance green.';
 }
 
+function actionNeedsReview(action = {}) {
+  return action?.reviewSummary?.requiresManualReview === true
+    || Number(action?.reviewSummary?.pendingApprovalCount || 0) > 0;
+}
+
+function inferActionBlockerKind(action = {}) {
+  if (String(action?.capabilityFit || '').trim().toLowerCase() === 'overscoped') {
+    return 'model-fit';
+  }
+  if (actionNeedsReview(action)) {
+    return 'review-held';
+  }
+  if (String(action?.state || '').trim().toLowerCase() === 'fail') {
+    return 'validation-fail';
+  }
+  if (String(action?.capabilityFit || '').trim().toLowerCase() === 'stretched') {
+    return 'tight-fit';
+  }
+  return '';
+}
+
+function buildAutonomyBlockers(actions = [], highestRiskAction = null) {
+  const scopedActions = Array.isArray(actions) ? actions : [];
+  const blockedActions = scopedActions.filter((action) => inferActionBlockerKind(action));
+  const modelFitCount = blockedActions.filter((action) => inferActionBlockerKind(action) === 'model-fit').length;
+  const reviewHeldCount = blockedActions.filter((action) => inferActionBlockerKind(action) === 'review-held').length;
+  const validationFailCount = blockedActions.filter((action) => inferActionBlockerKind(action) === 'validation-fail').length;
+  const tightFitCount = blockedActions.filter((action) => inferActionBlockerKind(action) === 'tight-fit').length;
+  const topAction = inferActionBlockerKind(highestRiskAction)
+    ? highestRiskAction
+    : blockedActions[0] || null;
+  const summary = blockedActions.length === 0
+    ? 'No autonomy blockers are active in the current workspace.'
+    : `Autonomy blockers: ${modelFitCount} model-fit, ${reviewHeldCount} review-held, ${validationFailCount} validation-fail, ${tightFitCount} tight-fit.`;
+  return {
+    total: blockedActions.length,
+    modelFitCount,
+    reviewHeldCount,
+    validationFailCount,
+    tightFitCount,
+    summary,
+    topBlocker: topAction
+      ? {
+          runId: String(topAction.runId || '').trim(),
+          task: String(topAction.task || topAction.label || '').trim(),
+          blockerKind: inferActionBlockerKind(topAction),
+          difficultyLevel: Number(topAction.difficultyLevel || 0),
+          modelLevel: Number(topAction.modelLevel || 0),
+          capabilityFit: String(topAction.capabilityFit || '').trim().toLowerCase(),
+        }
+      : null,
+  };
+}
+
+function buildAutonomyUnlockPlan(summary = {}, actions = [], blockers = {}) {
+  const safeActions = (Array.isArray(actions) ? actions : []).filter((action) => action?.safeToAdvance === true);
+  const highestRiskAction = summary.highestRiskAction && typeof summary.highestRiskAction === 'object'
+    ? summary.highestRiskAction
+    : null;
+  const provenDifficultyCeiling = Math.max(
+    1,
+    safeActions.reduce((max, action) => Math.max(max, Number(action?.difficultyLevel || 0)), 0)
+      || Number(highestRiskAction?.modelLevel || 1),
+  );
+  if (!Number(summary.actionCount || 0)) {
+    return {
+      status: 'seed',
+      currentDifficultyCeiling: provenDifficultyCeiling,
+      nextDifficultyCeiling: provenDifficultyCeiling,
+      summary: 'Seed one bounded autonomous slice and capture proof before widening the difficulty ceiling.',
+    };
+  }
+  if (Number(blockers.total || 0) > 0) {
+    return {
+      status: 'hold',
+      currentDifficultyCeiling: provenDifficultyCeiling,
+      nextDifficultyCeiling: Math.max(1, Math.min(provenDifficultyCeiling, Number(highestRiskAction?.modelLevel || provenDifficultyCeiling))),
+      summary: `Hold autonomy at difficulty ${provenDifficultyCeiling}/5 until the active blocker queue clears.`,
+    };
+  }
+  if (summary.dailyTarget?.met === true) {
+    const nextDifficultyCeiling = Math.min(5, provenDifficultyCeiling + 1);
+    return {
+      status: 'widen-ready',
+      currentDifficultyCeiling: provenDifficultyCeiling,
+      nextDifficultyCeiling,
+      summary: `Current proof supports widening from difficulty ${provenDifficultyCeiling}/5 to ${nextDifficultyCeiling}/5 on the next bounded slice.`,
+    };
+  }
+  return {
+    status: 'collect-proof',
+    currentDifficultyCeiling: provenDifficultyCeiling,
+    nextDifficultyCeiling: provenDifficultyCeiling,
+    summary: `${Math.max(0, Number(summary.dailyTarget?.remaining || 0))} more safe autonomous action(s) are needed before widening past difficulty ${provenDifficultyCeiling}/5.`,
+  };
+}
+
 function buildAutonomousActionSummary(options = {}) {
   const runtimeState = options.runtimeState && typeof options.runtimeState === 'object'
     ? options.runtimeState
@@ -963,6 +1060,7 @@ function buildAutonomousActionSummary(options = {}) {
     met: safeToday.length >= dailyTarget,
   };
   const riskPool = eligibleActionsToday.length > 0 ? eligibleActionsToday : eligibleActions;
+  const scopedActionPool = eligibleActionsToday.length > 0 ? eligibleActionsToday : eligibleActions;
   const highestRiskAction = riskPool
     .slice()
     .sort((left, right) => {
@@ -1004,6 +1102,8 @@ function buildAutonomousActionSummary(options = {}) {
     highestRiskAction,
     latestActions: actions.slice(0, 5),
   };
+  summary.blockers = buildAutonomyBlockers(scopedActionPool, highestRiskAction);
+  summary.unlockPlan = buildAutonomyUnlockPlan(summary, scopedActionPool, summary.blockers);
   summary.recommendedNextSafeAction = buildRecommendedNextSafeAction(summary);
   return summary;
 }

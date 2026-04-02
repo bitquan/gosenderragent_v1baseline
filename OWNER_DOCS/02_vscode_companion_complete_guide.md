@@ -14,6 +14,8 @@ Core actions:
 - continue
 - retry with research
 - repair
+- run one bounded autopilot pass
+- run one bounded self-improvement pass
 - run next safe action
 - queue next task
 - open trace
@@ -39,7 +41,13 @@ Inside VS Code:
 3. Look for the `GoSenderr` icon in the left activity bar
 4. Click it to open the `Workbench` view in the side bar
 5. If you do not see it yet, open the command palette
-6. Run `GoSenderr: Open Workbench`
+6. Run `GoSenderr: Open Chat`
+7. Use `GoSenderr: Open Chat Panel` when you want the wider panel surface
+
+Bounded safe actions inside VS Code:
+
+- `GoSenderr: Run Background Self-Improve Pass`
+- `GoSenderr: Run Background Autopilot Pass`
 
 Git handoff inside VS Code:
 
@@ -75,10 +83,19 @@ Use VS Code for:
 
 - editor-side run visibility
 - quick continue and repair actions
+- one bounded autopilot or self-improvement pass without leaving the editor
 - jumping to changed files and problems
 - seeing branch/dirty state without leaving the companion
 - handing off to native VS Code git views
 - staying in the coding loop without losing the shared run state
+
+## Release and source-of-truth note
+
+The companion currently stays workspace-installed through the integration copy flow.
+
+- `integration-library/extensions/vscode-companion/extension.js` is the live runtime entry
+- `integration-library/extensions/vscode-companion/src/extension.ts` now delegates to that runtime instead of carrying its own stub behavior
+- treat this guide as reference material only; governance stays on `docs/BAT_FEATURE_BOARD.md`
 
 ## If the companion looks out of sync
 

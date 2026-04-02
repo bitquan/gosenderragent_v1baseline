@@ -21789,7 +21789,7 @@
         id: "promotion",
         label: "Layer 3: Foundry and promotion",
         status: promotionStatus,
-        summary: promotionStatus === "verified" ? `${evidence.promotedCandidateCount} promoted local candidate${evidence.promotedCandidateCount === 1 ? "" : "s"} already proved the promotion path.` : promotionStatus === "next" ? "Candidate and foundry signals exist, but promotion still needs a clean benchmark-backed proof path." : "No verified candidate promotion path exists yet for local model bundles.",
+        summary: promotionStatus === "verified" ? `${evidence.promotedCandidateCount} promoted local candidate${evidence.promotedCandidateCount === 1 ? "" : "s"} already proved the promotion path.` : promotionStatus === "next" ? `${evidence.candidateOnlyCount > 0 ? `${evidence.candidateOnlyCount} candidate-only model${evidence.candidateOnlyCount === 1 ? " stays" : "s stay"} visible while ` : ""}promotion still needs a clean benchmark-backed proof path.` : "No verified candidate promotion path exists yet for local model bundles.",
         unlockRule: "Only benchmark-backed local candidates should become promoted defaults."
       },
       {
@@ -21817,7 +21817,7 @@
         id: "promotion",
         label: "Unlock model promotion",
         status: promotionStatus,
-        summary: "Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe."
+        summary: evidence.candidateOnlyCount > 0 ? `Candidate-only models stay visible until the foundry path is benchmark-backed, proof-complete, and rollback-safe.` : "Candidate promotion stays locked until the foundry path is benchmark-backed and rollback-safe."
       },
       {
         id: "self-improve",
@@ -21838,11 +21838,135 @@
       verifiedCount,
       localModelCount: evidence.localModelCount,
       benchmarkLeaderIsLocal: evidence.benchmarkLeaderIsLocal,
+      approvedDefaultCount: evidence.approvedDefaultCount,
+      candidateOnlyCount: evidence.candidateOnlyCount,
+      largerHeadroomCount: evidence.largerHeadroomCount,
+      approvedDefaultsSummary: evidence.approvedDefaultsSummary,
+      candidateOnlySummary: evidence.candidateOnlySummary,
+      largerHeadroomSummary: evidence.largerHeadroomSummary,
+      currentStateSummary: evidence.currentStateSummary,
       nextLayer,
       summary: nextLayer.status === "verified" ? "All current local-model MVP blocks are verified. Keep remote use constrained to explicit fallback or comparison." : `Next focus: ${nextLayer.label}. ${nextLayer.summary}`,
       layers,
       unlocks
     };
+  }
+
+  // renderer-src/lib/chat-markdown.ts
+  function pushParagraph(blocks, lines) {
+    if (lines.length > 0) {
+      blocks.push({ kind: "paragraph", text: lines.join("\n") });
+      lines.length = 0;
+    }
+  }
+  function pushList(blocks, listState) {
+    if (!listState || listState.items.length === 0) {
+      return null;
+    }
+    blocks.push({ kind: listState.kind, items: listState.items.slice() });
+    return null;
+  }
+  function parseChatMarkdownBlocks(input) {
+    const text = String(input || "").replace(/\r/g, "");
+    if (!text.trim()) {
+      return [];
+    }
+    const blocks = [];
+    const paragraphLines = [];
+    let listState = null;
+    let inFence = false;
+    let fenceLanguage = "";
+    const fenceLines = [];
+    for (const line of text.split("\n")) {
+      if (inFence) {
+        if (/^```/.test(line)) {
+          blocks.push({ kind: "code", language: fenceLanguage, code: fenceLines.join("\n") });
+          inFence = false;
+          fenceLanguage = "";
+          fenceLines.length = 0;
+        } else {
+          fenceLines.push(line);
+        }
+        continue;
+      }
+      const fenceStart = line.match(/^```(.*)$/);
+      if (fenceStart) {
+        pushParagraph(blocks, paragraphLines);
+        listState = pushList(blocks, listState);
+        inFence = true;
+        fenceLanguage = String(fenceStart[1] || "").trim();
+        fenceLines.length = 0;
+        continue;
+      }
+      if (!line.trim()) {
+        pushParagraph(blocks, paragraphLines);
+        listState = pushList(blocks, listState);
+        continue;
+      }
+      const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+      if (headingMatch) {
+        pushParagraph(blocks, paragraphLines);
+        listState = pushList(blocks, listState);
+        blocks.push({
+          kind: "heading",
+          level: headingMatch[1].length,
+          text: headingMatch[2].trim()
+        });
+        continue;
+      }
+      const unorderedMatch = line.match(/^[-*]\s+(.+)$/);
+      const orderedMatch = line.match(/^\d+\.\s+(.+)$/);
+      if (unorderedMatch || orderedMatch) {
+        const kind = unorderedMatch ? "unordered-list" : "ordered-list";
+        const itemText = String((unorderedMatch || orderedMatch)?.[1] || "").trim();
+        if (listState && listState.kind === kind) {
+          listState.items.push(itemText);
+        } else {
+          pushParagraph(blocks, paragraphLines);
+          listState = pushList(blocks, listState);
+          listState = { kind, items: [itemText] };
+        }
+        continue;
+      }
+      listState = pushList(blocks, listState);
+      paragraphLines.push(line);
+    }
+    if (inFence) {
+      const fenceOpen = `\`\`\`${fenceLanguage}`.trimEnd();
+      blocks.push({
+        kind: "paragraph",
+        text: [fenceOpen, ...fenceLines].join("\n")
+      });
+    }
+    pushParagraph(blocks, paragraphLines);
+    listState = pushList(blocks, listState);
+    return blocks;
+  }
+  function tokenizeChatInlineText(value) {
+    const text = String(value || "");
+    if (!text) {
+      return [];
+    }
+    const tokens = [];
+    const inlinePattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*)/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = inlinePattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        tokens.push({ kind: "text", value: text.slice(lastIndex, match.index) });
+      }
+      const matched = match[0];
+      if (matched.startsWith("`")) {
+        tokens.push({ kind: "code", value: matched.slice(1, -1) });
+      } else {
+        tokens.push({ kind: "bold", value: matched.slice(2, -2) });
+      }
+      lastIndex = match.index + matched.length;
+    }
+    if (lastIndex < text.length) {
+      tokens.push({ kind: "text", value: text.slice(lastIndex) });
+    }
+    return tokens;
   }
 
   // renderer-src/lib/format.ts
@@ -22147,25 +22271,47 @@
     return String(latest?.id || "").trim();
   }
   function renderChatInlineText(value, keyPrefix) {
-    return String(value || "").split("\n").map((line, index) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_react2.default.Fragment, { children: [
-      index > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("br", {}) : null,
-      line
-    ] }, `${keyPrefix}-${index}`));
+    const tokens = tokenizeChatInlineText(value);
+    const nodes = [];
+    let partIndex = 0;
+    for (const token of tokens) {
+      if (token.kind === "text") {
+        token.value.split("\n").forEach((line, j) => {
+          if (j > 0) nodes.push(/* @__PURE__ */ (0, import_jsx_runtime.jsx)("br", {}, `${keyPrefix}-br-${partIndex++}`));
+          if (line) nodes.push(/* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_react2.default.Fragment, { children: line }, `${keyPrefix}-t-${partIndex++}`));
+        });
+        continue;
+      }
+      if (token.kind === "code") {
+        nodes.push(/* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { className: "chat-inline-code", children: token.value }, `${keyPrefix}-ic-${partIndex++}`));
+        continue;
+      }
+      nodes.push(/* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: token.value }, `${keyPrefix}-b-${partIndex++}`));
+    }
+    return nodes;
   }
   function renderChatMessageBody(text, keyPrefix) {
-    const blocks = String(text || "").replace(/\r/g, "").split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+    const blocks = parseChatMarkdownBlocks(text);
     if (blocks.length === 0) {
       return null;
     }
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-message-body", children: blocks.map((block, blockIndex) => {
-      const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
-      if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line))) {
-        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { children: lines.map((line, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(line.replace(/^[-*]\s+/, ""), `${keyPrefix}-ul-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ul-${blockIndex}`);
+      if (block.kind === "code") {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("pre", { className: "chat-code-block", children: [
+          block.language ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "chat-code-lang", children: block.language }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: block.code })
+        ] }, `${keyPrefix}-code-${blockIndex}`);
       }
-      if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line))) {
-        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ol", { children: lines.map((line, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(line.replace(/^\d+\.\s+/, ""), `${keyPrefix}-ol-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ol-${blockIndex}`);
+      if (block.kind === "heading") {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "chat-section-heading", children: renderChatInlineText(block.text, `${keyPrefix}-h-${blockIndex}`) }, `${keyPrefix}-h-${blockIndex}`);
       }
-      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: renderChatInlineText(block, `${keyPrefix}-p-${blockIndex}`) }, `${keyPrefix}-p-${blockIndex}`);
+      if (block.kind === "unordered-list") {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", { children: block.items.map((item, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(item, `${keyPrefix}-ul-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ul-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ul-${blockIndex}`);
+      }
+      if (block.kind === "ordered-list") {
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ol", { children: block.items.map((item, itemIndex) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("li", { children: renderChatInlineText(item, `${keyPrefix}-ol-${blockIndex}-${itemIndex}`) }, `${keyPrefix}-ol-${blockIndex}-${itemIndex}`)) }, `${keyPrefix}-ol-${blockIndex}`);
+      }
+      return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: renderChatInlineText(block.text, `${keyPrefix}-p-${blockIndex}`) }, `${keyPrefix}-p-${blockIndex}`);
     }) });
   }
   function buildAssistantProgressState(input) {
@@ -22184,15 +22330,15 @@
     }
     if (input.chatProgress && input.busyChat) {
       return {
-        title: String(input.chatProgress.title || "Reviewing the workspace"),
-        detail: String(input.chatProgress.detail || "Checking the current repo context before drafting the reply."),
+        title: String(input.chatProgress.title || "Thinking"),
+        detail: String(input.chatProgress.detail || ""),
         showWorkbenchAction: false
       };
     }
     if (input.busyChat) {
       return {
-        title: "Reviewing the workspace",
-        detail: "Checking the current repo context before drafting the reply.",
+        title: "Thinking",
+        detail: "",
         showWorkbenchAction: false
       };
     }
@@ -22700,6 +22846,10 @@
   }
   function buildLocalModelProgramView(snapshot, aiStatus, tuning) {
     const settings = snapshot?.settings || {};
+    const localModelPolicy = aiStatus?.localModelPolicy && typeof aiStatus.localModelPolicy === "object" ? aiStatus.localModelPolicy : {};
+    const approvedDefaults = Array.isArray(localModelPolicy.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+    const candidateOnlyModels = Array.isArray(localModelPolicy.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+    const largerHeadroomModels = Array.isArray(localModelPolicy.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
     const localModels = readAiModelOptions(aiStatus, tuning, settings).filter((option) => option.ready && isLocalProvider(option.provider));
     const currentProvider = String(aiStatus?.current?.provider || settings.runtime || "ollama").trim().toLowerCase();
     const currentRuntime = String(settings.runtime || currentProvider || "ollama").trim().toLowerCase();
@@ -22732,7 +22882,14 @@
       candidateCount: candidates.length,
       modelFoundryCandidateCount: Number(modelFoundry.candidateCount || 0),
       remoteFallbackReady,
-      safeModeActive: safeMode.active === true
+      safeModeActive: safeMode.active === true,
+      approvedDefaultCount: approvedDefaults.length,
+      candidateOnlyCount: candidateOnlyModels.length,
+      largerHeadroomCount: largerHeadroomModels.length,
+      approvedDefaultsSummary: String(localModelPolicy.approvedDefaultsSummary || "").trim(),
+      candidateOnlySummary: String(localModelPolicy.candidateOnlySummary || "").trim(),
+      largerHeadroomSummary: String(localModelPolicy.largerHeadroomSummary || "").trim(),
+      currentStateSummary: String(localModelPolicy.currentStateSummary || "").trim()
     });
   }
   function readPositiveNumber(value) {
@@ -22767,6 +22924,35 @@
       fits: blockers.length === 0,
       blockers
     };
+  }
+  function buildTunePodModelPolicyMap(localModelPolicy) {
+    const modelPolicyMap = /* @__PURE__ */ new Map();
+    const approvedDefaults = Array.isArray(localModelPolicy?.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+    const candidateOnlyModels = Array.isArray(localModelPolicy?.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+    const largerHeadroomModels = Array.isArray(localModelPolicy?.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
+    approvedDefaults.forEach((entry) => {
+      const model = String(entry?.model || entry?.ollamaModel || "").trim();
+      if (model) {
+        modelPolicyMap.set(model, { label: "approved default", status: "ready" });
+      }
+    });
+    candidateOnlyModels.forEach((entry) => {
+      const model = String(entry?.model || entry?.ollamaModel || "").trim();
+      if (model) {
+        modelPolicyMap.set(model, { label: "candidate-only", status: "candidate" });
+      }
+    });
+    largerHeadroomModels.forEach((entry) => {
+      const model = String(entry?.model || entry?.ollamaModel || "").trim();
+      if (model && !modelPolicyMap.has(model)) {
+        modelPolicyMap.set(model, { label: "larger-headroom", status: "warning" });
+      }
+    });
+    return modelPolicyMap;
+  }
+  function readTunePodPresetPolicy(preset, modelPolicyMap) {
+    const presetModel = String(preset?.ollamaModel || "").trim();
+    return presetModel ? modelPolicyMap.get(presetModel) || null : null;
   }
   function buildTunePodGuidance(snapshot, aiStatus, tuning) {
     const settings = snapshot?.settings || {};
@@ -22930,8 +23116,8 @@
               ...current,
               liveChatProgress: {
                 requestId,
-                title: String(event.title || "Reviewing the workspace"),
-                detail: String(event.detail || "Checking the current repo context before drafting the reply."),
+                title: String(event.title || "Thinking"),
+                detail: String(event.detail || "Starting the reply with the active file and repo context."),
                 createdAt: eventAt
               }
             };
@@ -23119,12 +23305,12 @@
         activeChatRequestId: requestId,
         activeChatThreadId: currentThread.id,
         activeChatMessageId: assistantMessageId,
-        liveChatProgress: {
-          requestId,
-          title: "Reviewing the workspace",
-          detail: "Checking the current repo context before drafting the reply.",
-          createdAt
-        },
+        liveChatProgress: (() => {
+          const mode = String(store.getState().snapshot?.settings?.chatMode || "auto").toLowerCase();
+          const title = mode === "plan" ? "Planning" : mode === "agent" ? "Working" : mode === "edit" ? "Preparing" : "Thinking";
+          const detail = mode === "plan" ? "Mapping the next step\u2026" : mode === "agent" ? "Starting the task\u2026" : mode === "edit" ? "Reading the file and context\u2026" : mode === "ask" ? "One moment\u2026" : "Starting the reply\u2026";
+          return { requestId, title, detail, createdAt };
+        })(),
         composerText: "",
         pendingAttachments: [],
         error: "",
@@ -24443,11 +24629,10 @@
           ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "active-thread-shell", children: [
             liveProgress ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card assistant-progress-card", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "assistant-progress-header", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Live progress" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "status-inline-chip", children: "Separate from reply text" })
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "chat-progress-indicator", "aria-hidden": "true" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { className: "chat-progress-title", children: liveProgress.title })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: liveProgress.title }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: liveProgress.detail }),
+              liveProgress.detail ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "chat-progress-detail", children: liveProgress.detail }) : null,
               liveProgress.showWorkbenchAction ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "row-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "ghost", onClick: props.onOpenWorkbench, children: "Open Workbench" }) }) : null
             ] }) : null,
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-stage active-thread-stage", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "chat-log", "data-chat-log": "true", children: visibleMessages.map((message) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: `chat-bubble ${message.role}${message.id === streamingMessageId ? " is-streaming" : ""}`, children: [
@@ -24766,6 +24951,11 @@
     const effectiveHardwareTargetMeta = targetHardwareOptions.find((item) => String(item?.id || "") === effectiveHardwareTargetId) || selectedHardwareTargetMeta;
     const effectiveTunePodCapabilities = readTunePodCapabilities(effectiveHardwareTargetMeta, machineProfile, selectedHardwareTargetMeta);
     const routePolicyId = String(settings.aiRoutingPolicy || settings.aiProfile || props.aiStatus?.profileId || "hybrid-default");
+    const localModelPolicy = props.aiStatus?.localModelPolicy && typeof props.aiStatus.localModelPolicy === "object" ? props.aiStatus.localModelPolicy : {};
+    const approvedDefaults = Array.isArray(localModelPolicy.approvedDefaults) ? localModelPolicy.approvedDefaults : [];
+    const candidateOnlyModels = Array.isArray(localModelPolicy.candidateOnlyModels) ? localModelPolicy.candidateOnlyModels : [];
+    const largerHeadroomModels = Array.isArray(localModelPolicy.largerHeadroomModels) ? localModelPolicy.largerHeadroomModels : [];
+    const modelPolicyMap = buildTunePodModelPolicyMap(localModelPolicy);
     const routePolicyMeta = aiRoutingPolicies.find((policy) => String(policy?.id || "") === routePolicyId) || null;
     const routePolicyLabel = String(routePolicyMeta?.label || routePolicyId);
     const routePolicySummary = String(routePolicyMeta?.summary || "").trim();
@@ -24774,6 +24964,10 @@
     const selectedRemoteModel = String(settings.aiRemoteModel || props.aiStatus?.current?.remoteModel || aiRemoteModelOptions[0]?.model || "");
     const remoteFallbackReady = Boolean(selectedRemoteModel.trim());
     const benchmarkLeader = props.aiStatus?.benchmarkSummary?.[0] || null;
+    const engineModelProof = props.aiStatus?.engineModelProof && typeof props.aiStatus.engineModelProof === "object" ? props.aiStatus.engineModelProof : {};
+    const engineProofCapabilityLabel = String(engineModelProof.capabilityLabel || "").trim();
+    const engineProofRawLabel = String(engineModelProof.label || "").trim().toUpperCase();
+    const engineProofHeadline = engineProofCapabilityLabel ? engineProofRawLabel && engineProofRawLabel !== engineProofCapabilityLabel ? `${engineProofCapabilityLabel} (${engineProofRawLabel})` : engineProofCapabilityLabel : engineProofRawLabel || "Not recorded";
     const machineProfileFootprint = effectiveTunePodCapabilities.systemRamGb ? `${Number(effectiveTunePodCapabilities.systemRamGb)} GB RAM \u2022 ${Number(effectiveTunePodCapabilities.cpuThreads || 0)} CPU cores${effectiveTunePodCapabilities.gpuVramGb ? ` \u2022 ${Number(effectiveTunePodCapabilities.gpuVramGb)} GB VRAM` : ""}` : "Machine telemetry is still warming up.";
     const hardwareTargetLabelMap = targetHardwareOptions.reduce((accumulator, item) => {
       const targetId = String(item?.id || "").trim();
@@ -24790,6 +24984,7 @@
     const tunePodPresetFit = (preset) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
     const compatibleTunePodPresets = installPresets.filter((preset) => tunePodPresetFit(preset).fits);
     const incompatibleTunePodPresets = installPresets.filter((preset) => !tunePodPresetFit(preset).fits);
+    const tunePodPresetPolicy = (preset) => readTunePodPresetPolicy(preset, modelPolicyMap);
     const readinessCounts = (Array.isArray(tuningLifecycle?.entries) ? tuningLifecycle.entries : []).reduce((accumulator, entry) => {
       const readiness = String(entry?.localReadiness || entry?.installState || "").trim().toLowerCase();
       if (readiness === "live" || readiness === "ready") {
@@ -24880,6 +25075,11 @@
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Fallback help" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: remoteFallbackReady ? "Available when needed" : "Local only" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: remoteFallbackReady ? `${String(selectedRemoteProvider?.label || "Remote")} is available as backup help or for quick comparison.` : "No fallback help is configured. Local models are the main path right now." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "settings-hero-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Engine proof" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: engineProofHeadline }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(engineModelProof.summary || engineModelProof.nextAction || "Record the current Python-backed engine proof before treating this setup as verified.") })
           ] })
         ] })
       ] }),
@@ -25225,11 +25425,14 @@
       }
       return accumulator;
     }, {});
+    const localModelPolicy = props.aiStatus?.localModelPolicy && typeof props.aiStatus.localModelPolicy === "object" ? props.aiStatus.localModelPolicy : null;
+    const modelPolicyMap = buildTunePodModelPolicyMap(localModelPolicy);
     const tunePodReadyModelSet = new Set(aiModelOptions.filter((option) => option.ready).map((option) => option.model));
     const tunePodPresetTargetLabels = (preset) => {
       const targetIds = (Array.isArray(preset?.recommendedTargets) ? preset.recommendedTargets : []).map((item) => String(item || "").trim()).filter((item) => item && item !== "auto");
       return targetIds.map((targetId) => hardwareTargetLabelMap[targetId] || targetId);
     };
+    const tunePodPresetPolicy = (preset) => readTunePodPresetPolicy(preset, modelPolicyMap);
     const tunePodPresetFit = (preset) => evaluateTunePodRequirementFit(preset, effectiveTunePodCapabilities);
     const compatibleTunePodPresets = installPresets.filter((preset) => tunePodPresetFit(preset).fits);
     const incompatibleTunePodPresets = installPresets.filter((preset) => !tunePodPresetFit(preset).fits);
@@ -26399,6 +26602,16 @@
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: compatibleTunePodPresets.length > 0 ? "These presets match the current hardware target." : "No curated presets match this target yet." })
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Approved defaults" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: localModelProgram.approvedDefaultCount }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: localModelProgram.approvedDefaultsSummary || "Approved defaults are not recorded yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Candidate-only models" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: localModelProgram.candidateOnlyCount }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: localModelProgram.candidateOnlySummary || "Candidate-only models are not recorded yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Local inventory" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: `${Number(tuningLifecycle.readyCount || 0)} ready \u2022 ${Number(tuningLifecycle.localCount || 0)} tracked` }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(tuningLifecycle.summary || "Import or stage local models to start proving the daily coding loop.") })
@@ -26448,6 +26661,18 @@
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Local inventory status" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(tuningLifecycle.summary || "No local inventory summary is available yet.") })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Approved defaults" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.approvedDefaultsSummary || "Approved defaults are not recorded yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Candidate-only visibility" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.candidateOnlySummary || "Candidate-only models are not recorded yet." })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Live policy state" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: localModelProgram.currentStateSummary || "Live local policy state is not recorded yet." })
               ] })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
@@ -26481,6 +26706,7 @@
                 const targetLabels = tunePodPresetTargetLabels(preset);
                 const presetModel = String(preset.ollamaModel || "");
                 const isReady = presetModel ? tunePodReadyModelSet.has(presetModel) : false;
+                const policy = tunePodPresetPolicy(preset);
                 return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(preset.label || preset.id || "Preset") }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
@@ -26488,6 +26714,7 @@
                     preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : "",
                     preset.requirementSummary ? ` \u2022 ${String(preset.requirementSummary)}` : "",
                     targetLabels.length > 0 ? ` \u2022 Fits ${targetLabels.join(" \u2022 ")}` : "",
+                    policy?.label ? ` \u2022 ${policy.label}` : "",
                     isReady ? " \u2022 ready locally" : " \u2022 import needed"
                   ] }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "row-actions", children: [
@@ -26507,6 +26734,7 @@
               incompatibleTunePodPresets.slice(0, 8).map((preset) => {
                 const targetLabels = tunePodPresetTargetLabels(preset);
                 const fit = tunePodPresetFit(preset);
+                const policy = tunePodPresetPolicy(preset);
                 return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: String(preset.label || preset.id || "Preset") }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
@@ -26514,6 +26742,7 @@
                     preset.requirementSummary ? ` \u2022 ${String(preset.requirementSummary)}` : "",
                     fit.blockers.length > 0 ? ` \u2022 Needs ${fit.blockers.join(" \u2022 ")}` : "",
                     targetLabels.length > 0 ? ` \u2022 Better on ${targetLabels.join(" \u2022 ")}` : " \u2022 Use a larger hardware tier",
+                    policy?.label ? ` \u2022 ${policy.label}` : "",
                     preset.sourceLabel ? ` \u2022 ${String(preset.sourceLabel)}` : ""
                   ] })
                 ] }, String(preset.id || preset.label));
@@ -26775,6 +27004,7 @@
     const testBench = props.snapshot?.testBench && typeof props.snapshot.testBench === "object" ? props.snapshot.testBench : {};
     const acceptanceState = props.snapshot?.acceptance && typeof props.snapshot.acceptance === "object" ? props.snapshot.acceptance : {};
     const acceptance = acceptanceState?.report && typeof acceptanceState.report === "object" ? acceptanceState.report : {};
+    const acceptanceControl = acceptanceState?.controlSummary && typeof acceptanceState.controlSummary === "object" ? acceptanceState.controlSummary : {};
     const readiness = props.snapshot?.readiness && typeof props.snapshot.readiness === "object" ? props.snapshot.readiness : {};
     const candidates = Array.isArray(promotions.candidates) ? promotions.candidates : [];
     const backups = Array.isArray(promotions.backups) ? promotions.backups : [];
@@ -26792,6 +27022,13 @@
     const docsVault = props.snapshot?.manager?.approvedDocsVault && typeof props.snapshot.manager.approvedDocsVault === "object" ? props.snapshot.manager.approvedDocsVault : {};
     const operatorSupervision = props.learningStatus?.operatorSupervision && typeof props.learningStatus.operatorSupervision === "object" ? props.learningStatus.operatorSupervision : {};
     const localModelProgram = buildLocalModelProgramView(props.snapshot, props.aiStatus, props.tuning);
+    const engineModelProof = props.aiStatus?.engineModelProof && typeof props.aiStatus.engineModelProof === "object" ? props.aiStatus.engineModelProof : {};
+    const acceptanceCapabilityLabel = String(acceptanceControl.capabilityLabel || "").trim();
+    const acceptanceRawLabel = String(acceptanceControl.acceptanceLabel || acceptance?.overallStatus || "").trim().toUpperCase();
+    const acceptanceHeadline = acceptanceCapabilityLabel ? acceptanceRawLabel && acceptanceRawLabel !== acceptanceCapabilityLabel ? `${acceptanceCapabilityLabel} (${acceptanceRawLabel})` : acceptanceCapabilityLabel : acceptanceRawLabel || "Not run yet";
+    const engineProofCapabilityLabel = String(engineModelProof.capabilityLabel || "").trim();
+    const engineProofRawLabel = String(engineModelProof.label || "").trim().toUpperCase();
+    const engineProofHeadline = engineProofCapabilityLabel ? engineProofRawLabel && engineProofRawLabel !== engineProofCapabilityLabel ? `${engineProofCapabilityLabel} (${engineProofRawLabel})` : engineProofCapabilityLabel : engineProofRawLabel || "Not recorded";
     const supervisionSignals = Array.isArray(operatorSupervision.signals) ? operatorSupervision.signals : [];
     const testBenchFollowups = Array.isArray(testBench.followups) ? testBench.followups : [];
     const nextSafeAction = testBench.nextSafeAction && typeof testBench.nextSafeAction === "object" ? testBench.nextSafeAction : {};
@@ -26931,8 +27168,13 @@
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Acceptance" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptance?.overallStatus ? String(acceptance.overallStatus).toUpperCase() : "Not run yet" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: acceptance?.summary || "Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result." })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: acceptanceHeadline }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: acceptance?.summary || acceptanceControl.nextSafeAction || "Run the engine acceptance suite here to seed Monitor with a real self-host + dummy lab gate result." })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Engine proof" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: engineProofHeadline }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: String(engineModelProof.summary || "Show the current Python-backed engine path and routed model proof here after the next bounded pass.") })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("article", { className: "metric-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "12-month baseline" }),
@@ -26984,6 +27226,26 @@
           ] }, String(check.id || check.label))) : null,
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "Run acceptance here or from `npm run engine:acceptance` whenever you want a fresh self-host + dummy lab gate." })
         ] }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Engine model proof" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: engineProofHeadline }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(engineModelProof.summary || "Run the proof-summary command after the next bounded pass to capture the Python runtime and routed model path.") })
+          ] }),
+          String(engineModelProof.meta || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Proof details" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(engineModelProof.meta || "") })
+          ] }) : null,
+          String(engineModelProof.routeSummary || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Routed models" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(engineModelProof.routeSummary || "") })
+          ] }) : null,
+          String(engineModelProof.nextAction || "").trim() ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: "Next safe action" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: String(engineModelProof.nextAction || "") })
+          ] }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "empty-copy", children: "This card mirrors the same proof envelope shown in the companion and the CLI markdown artifact." })
+        ] }),
         docsVault.exists ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "queue-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "eyebrow", children: "Trusted docs vault" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "run-item", children: [

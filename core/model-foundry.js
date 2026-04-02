@@ -1,10 +1,70 @@
 'use strict';
 
+const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const { getConfiguredAssistantModelFoundryRoot } = require('./assistant-paths');
-const { buildBenchmarkIdentity } = require('./benchmarks');
+const { buildBenchmarkIdentity, recordBenchmarkRun } = require('./benchmarks');
+
+const FOUNDRY_PROOF_CAPABILITIES = Object.freeze([
+  Object.freeze({
+    id: 'ask-plan',
+    label: 'Ask/plan',
+    taskMode: 'planner',
+    recipe: 'candidate-proof:ask-plan',
+    benchmarkTags: ['ask-plan', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:ask-proof', 'npm run test:plan-proof'],
+  }),
+  Object.freeze({
+    id: 'code',
+    label: 'Code',
+    taskMode: 'coder',
+    recipe: 'candidate-proof:code',
+    benchmarkTags: ['code', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:code-proof'],
+  }),
+  Object.freeze({
+    id: 'repair',
+    label: 'Repair',
+    taskMode: 'repair',
+    recipe: 'candidate-proof:repair',
+    benchmarkTags: ['repair', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:repair-proof'],
+  }),
+  Object.freeze({
+    id: 'review-validate',
+    label: 'Review/validate',
+    taskMode: 'validator',
+    recipe: 'candidate-proof:review-validate',
+    benchmarkTags: ['review-validate', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:review-proof'],
+  }),
+  Object.freeze({
+    id: 'docs-guided',
+    label: 'Docs-guided',
+    taskMode: 'research',
+    recipe: 'candidate-proof:docs-guided',
+    benchmarkTags: ['docs-guided', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:docs-proof'],
+  }),
+  Object.freeze({
+    id: 'scaffold-create',
+    label: 'Scaffold/create',
+    taskMode: 'coder',
+    recipe: 'candidate-proof:scaffold-create',
+    benchmarkTags: ['scaffold', 'create-project', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:code-proof'],
+  }),
+  Object.freeze({
+    id: 'clone-lab-autonomy',
+    label: 'Clone-lab autonomy',
+    taskMode: 'coder',
+    recipe: 'candidate-proof:clone-lab-autonomy',
+    benchmarkTags: ['clone-lab', 'autonomy-proof', 'candidate-proof', 'engine-proof'],
+    commands: ['npm run test:self-improve-proof'],
+  }),
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -25,6 +85,110 @@ function slugify(value, fallback = 'item') {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return normalized || fallback;
+}
+
+function shortText(value, maxLength = 220) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) {
+    return '';
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
+}
+
+function clipCommandOutput(value, maxLength = 4000) {
+  const text = String(value || '');
+  if (!text) {
+    return '';
+  }
+  return text.length > maxLength ? text.slice(text.length - maxLength) : text;
+}
+
+function tailSummary(stdout = '', stderr = '') {
+  const lines = `${String(stdout || '')}\n${String(stderr || '')}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length > 0 ? lines[lines.length - 1] : '';
+}
+
+function resolveCommand(command = '') {
+  const normalized = String(command || '').trim();
+  if (process.platform === 'win32' && /^[a-z0-9_-]+$/i.test(normalized) && !/\.(cmd|bat|exe)$/i.test(normalized)) {
+    if (normalized.toLowerCase() === 'npm') {
+      return 'npm.cmd';
+    }
+    if (normalized.toLowerCase() === 'npx') {
+      return 'npx.cmd';
+    }
+  }
+  return normalized;
+}
+
+function runShellCommand(commandText, cwd, env = process.env) {
+  const startedAt = Date.now();
+  let result;
+  if (process.platform === 'win32') {
+    result = childProcess.spawnSync('cmd.exe', ['/d', '/s', '/c', commandText], {
+      cwd,
+      env,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 8,
+      windowsHide: true,
+    });
+  } else {
+    result = childProcess.spawnSync('sh', ['-lc', commandText], {
+      cwd,
+      env,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 8,
+    });
+  }
+  return {
+    command: commandText,
+    ok: result?.status === 0,
+    status: Number.isFinite(result?.status) ? result.status : null,
+    signal: result?.signal || '',
+    stdout: String(result?.stdout || ''),
+    stderr: String(result?.stderr || ''),
+    durationMs: Date.now() - startedAt,
+    summary: tailSummary(result?.stdout, result?.stderr),
+  };
+}
+
+function normalizeFoundryProofCapabilitySpecs(capabilitySpecs = FOUNDRY_PROOF_CAPABILITIES) {
+  return Array.isArray(capabilitySpecs)
+    ? capabilitySpecs
+      .map((capability) => ({
+        id: String(capability?.id || '').trim().toLowerCase(),
+        label: String(capability?.label || capability?.id || 'Capability').trim(),
+        taskMode: String(capability?.taskMode || '').trim().toLowerCase(),
+        recipe: String(capability?.recipe || capability?.id || 'candidate-proof').trim(),
+        benchmarkTags: Array.isArray(capability?.benchmarkTags)
+          ? capability.benchmarkTags.map((item) => String(item || '').trim()).filter(Boolean)
+          : [],
+        commands: Array.isArray(capability?.commands)
+          ? capability.commands.map((item) => String(item || '').trim()).filter(Boolean)
+          : [],
+      }))
+      .filter((capability) => capability.id && capability.taskMode && capability.commands.length > 0)
+    : [];
+}
+
+function normalizeFoundryProofCandidate(candidate = {}) {
+  const modelIdentity = candidate?.modelIdentity && typeof candidate.modelIdentity === 'object'
+    ? candidate.modelIdentity
+    : buildFoundryCandidateIdentity(candidate);
+  const baseModel = String(candidate.baseModel || candidate.recommendedModels?.[0] || modelIdentity?.baseModel || '').trim();
+  const providerSource = String(candidate.providerSource || modelIdentity?.providerSource || 'ollama').trim().toLowerCase() || 'ollama';
+  const modelProfileId = String(candidate.modelProfileId || candidate.wrappedProfileId || modelIdentity?.wrappedProfileId || '').trim();
+  return {
+    ...candidate,
+    modelIdentity,
+    baseModel,
+    providerSource,
+    modelProfileId,
+    label: String(candidate.title || candidate.label || candidate.id || baseModel || 'Foundry candidate').trim(),
+  };
 }
 
 function ensureFoundryRoot(workspaceRoot) {
@@ -116,6 +280,17 @@ function listFoundryCandidateEntries(workspaceRoot) {
     })
     .filter(Boolean)
     .sort((left, right) => candidateSortValue(right.candidate).localeCompare(candidateSortValue(left.candidate)));
+}
+
+function getFoundryCandidateEntry(workspaceRoot, candidateId = '') {
+  const normalizedCandidateId = String(candidateId || '').trim();
+  if (!normalizedCandidateId) {
+    return null;
+  }
+  return listFoundryCandidateEntries(workspaceRoot).find((entry) => {
+    const candidate = entry.candidate && typeof entry.candidate === 'object' ? entry.candidate : {};
+    return String(candidate.id || '').trim() === normalizedCandidateId;
+  }) || null;
 }
 
 function listFoundryCandidates(workspaceRoot) {
@@ -263,8 +438,261 @@ function buildModelFoundryStatus(workspaceRoot, payload = {}) {
       ? clipText([
           nextCandidate.summary || nextCandidate.title || 'Model Foundry has a next candidate ready.',
           nextCandidateIdentity?.summary || '',
+          nextCandidate?.proof?.summary || '',
         ].filter(Boolean).join(' '))
       : 'Model Foundry is waiting for stronger benchmark or learning signals.',
+  };
+}
+
+function updateFoundryCandidateProof(workspaceRoot, candidateId = '', proof = {}) {
+  const entry = getFoundryCandidateEntry(workspaceRoot, candidateId);
+  if (!entry) {
+    return {
+      ok: false,
+      persisted: false,
+      message: `Foundry candidate ${candidateId} was not found for proof persistence.`,
+    };
+  }
+  const candidate = entry.candidate && typeof entry.candidate === 'object' ? entry.candidate : {};
+  const nextProof = {
+    ...(candidate.proof && typeof candidate.proof === 'object' ? candidate.proof : {}),
+    ...(proof && typeof proof === 'object' ? proof : {}),
+    updatedAt: String(proof?.updatedAt || nowIso()),
+  };
+  const updatedCandidate = {
+    ...candidate,
+    proof: nextProof,
+    updatedAt: nowIso(),
+  };
+  fs.writeFileSync(entry.filePath, `${JSON.stringify(updatedCandidate, null, 2)}\n`, 'utf8');
+  return {
+    ok: true,
+    persisted: true,
+    candidate: updatedCandidate,
+    outputPath: entry.filePath,
+  };
+}
+
+function resolveFoundryProofCandidates(workspaceRoot, options = {}) {
+  const storedCandidates = listFoundryCandidates(workspaceRoot).map(attachFoundryIdentity);
+  const foundryStatus = options.foundryStatus && typeof options.foundryStatus === 'object'
+    ? options.foundryStatus
+    : null;
+  const nextCandidate = foundryStatus?.nextCandidate && typeof foundryStatus.nextCandidate === 'object'
+    ? attachFoundryIdentity(foundryStatus.nextCandidate)
+    : null;
+  if (options.all === true) {
+    return storedCandidates.map(normalizeFoundryProofCandidate);
+  }
+  const candidateId = String(options.candidateId || '').trim();
+  if (candidateId) {
+    const explicit = storedCandidates.find((candidate) => String(candidate.id || '').trim() === candidateId)
+      || (nextCandidate && String(nextCandidate.id || '').trim() === candidateId ? nextCandidate : null);
+    return explicit ? [normalizeFoundryProofCandidate(explicit)] : [];
+  }
+  if (storedCandidates.length > 0) {
+    return [normalizeFoundryProofCandidate(storedCandidates[0])];
+  }
+  return nextCandidate ? [normalizeFoundryProofCandidate(nextCandidate)] : [];
+}
+
+function executeFoundryCapabilityProof(workspaceRoot, candidate = {}, capability = {}, options = {}) {
+  const commandRunner = typeof options.runCommand === 'function'
+    ? options.runCommand
+    : (commandText, cwd) => runShellCommand(commandText, cwd, options.env || process.env);
+  const benchmarkTagSet = new Set([
+    ...capability.benchmarkTags,
+    `candidate-${slugify(candidate.id || candidate.label || 'candidate', 'candidate')}`,
+    `proof-${capability.id}`,
+  ]);
+  if (options.dryRun === true) {
+    return {
+      ok: true,
+      dryRun: true,
+      candidateId: String(candidate.id || '').trim(),
+      capabilityId: capability.id,
+      label: capability.label,
+      commands: capability.commands.slice(),
+      benchmarkTags: Array.from(benchmarkTagSet),
+    };
+  }
+
+  const commandResults = [];
+  for (const commandText of capability.commands) {
+    const result = commandRunner(commandText, workspaceRoot, candidate, capability);
+    commandResults.push({
+      command: commandText,
+      ok: result?.ok === true,
+      status: Number.isFinite(result?.status) ? result.status : null,
+      signal: String(result?.signal || '').trim(),
+      stdout: String(result?.stdout || ''),
+      stderr: String(result?.stderr || ''),
+      durationMs: Number(result?.durationMs || 0),
+      summary: String(result?.summary || '').trim(),
+    });
+    if (result?.ok !== true) {
+      break;
+    }
+  }
+
+  const ok = commandResults.every((result) => result.ok === true);
+  const totalDurationMs = commandResults.reduce((sum, result) => sum + Number(result.durationMs || 0), 0);
+  const stdout = clipCommandOutput(commandResults.map((result) => result.stdout).filter(Boolean).join('\n'));
+  const stderr = clipCommandOutput(commandResults.map((result) => result.stderr).filter(Boolean).join('\n'));
+  const summary = ok
+    ? `${candidate.label} passed ${capability.label.toLowerCase()} proof.`
+    : shortText(commandResults.find((result) => result.ok !== true)?.summary || `${candidate.label} failed ${capability.label.toLowerCase()} proof.`);
+  const benchmark = recordBenchmarkRun(workspaceRoot, {
+    id: `${slugify(candidate.id || candidate.label || 'candidate', 'candidate')}-${capability.id}-${Date.now()}`,
+    name: `${candidate.label} ${capability.label} proof`,
+    model: candidate.baseModel,
+    modelProfileId: candidate.modelProfileId,
+    wrappedProfileId: candidate.modelProfileId,
+    baseModel: candidate.baseModel,
+    providerSource: candidate.providerSource,
+    taskMode: capability.taskMode,
+    benchmarkTags: Array.from(benchmarkTagSet),
+    runtime: 'engine-cli-model-proof',
+    recipe: capability.recipe,
+    workspaceRoot,
+    targetRoot: workspaceRoot,
+    labRoot: String(options.labRoot || '').trim(),
+    status: ok ? 'pass' : 'fail',
+    ok,
+    passRate: ok ? 100 : 0,
+    latencyMs: totalDurationMs,
+    summary,
+    validationResult: {
+      required: true,
+      ok,
+      summary,
+      commandCount: commandResults.length,
+      commands: commandResults.map((result) => result.command),
+    },
+    rawResult: {
+      commands: commandResults.map((result) => ({
+        command: result.command,
+        ok: result.ok,
+        status: result.status,
+        signal: result.signal,
+        durationMs: result.durationMs,
+        summary: result.summary,
+        stdout: clipCommandOutput(result.stdout, 1200),
+        stderr: clipCommandOutput(result.stderr, 1200),
+      })),
+      stdout,
+      stderr,
+    },
+  });
+
+  return {
+    ok,
+    dryRun: false,
+    candidateId: String(candidate.id || '').trim(),
+    capabilityId: capability.id,
+    label: capability.label,
+    commands: capability.commands.slice(),
+    benchmarkId: String(benchmark.id || benchmark.outputPath || '').trim(),
+    outputPath: String(benchmark.outputPath || '').trim(),
+    benchmarkTags: Array.from(benchmarkTagSet),
+    durationMs: totalDurationMs,
+    summary,
+  };
+}
+
+function summarizeFoundryCandidateProof(candidate = {}, capabilityResults = [], capabilitySpecs = []) {
+  const resultsByCapability = new Map(
+    capabilityResults.map((result) => [String(result.capabilityId || '').trim(), result]),
+  );
+  const blockedCapabilities = [];
+  const missingCapabilities = [];
+  let verifiedCapabilityCount = 0;
+
+  capabilitySpecs.forEach((capability) => {
+    const result = resultsByCapability.get(capability.id) || null;
+    if (!result) {
+      missingCapabilities.push(capability.label);
+      return;
+    }
+    if (result.ok === true || result.dryRun === true) {
+      verifiedCapabilityCount += 1;
+      return;
+    }
+    blockedCapabilities.push(capability.label);
+  });
+
+  const capabilityCount = capabilitySpecs.length;
+  const status = capabilityCount > 0 && verifiedCapabilityCount === capabilityCount
+    ? 'verified'
+    : blockedCapabilities.length > 0
+      ? 'blocked'
+      : 'next';
+  const summary = status === 'verified'
+    ? `${candidate.label} now proves ${verifiedCapabilityCount}/${capabilityCount} tracked candidate capabilities.`
+    : status === 'blocked'
+      ? `${candidate.label} is blocked on ${blockedCapabilities.join(', ')}.`
+      : `${candidate.label} proves ${verifiedCapabilityCount}/${capabilityCount} tracked candidate capabilities.`;
+  return {
+    status,
+    capabilityCount,
+    verifiedCapabilityCount,
+    missingCapabilities,
+    blockedCapabilities,
+    benchmarkRunIds: capabilityResults.map((result) => String(result.benchmarkId || '').trim()).filter(Boolean),
+    summary,
+    updatedAt: nowIso(),
+  };
+}
+
+function runFoundryCandidateProofs(workspaceRoot, options = {}) {
+  const candidates = resolveFoundryProofCandidates(workspaceRoot, options);
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      message: options.candidateId
+        ? `No Model Foundry candidate matched ${options.candidateId}.`
+        : 'No Model Foundry candidate is available for proof.',
+      candidates: [],
+      results: [],
+    };
+  }
+
+  const capabilityFilter = Array.isArray(options.capabilityIds)
+    ? options.capabilityIds.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const capabilitySpecs = normalizeFoundryProofCapabilitySpecs(options.capabilitySpecs)
+    .filter((capability) => capabilityFilter.length === 0 || capabilityFilter.includes(capability.id));
+  if (capabilitySpecs.length === 0) {
+    return {
+      ok: false,
+      message: 'No candidate proof capabilities were selected.',
+      candidates,
+      results: [],
+    };
+  }
+
+  const results = candidates.map((candidate) => {
+    const capabilityResults = capabilitySpecs.map((capability) => executeFoundryCapabilityProof(workspaceRoot, candidate, capability, options));
+    const proof = summarizeFoundryCandidateProof(candidate, capabilityResults, capabilitySpecs);
+    const persistedProof = options.dryRun === true
+      ? { ok: true, persisted: false }
+      : updateFoundryCandidateProof(workspaceRoot, candidate.id, proof);
+    return {
+      candidate,
+      capabilityResults,
+      proof,
+      persistedProof,
+    };
+  });
+
+  return {
+    ok: results.every((result) => result.proof.status === 'verified' || options.dryRun === true),
+    dryRun: options.dryRun === true,
+    candidateCount: results.length,
+    capabilityCount: capabilitySpecs.length,
+    candidates: results.map((result) => result.candidate),
+    results,
+    summary: shortText(results.map((result) => result.proof.summary).join(' '), 260),
   };
 }
 
@@ -313,8 +741,10 @@ function seedModelFoundryCandidate(workspaceRoot, payload = {}) {
 }
 
 module.exports = {
+  FOUNDRY_PROOF_CAPABILITIES,
   buildModelFoundryStatus,
   deriveFoundrySuggestions,
   listFoundryCandidates,
+  runFoundryCandidateProofs,
   seedModelFoundryCandidate,
 };

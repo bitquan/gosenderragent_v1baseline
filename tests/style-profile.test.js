@@ -16,6 +16,7 @@ test('deriveStyleProfileFromEntries learns reusable prompts only from trusted se
       changeSessionId: 'session-1',
       payload: {
         text: 'Review the current repo and tell me what needs fixing first.',
+        surface: 'engine-cli',
       },
     },
     {
@@ -50,6 +51,7 @@ test('deriveStyleProfileFromEntries learns reusable prompts only from trusted se
   assert.equal(profile.trustedSessionCount, 1);
   assert.equal(profile.reusablePrompts.length, 1);
   assert.equal(profile.reusablePrompts[0].prompt, 'Review the current repo and tell me what needs fixing first.');
+  assert.deepEqual(profile.reusablePrompts[0].surfaces, ['engine-cli']);
   assert.equal(profile.preferredVerbs[0].verb, 'review');
 });
 

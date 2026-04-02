@@ -200,6 +200,7 @@ test('free-form ai prompt includes recent history and desktop context', async ()
   assert.deepEqual(receivedOptions, {
     requestId: 'chatreq-123',
     chatMode: 'ask',
+    effectiveChatMode: 'ask',
     suggestedLaneId: 'chat-fast',
     suggestedTaskMode: 'chat',
   });

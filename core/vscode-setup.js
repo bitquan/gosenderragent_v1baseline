@@ -82,6 +82,30 @@ function readPackageScripts(workspaceRoot) {
   return pkg?.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
 }
 
+function readCompanionMetadata(companionExtensionRoot) {
+  const root = String(companionExtensionRoot || '').trim();
+  if (!root) {
+    return {
+      packageName: '',
+      publisher: '',
+      version: '',
+      integrationVersion: '',
+      metadataVersionMismatch: false,
+    };
+  }
+  const pkg = readJson(path.join(root, 'package.json')) || {};
+  const integration = readJson(path.join(root, 'integration.json')) || {};
+  const version = String(pkg.version || '').trim();
+  const integrationVersion = String(integration.version || '').trim();
+  return {
+    packageName: String(pkg.name || '').trim(),
+    publisher: String(pkg.publisher || '').trim(),
+    version,
+    integrationVersion,
+    metadataVersionMismatch: Boolean(version && integrationVersion && version !== integrationVersion),
+  };
+}
+
 function resolveVsCodeCliCommand(options = {}) {
   if (options && Object.prototype.hasOwnProperty.call(options, 'cliCommand')) {
     return String(options.cliCommand || '').trim();
@@ -180,14 +204,20 @@ function readInstalledCompanion(workspaceRoot, options = {}) {
       cliCommand,
       extensionsRoot,
       packageName: '',
+      publisher: '',
       version: '',
+      integrationVersion: '',
+      metadataVersionMismatch: false,
       installRoot: '',
       installs: [],
+      installCount: 0,
+      installedVersion: '',
+      versionMismatch: false,
+      staleInstallRoots: [],
     };
   }
-  const pkg = readJson(path.join(companionExtensionRoot, 'package.json')) || {};
-  const packageName = String(pkg.name || '').trim();
-  const version = String(pkg.version || '').trim();
+  const metadata = readCompanionMetadata(companionExtensionRoot);
+  const { packageName, publisher, version, integrationVersion, metadataVersionMismatch } = metadata;
   const installs = !extensionsRoot || !fs.existsSync(extensionsRoot)
     ? []
     : fs.readdirSync(extensionsRoot, { withFileTypes: true })
@@ -197,22 +227,38 @@ function readInstalledCompanion(workspaceRoot, options = {}) {
         installRoot,
         pkg: readJson(path.join(installRoot, 'package.json')) || {},
       }))
-      .filter((entry) => String(entry.pkg.name || '').trim() === packageName)
+      .filter((entry) => {
+        const installedName = String(entry.pkg.name || '').trim();
+        const installedPublisher = String(entry.pkg.publisher || '').trim();
+        return installedName === packageName && (!publisher || installedPublisher === publisher);
+      })
       .map((entry) => ({
         installRoot: entry.installRoot,
         version: String(entry.pkg.version || '').trim(),
         packageName: String(entry.pkg.name || '').trim(),
+        publisher: String(entry.pkg.publisher || '').trim(),
       }));
-  const preferredInstall = installs.find((entry) => entry.version === version) || installs[0] || null;
+  const matchingInstall = installs.find((entry) => entry.version === version) || null;
+  const preferredInstall = matchingInstall || installs[0] || null;
+  const staleInstallRoots = installs
+    .filter((entry) => entry.version !== version)
+    .map((entry) => entry.installRoot);
   return {
     available: true,
     installed: installs.length > 0,
     cliCommand,
     extensionsRoot,
     packageName,
+    publisher,
     version,
+    integrationVersion,
+    metadataVersionMismatch,
     installRoot: String(preferredInstall?.installRoot || '').trim(),
     installs,
+    installCount: installs.length,
+    installedVersion: String(preferredInstall?.version || '').trim(),
+    versionMismatch: installs.length > 0 && !matchingInstall,
+    staleInstallRoots,
   };
 }
 
@@ -223,13 +269,14 @@ function installVsCodeCompanion(workspaceRoot, options = {}) {
   }
   const pkg = readJson(path.join(companionExtensionRoot, 'package.json')) || {};
   const packageName = String(pkg.name || '').trim() || 'gosenderr-vscode-companion';
+  const publisher = String(pkg.publisher || '').trim() || 'gosenderr';
   const version = String(pkg.version || '').trim() || 'dev';
   const extensionsRoot = resolveVsCodeExtensionsRoot(options);
   if (!extensionsRoot) {
     return { ok: false, message: 'VS Code extensions root is not available on this machine.' };
   }
   fs.mkdirSync(extensionsRoot, { recursive: true });
-  const installFolderName = `${packageName}-${version}`;
+  const installFolderName = `${publisher}.${packageName}-${version}`;
   const installRoot = path.join(extensionsRoot, installFolderName);
   const installedState = readInstalledCompanion(workspaceRoot, options);
   installedState.installs
@@ -404,6 +451,16 @@ function buildVsCodeSetupStatus(workspaceRoot, options = {}) {
   const missingTaskLabels = suggestedTasks
     .map((task) => String(task.label || '').trim())
     .filter((label) => !configuredTaskLabels.includes(label));
+  const setupWarnings = [];
+  if (companionInstall.metadataVersionMismatch) {
+    setupWarnings.push('Companion integration metadata version does not match the extension package version.');
+  }
+  if (companionInstall.versionMismatch) {
+    setupWarnings.push(`Installed companion version ${companionInstall.installedVersion || 'unknown'} does not match source version ${companionInstall.version || 'unknown'}.`);
+  }
+  if (companionInstall.staleInstallRoots.length > 0) {
+    setupWarnings.push('Stale companion installs still exist in the VS Code extensions root.');
+  }
   return {
     ok: true,
     exists: true,
@@ -424,8 +481,14 @@ function buildVsCodeSetupStatus(workspaceRoot, options = {}) {
     missingFiles,
     missingRecommendations,
     missingTaskLabels,
+    setupWarnings,
+    status: missingFiles.length > 0 || missingRecommendations.length > 0 || missingTaskLabels.length > 0 || setupWarnings.length > 0
+      ? 'needs-attention'
+      : 'ready',
     summary: missingFiles.length > 0 || missingRecommendations.length > 0 || missingTaskLabels.length > 0
       ? clipText(`VS Code setup can be improved. Missing files: ${missingFiles.join(', ') || 'none'} • missing recommendations: ${missingRecommendations.length} • missing tasks: ${missingTaskLabels.length}.`)
+      : setupWarnings.length > 0
+        ? clipText(`VS Code setup needs attention. ${setupWarnings[0]}${setupWarnings.length > 1 ? ` (+${setupWarnings.length - 1} more)` : ''}`)
       : companionInstall.available && !companionInstall.installed
         ? 'VS Code workspace files are ready, but the GoSenderr companion is not installed yet.'
         : 'VS Code workspace setup is ready.',
@@ -475,5 +538,6 @@ module.exports = {
   bootstrapVsCodeWorkspace,
   buildVsCodeSetupStatus,
   installVsCodeCompanion,
+  resolveVsCodeCliCommand,
   resolveVsCodeCompanionRoot,
 };

@@ -14,6 +14,10 @@ const {
 const APP_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MODEL_STORAGE_ROOT = path.join(os.homedir(), 'large-storage', 'models');
 
+function modelRequirements(fields = {}) {
+  return Object.freeze(fields);
+}
+
 const RECOMMENDED_LOCAL_MODELS = Object.freeze([
   Object.freeze({
     id: 'qwen-coder-3b',
@@ -27,6 +31,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourcePortal: 'ollama',
     sourceLabel: 'Ollama Library',
     sourceUrl: 'https://ollama.com/library/qwen2.5-coder',
+    requirements: modelRequirements({ minimumSystemRamGb: 8, recommendedSystemRamGb: 16, minimumCpuThreads: 4, recommendedGpuVramGb: 4, minimumStorageGb: 6 }),
     recommendedTargets: ['auto', 'balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -43,6 +48,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceLabel: 'Hugging Face',
     repoId: 'Qwen/Qwen2.5-Coder-7B-Instruct-GGUF',
     sourceUrl: 'https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF',
+    requirements: modelRequirements({ minimumSystemRamGb: 16, recommendedSystemRamGb: 24, minimumCpuThreads: 6, recommendedGpuVramGb: 6, minimumStorageGb: 10 }),
     recommendedTargets: ['auto', 'balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -59,6 +65,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceLabel: 'Hugging Face',
     repoId: 'Qwen/Qwen2.5-Coder-14B-Instruct-GGUF',
     sourceUrl: 'https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF',
+    requirements: modelRequirements({ minimumSystemRamGb: 24, recommendedSystemRamGb: 32, minimumCpuThreads: 8, recommendedGpuVramGb: 8, minimumStorageGb: 18 }),
     recommendedTargets: ['auto', 'creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -74,6 +81,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceLabel: 'Hugging Face',
     repoId: 'QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
     sourceUrl: 'https://huggingface.co/QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
+    requirements: modelRequirements({ minimumSystemRamGb: 16, recommendedSystemRamGb: 24, minimumCpuThreads: 6, recommendedGpuVramGb: 8, minimumStorageGb: 12 }),
     recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -89,6 +97,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceLabel: 'Hugging Face',
     repoId: 'QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
     sourceUrl: 'https://huggingface.co/QuantFactory/DeepSeek-Coder-V2-Lite-Instruct-GGUF',
+    requirements: modelRequirements({ minimumSystemRamGb: 24, recommendedSystemRamGb: 32, minimumCpuThreads: 8, recommendedGpuVramGb: 10, minimumStorageGb: 20 }),
     recommendedTargets: ['creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -104,6 +113,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourceLabel: 'Hugging Face',
     repoId: 'Qwen/Qwen3-14B-GGUF',
     sourceUrl: 'https://huggingface.co/Qwen/Qwen3-14B-GGUF',
+    requirements: modelRequirements({ minimumSystemRamGb: 24, recommendedSystemRamGb: 32, minimumCpuThreads: 8, recommendedGpuVramGb: 8, minimumStorageGb: 18 }),
     recommendedTargets: ['creator-laptop', 'workstation', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -118,6 +128,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourcePortal: 'ollama',
     sourceLabel: 'Ollama Library',
     sourceUrl: 'https://ollama.com/library/granite-code',
+    requirements: modelRequirements({ minimumSystemRamGb: 8, recommendedSystemRamGb: 16, minimumCpuThreads: 4, recommendedGpuVramGb: 4, minimumStorageGb: 6 }),
     recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -132,6 +143,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourcePortal: 'ollama',
     sourceLabel: 'Ollama Library',
     sourceUrl: 'https://ollama.com/library/starcoder2',
+    requirements: modelRequirements({ minimumSystemRamGb: 8, recommendedSystemRamGb: 16, minimumCpuThreads: 4, recommendedGpuVramGb: 4, minimumStorageGb: 6 }),
     recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -146,6 +158,7 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourcePortal: 'ollama',
     sourceLabel: 'Ollama Library',
     sourceUrl: 'https://ollama.com/library/codegemma',
+    requirements: modelRequirements({ minimumSystemRamGb: 8, recommendedSystemRamGb: 16, minimumCpuThreads: 4, recommendedGpuVramGb: 4, minimumStorageGb: 6 }),
     recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
   Object.freeze({
@@ -160,9 +173,37 @@ const RECOMMENDED_LOCAL_MODELS = Object.freeze([
     sourcePortal: 'ollama',
     sourceLabel: 'Ollama Library',
     sourceUrl: 'https://ollama.com/library/phi4-mini',
+    requirements: modelRequirements({ minimumSystemRamGb: 8, recommendedSystemRamGb: 16, minimumCpuThreads: 4, recommendedGpuVramGb: 4, minimumStorageGb: 6 }),
     recommendedTargets: ['balanced-laptop', 'creator-laptop', 'windows-i9-32gb-gpu', 'windows-i9-32gb-rtx4060-8gb'],
   }),
 ]);
+
+const LOCAL_MODEL_BLUEPRINT_POLICY = Object.freeze({
+  approvedDefaultModelTags: Object.freeze([
+    'qwen2.5-coder:7b',
+    'qwen2.5-coder:3b',
+  ]),
+  candidateOnlyModelTags: Object.freeze([
+    'qwen2.5-coder:14b',
+    'phi4-mini:3.8b',
+    'deepseek-coder-v2-lite-instruct:q2-k',
+    'deepseek-coder-v2-lite-instruct:q4-k-m',
+    'granite-code:3b',
+    'starcoder2:3b',
+    'codegemma:2b',
+    'qwen3-14b:q4-k-m',
+  ]),
+  largerHeadroomModelTags: Object.freeze([
+    'qwen2.5-coder:14b',
+    'deepseek-coder-v2-lite-instruct:q2-k',
+    'deepseek-coder-v2-lite-instruct:q4-k-m',
+    'qwen3-14b:q4-k-m',
+  ]),
+});
+
+const LOCAL_MODEL_BLUEPRINT_DEFAULT_TARGET = 'windows-i9-32gb-rtx4060-8gb';
+const LOCAL_MODEL_BLUEPRINT_PER_MODEL_RAM_CAP_GB = 32;
+const LOCAL_MODEL_BLUEPRINT_ACTIVE_HEADROOM_RESERVE_GB = 8;
 
 const WORKER_FAMILY_OPTIONS = Object.freeze([
   Object.freeze({ id: 'qwen', label: 'Qwen', summary: 'Primary tunable local worker family for coding and repair.' }),
@@ -185,12 +226,19 @@ const HARDWARE_TARGET_PRESETS = Object.freeze([
     id: 'auto',
     label: 'Current machine',
     summary: 'Use the machine you are running right now as the tuning reference.',
+    capabilities: {},
     patch: {},
   }),
   Object.freeze({
     id: 'balanced-laptop',
     label: 'Balanced laptop',
     summary: 'Safe default for everyday coding on an 8-16 GB machine.',
+    capabilities: {
+      systemRamGb: 16,
+      cpuThreads: 8,
+      gpuVramGb: 0,
+      dedicatedGpu: false,
+    },
     patch: {
       trainingProfile: 'medium',
       trainingEcoMode: true,
@@ -206,6 +254,12 @@ const HARDWARE_TARGET_PRESETS = Object.freeze([
     id: 'creator-laptop',
     label: 'Creator laptop',
     summary: 'Stronger local coding setup for 16-32 GB machines that still need daytime responsiveness.',
+    capabilities: {
+      systemRamGb: 32,
+      cpuThreads: 10,
+      gpuVramGb: 0,
+      dedicatedGpu: false,
+    },
     patch: {
       trainingProfile: 'high',
       trainingEcoMode: true,
@@ -214,13 +268,19 @@ const HARDWARE_TARGET_PRESETS = Object.freeze([
       trainingThermalPreset: '80',
       trainingThermalCustomC: 80,
       trainingLiveSamplingSec: 5,
-      trainingOllamaModel: 'qwen2.5-coder:14b',
+      trainingOllamaModel: 'qwen2.5-coder:7b',
     },
   }),
   Object.freeze({
     id: 'windows-i9-32gb-gpu',
     label: 'Windows dev PC (i9 / 32 GB / GPU)',
     summary: 'Recommended target for your Windows box with an i9 12th-gen CPU, 32 GB RAM, SSD, and a dedicated GPU.',
+    capabilities: {
+      systemRamGb: 32,
+      cpuThreads: 16,
+      gpuVramGb: 6,
+      dedicatedGpu: true,
+    },
     patch: {
       trainingProfile: 'high',
       trainingEcoMode: false,
@@ -229,13 +289,19 @@ const HARDWARE_TARGET_PRESETS = Object.freeze([
       trainingThermalPreset: '85',
       trainingThermalCustomC: 85,
       trainingLiveSamplingSec: 3,
-      trainingOllamaModel: 'qwen2.5-coder:14b',
+      trainingOllamaModel: 'qwen2.5-coder:7b',
     },
   }),
   Object.freeze({
     id: 'windows-i9-32gb-rtx4060-8gb',
     label: 'Windows dev PC (i9 / 32 GB / RTX 4060 8 GB)',
     summary: 'Higher-throughput target for your Windows box with an i9 12th-gen CPU, 32 GB RAM, SSD, and an RTX 4060 8 GB GPU.',
+    capabilities: {
+      systemRamGb: 32,
+      cpuThreads: 16,
+      gpuVramGb: 8,
+      dedicatedGpu: true,
+    },
     patch: {
       trainingProfile: 'high',
       trainingEcoMode: false,
@@ -244,13 +310,19 @@ const HARDWARE_TARGET_PRESETS = Object.freeze([
       trainingThermalPreset: '85',
       trainingThermalCustomC: 85,
       trainingLiveSamplingSec: 2,
-      trainingOllamaModel: 'qwen2.5-coder:14b',
+      trainingOllamaModel: 'qwen2.5-coder:7b',
     },
   }),
   Object.freeze({
     id: 'workstation',
     label: 'Workstation',
     summary: 'Higher-throughput route for larger machines and dedicated tuning sessions.',
+    capabilities: {
+      systemRamGb: 64,
+      cpuThreads: 20,
+      gpuVramGb: 12,
+      dedicatedGpu: true,
+    },
     patch: {
       trainingProfile: 'high',
       trainingEcoMode: false,
@@ -1304,11 +1376,29 @@ function buildHuggingFaceDownloadCommand(model = {}, settings = {}) {
   ].join(' ');
 }
 
+function buildModelRequirementSummary(requirements = {}) {
+  const parts = [];
+  if (Number(requirements.minimumSystemRamGb || 0) > 0) {
+    parts.push(`${Number(requirements.minimumSystemRamGb)} GB RAM min`);
+  }
+  if (Number(requirements.minimumCpuThreads || 0) > 0) {
+    parts.push(`${Number(requirements.minimumCpuThreads)} CPU threads min`);
+  }
+  if (Number(requirements.recommendedGpuVramGb || 0) > 0) {
+    parts.push(`${Number(requirements.recommendedGpuVramGb)} GB VRAM target`);
+  }
+  if (Number(requirements.minimumStorageGb || 0) > 0) {
+    parts.push(`${Number(requirements.minimumStorageGb)} GB storage`);
+  }
+  return parts.join(' • ');
+}
+
 function buildModelInstallPresets(workspaceRoot, settings = {}) {
   const normalized = normalizeTrainingTuningSettings(settings);
   const selectedHardwareTarget = normalizeHardwareTarget(normalized.trainingHardwareTarget);
   return RECOMMENDED_LOCAL_MODELS.map((model) => {
     const recommendedTargets = Array.isArray(model.recommendedTargets) ? model.recommendedTargets : [];
+    const requirements = model.requirements && typeof model.requirements === 'object' ? model.requirements : {};
     const ollamaPullModel = String(model.ollamaPullModel || '').trim();
     const ollamaPullCommand = ollamaPullModel
       ? `ollama pull ${shellQuote(ollamaPullModel)}`
@@ -1326,6 +1416,8 @@ function buildModelInstallPresets(workspaceRoot, settings = {}) {
       repoId: String(model.repoId || '').trim(),
       ollamaModel: String(model.ollamaModel || '').trim(),
       fileName: String(model.fileName || '').trim(),
+      requirements,
+      requirementSummary: buildModelRequirementSummary(requirements),
       recommendedTargets,
       hardwareRecommended: selectedHardwareTarget === 'auto' || recommendedTargets.includes(selectedHardwareTarget),
       downloadCommand: ollamaPullCommand || huggingFaceDownloadCommand || buildModelDownloadCommand(workspaceRoot, normalized, model.id),
@@ -1767,6 +1859,7 @@ function findFoundryCandidateLink(target = {}, foundryStatus = {}) {
     providerSource: normalizeProviderSource(match.providerSource),
     taskMode: String(match.taskMode || '').trim().toLowerCase(),
     sourceBenchmarks: toArray(match.sourceBenchmarks).map((item) => String(item || '').trim()).filter(Boolean),
+    proof: match.proof && typeof match.proof === 'object' ? { ...match.proof } : null,
   };
 }
 
@@ -2015,6 +2108,9 @@ function buildLocalInventoryEntry(kind, payload = {}, selector = {}, benchmarkSu
     rollbackReady: !!rollbackSource,
     rollbackSource,
     foundryCandidate,
+    proof: payload.proof && typeof payload.proof === 'object'
+      ? { ...payload.proof }
+      : null,
     benchmarkIdentity,
     adapterArtifact: String(payload.adapterArtifact || '').trim(),
     checkpointMergeArtifact: String(payload.checkpointMergeArtifact || '').trim(),
@@ -2079,8 +2175,478 @@ function summarizeLocalModelInventory(entries = [], tuningTrust = {}) {
   };
 }
 
+function normalizeModelTag(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findRecommendedLocalModelByTag(value) {
+  const normalized = normalizeModelTag(value);
+  if (!normalized) {
+    return null;
+  }
+  return RECOMMENDED_LOCAL_MODELS.find((item) => (
+    normalizeModelTag(item?.ollamaModel) === normalized
+    || normalizeModelTag(item?.ollamaPullModel) === normalized
+  )) || null;
+}
+
+function classifyLocalModelPolicyState(value, policy = LOCAL_MODEL_BLUEPRINT_POLICY) {
+  const normalized = normalizeModelTag(value);
+  if (!normalized) {
+    return 'unclassified';
+  }
+  if (policy.approvedDefaultModelTags.includes(normalized)) {
+    return 'approved-default';
+  }
+  if (policy.candidateOnlyModelTags.includes(normalized)) {
+    return 'candidate-only';
+  }
+  return 'unclassified';
+}
+
+function localModelPolicyLabelForState(state) {
+  if (state === 'approved-default') {
+    return 'approved default';
+  }
+  if (state === 'candidate-only') {
+    return 'candidate-only';
+  }
+  return 'unclassified';
+}
+
+function buildLocalModelPolicyEntry(value, policy = LOCAL_MODEL_BLUEPRINT_POLICY) {
+  const normalized = normalizeModelTag(value);
+  if (!normalized) {
+    return null;
+  }
+  const recommended = findRecommendedLocalModelByTag(normalized);
+  const policyState = classifyLocalModelPolicyState(normalized, policy);
+  const largerHeadroom = policy.largerHeadroomModelTags.includes(normalized);
+  return {
+    id: String(recommended?.id || normalized).trim(),
+    label: String(recommended?.label || normalized).trim(),
+    ollamaModel: String(recommended?.ollamaModel || recommended?.ollamaPullModel || normalized).trim(),
+    workerFamily: String(recommended?.workerFamily || inferModelFamily(normalized) || '').trim(),
+    variantType: String(recommended?.variantType || '').trim(),
+    sizeLabel: String(recommended?.sizeLabel || '').trim(),
+    requirements: recommended?.requirements || {},
+    recommendedTargets: Array.isArray(recommended?.recommendedTargets) ? recommended.recommendedTargets.slice() : [],
+    policyState,
+    policyLabel: localModelPolicyLabelForState(policyState),
+    largerHeadroom,
+  };
+}
+
+function buildLiveLocalModelSections(config = {}) {
+  const source = config && typeof config === 'object' ? config : {};
+  return [
+    {
+      id: 'workspace-base',
+      label: 'workspace base',
+      provider: String(source.workspaceBaseProvider || source.workspaceProviderSource || source.baseProvider || source.providerSource || '').trim().toLowerCase(),
+      model: String(source.workspaceBaseModel || source.baseModel || '').trim(),
+    },
+    {
+      id: 'engine-base',
+      label: 'engine base',
+      provider: String(source.engineBaseProvider || source.engineProviderSource || source.workspaceBaseProvider || source.workspaceProviderSource || source.baseProvider || source.providerSource || '').trim().toLowerCase(),
+      model: String(source.engineBaseModel || source.workspaceBaseModel || source.baseModel || '').trim(),
+    },
+    ...['planner', 'repair', 'coder', 'validator', 'summarizer'].map((taskMode) => ({
+      id: taskMode,
+      label: taskMode,
+      provider: String(source.taskModeRoutes?.[taskMode]?.provider || '').trim().toLowerCase(),
+      model: String(source.taskModeRoutes?.[taskMode]?.model || '').trim(),
+    })),
+  ].filter((entry) => ['ollama', 'local'].includes(entry.provider) && entry.model);
+}
+
+function localModelRequirementRamGb(entry = {}) {
+  const requirements = entry?.requirements && typeof entry.requirements === 'object' ? entry.requirements : {};
+  const recommended = Number(requirements.recommendedSystemRamGb || 0);
+  if (Number.isFinite(recommended) && recommended > 0) {
+    return recommended;
+  }
+  const minimum = Number(requirements.minimumSystemRamGb || 0);
+  return Number.isFinite(minimum) && minimum > 0 ? minimum : 0;
+}
+
+function localModelExceedsPerModelCap(entry = {}, capGb = LOCAL_MODEL_BLUEPRINT_PER_MODEL_RAM_CAP_GB) {
+  const requirements = entry?.requirements && typeof entry.requirements === 'object' ? entry.requirements : {};
+  const minimum = Number(requirements.minimumSystemRamGb || 0);
+  const recommended = Number(requirements.recommendedSystemRamGb || 0);
+  return (Number.isFinite(minimum) && minimum > Number(capGb || 0))
+    || (Number.isFinite(recommended) && recommended > Number(capGb || 0));
+}
+
+function resolveLocalModelGuardrailTarget(options = {}) {
+  const normalizedSettings = normalizeTrainingTuningSettings(options.settings || {});
+  let target = getHardwareTargetPreset(options.hardwareTarget || normalizedSettings.trainingHardwareTarget || LOCAL_MODEL_BLUEPRINT_DEFAULT_TARGET);
+  if (target.id === 'auto' || Number(target?.capabilities?.systemRamGb || 0) <= 0) {
+    target = getHardwareTargetPreset(LOCAL_MODEL_BLUEPRINT_DEFAULT_TARGET);
+  }
+  const targetSystemRamGb = Math.max(1, Number(options.systemRamGb || target?.capabilities?.systemRamGb || LOCAL_MODEL_BLUEPRINT_PER_MODEL_RAM_CAP_GB));
+  const reserveRamGb = Math.max(0, Number(options.reserveRamGb || LOCAL_MODEL_BLUEPRINT_ACTIVE_HEADROOM_RESERVE_GB));
+  return {
+    targetId: String(target?.id || LOCAL_MODEL_BLUEPRINT_DEFAULT_TARGET).trim(),
+    targetLabel: String(target?.label || '32 GB Windows target').trim(),
+    targetSystemRamGb,
+    reserveRamGb,
+    effectiveBundleBudgetGb: Math.max(0, targetSystemRamGb - reserveRamGb),
+    perModelRamCapGb: Math.max(1, Number(options.perModelRamCapGb || LOCAL_MODEL_BLUEPRINT_PER_MODEL_RAM_CAP_GB)),
+  };
+}
+
+function resolveApprovedDefaultFallback(approvedDefaults = [], guardrailTarget = {}) {
+  const liveBudget = Number(guardrailTarget.effectiveBundleBudgetGb || 0);
+  const fitting = approvedDefaults.filter((entry) => {
+    const requiredRamGb = localModelRequirementRamGb(entry);
+    return !localModelExceedsPerModelCap(entry, guardrailTarget.perModelRamCapGb)
+      && (!liveBudget || !requiredRamGb || requiredRamGb <= liveBudget);
+  });
+  return fitting[0] || approvedDefaults.find((entry) => !localModelExceedsPerModelCap(entry, guardrailTarget.perModelRamCapGb)) || approvedDefaults[0] || null;
+}
+
+function buildLocalModelGuardrailDecision(value, options = {}) {
+  const policy = options.policy && typeof options.policy === 'object' ? options.policy : LOCAL_MODEL_BLUEPRINT_POLICY;
+  const requestedEntry = value && typeof value === 'object' && value.ollamaModel
+    ? value
+    : buildLocalModelPolicyEntry(value, policy);
+  const guardrailTarget = resolveLocalModelGuardrailTarget(options);
+  const approvedDefaults = toArray(options.approvedDefaults).length > 0
+    ? toArray(options.approvedDefaults)
+    : policy.approvedDefaultModelTags.map((item) => buildLocalModelPolicyEntry(item, policy)).filter(Boolean);
+  const fallbackEntry = resolveApprovedDefaultFallback(approvedDefaults, guardrailTarget);
+  if (!requestedEntry) {
+    return {
+      requestedEntry: null,
+      fallbackEntry,
+      guardrailTarget,
+      fitsPerModelCap: true,
+      fitsActiveBundleBudget: true,
+      allowedAsDefault: true,
+      effectiveModel: String(fallbackEntry?.ollamaModel || '').trim(),
+      enforced: false,
+      reasons: [],
+      summary: '',
+    };
+  }
+
+  const requestedRamGb = localModelRequirementRamGb(requestedEntry);
+  const fitsPerModelCap = !localModelExceedsPerModelCap(requestedEntry, guardrailTarget.perModelRamCapGb);
+  const fitsActiveBundleBudget = !requestedRamGb || requestedRamGb <= Number(guardrailTarget.effectiveBundleBudgetGb || 0);
+  const allowedAsDefault = requestedEntry.policyState === 'approved-default' && fitsPerModelCap && fitsActiveBundleBudget;
+  const effectiveModel = allowedAsDefault
+    ? String(requestedEntry.ollamaModel || '').trim()
+    : String(fallbackEntry?.ollamaModel || requestedEntry.ollamaModel || '').trim();
+  const reasons = [];
+  if (requestedEntry.policyState !== 'approved-default') {
+    reasons.push(`${requestedEntry.label} stays candidate-only until a proven 32 GB-safe bundle promotes it.`);
+  }
+  if (!fitsPerModelCap) {
+    reasons.push(`${requestedEntry.label} exceeds the ${guardrailTarget.perModelRamCapGb} GB per-model cap.`);
+  }
+  if (!fitsActiveBundleBudget) {
+    reasons.push(`${requestedEntry.label} needs ${requestedRamGb} GB RAM, above the practical ${guardrailTarget.effectiveBundleBudgetGb} GB live-bundle budget on the ${guardrailTarget.targetSystemRamGb} GB target.`);
+  }
+  return {
+    requestedEntry,
+    fallbackEntry,
+    guardrailTarget,
+    requestedRamGb,
+    fitsPerModelCap,
+    fitsActiveBundleBudget,
+    allowedAsDefault,
+    effectiveModel,
+    enforced: effectiveModel !== String(requestedEntry.ollamaModel || '').trim(),
+    reasons,
+    summary: reasons[0] || `${requestedEntry.label} fits the current 32 GB default-bundle guardrail.`,
+  };
+}
+
+function evaluateLocalModelGuardrails(config = {}, options = {}) {
+  const source = config && typeof config === 'object' ? config : {};
+  const policy = options.policy && typeof options.policy === 'object'
+    ? {
+      approvedDefaultModelTags: toArray(options.policy.approvedDefaultModelTags).map(normalizeModelTag).filter(Boolean),
+      candidateOnlyModelTags: toArray(options.policy.candidateOnlyModelTags).map(normalizeModelTag).filter(Boolean),
+      largerHeadroomModelTags: toArray(options.policy.largerHeadroomModelTags).map(normalizeModelTag).filter(Boolean),
+    }
+    : LOCAL_MODEL_BLUEPRINT_POLICY;
+  const approvedDefaults = policy.approvedDefaultModelTags
+    .map((value) => buildLocalModelPolicyEntry(value, policy))
+    .filter(Boolean);
+  const guardrailTarget = resolveLocalModelGuardrailTarget(options);
+  const approvedDefaultsWithinCap = approvedDefaults.every((entry) => !localModelExceedsPerModelCap(entry, guardrailTarget.perModelRamCapGb));
+  const fallbackEntry = resolveApprovedDefaultFallback(approvedDefaults, guardrailTarget);
+  const liveRouteSections = buildLiveLocalModelSections(source).map((entry) => {
+    const decision = buildLocalModelGuardrailDecision(entry.model, {
+      ...options,
+      policy,
+      approvedDefaults,
+      hardwareTarget: guardrailTarget.targetId,
+      systemRamGb: guardrailTarget.targetSystemRamGb,
+      reserveRamGb: guardrailTarget.reserveRamGb,
+      perModelRamCapGb: guardrailTarget.perModelRamCapGb,
+    });
+    return {
+      id: entry.id,
+      label: entry.label,
+      provider: entry.provider,
+      requestedModel: String(entry.model || '').trim(),
+      requestedLabel: String(decision.requestedEntry?.label || entry.model || '').trim(),
+      requestedPolicyState: String(decision.requestedEntry?.policyState || 'unclassified').trim(),
+      requestedRamGb: Number(decision.requestedRamGb || 0),
+      effectiveModel: String(decision.effectiveModel || entry.model || '').trim(),
+      effectiveLabel: String(decision.fallbackEntry?.label || decision.requestedEntry?.label || decision.effectiveModel || '').trim(),
+      enforced: decision.enforced === true,
+      allowedAsDefault: decision.allowedAsDefault === true,
+      reasons: decision.reasons.slice(),
+    };
+  });
+  const blockedSections = liveRouteSections.filter((entry) => entry.enforced);
+  const effectiveLocalModels = uniqueStrings(liveRouteSections.map((entry) => entry.effectiveModel));
+  const activeBundleFits = blockedSections.length === 0;
+  const perModelCapSummary = approvedDefaultsWithinCap
+    ? `${guardrailTarget.perModelRamCapGb} GB cap: approved defaults stay at or under 32 GB requirement metadata.`
+    : `${guardrailTarget.perModelRamCapGb} GB cap: at least one approved default exceeds the allowed requirement metadata and must be reclassified.`;
+  const activeBundleSummary = activeBundleFits
+    ? `32 GB live-fit: the active default route bundle stays within the practical ${guardrailTarget.effectiveBundleBudgetGb} GB whole-machine headroom budget on the ${guardrailTarget.targetLabel}.`
+    : `32 GB live-fit: requested ${blockedSections.map((entry) => `${entry.requestedModel} for ${entry.label}`).join('; ')} exceed the practical ${guardrailTarget.effectiveBundleBudgetGb} GB whole-machine headroom budget, so the effective default bundle falls back to ${effectiveLocalModels.join(', ')}.`;
+  const enforcementSummary = blockedSections.length > 0 && fallbackEntry
+    ? `Guardrail enforcement: ${blockedSections.map((entry) => `${entry.label} requested ${entry.requestedModel} but runs on ${entry.effectiveModel}`).join('; ')}.`
+    : `Guardrail enforcement: approved default routes can stay on ${String(fallbackEntry?.ollamaModel || approvedDefaults[0]?.ollamaModel || 'the approved default bundle').trim()}.`;
+  return {
+    target: guardrailTarget,
+    approvedDefaultsWithinCap,
+    activeBundleFits,
+    fallbackModel: String(fallbackEntry?.ollamaModel || '').trim(),
+    fallbackLabel: String(fallbackEntry?.label || '').trim(),
+    liveRouteSections,
+    blockedSections,
+    effectiveLocalModels,
+    perModelCapSummary,
+    activeBundleSummary,
+    enforcementSummary,
+    summary: [perModelCapSummary, activeBundleSummary].filter(Boolean).join(' '),
+  };
+}
+
+function applyLocalModelGuardrailsToConfig(config = {}, options = {}) {
+  const source = config && typeof config === 'object' ? config : {};
+  const guardrails = evaluateLocalModelGuardrails(source, options);
+  const workspaceWrappedProfileId = String(source.aiWorkspaceWrappedProfileId || source.aiWrappedProfileId || 'gs-dev-1-default').trim();
+  const engineWrappedProfileId = String(source.aiEngineWrappedProfileId || 'gse-1-engine').trim();
+  const next = {
+    ...source,
+    aiWrappedProfiles: Array.isArray(source.aiWrappedProfiles)
+      ? source.aiWrappedProfiles.map((profile) => (profile && typeof profile === 'object'
+        ? {
+            ...profile,
+            taskModeRoutes: profile.taskModeRoutes && typeof profile.taskModeRoutes === 'object'
+              ? Object.keys(profile.taskModeRoutes).reduce((accumulator, key) => {
+                  accumulator[key] = profile.taskModeRoutes[key] && typeof profile.taskModeRoutes[key] === 'object'
+                    ? { ...profile.taskModeRoutes[key] }
+                    : profile.taskModeRoutes[key];
+                  return accumulator;
+                }, {})
+              : profile.taskModeRoutes,
+          }
+        : profile))
+      : source.aiWrappedProfiles,
+    taskModeRoutes: source.taskModeRoutes && typeof source.taskModeRoutes === 'object'
+      ? Object.keys(source.taskModeRoutes).reduce((accumulator, key) => {
+          accumulator[key] = source.taskModeRoutes[key] && typeof source.taskModeRoutes[key] === 'object'
+            ? { ...source.taskModeRoutes[key] }
+            : source.taskModeRoutes[key];
+          return accumulator;
+        }, {})
+      : {},
+  };
+  for (const section of guardrails.liveRouteSections) {
+    if (!section.effectiveModel) {
+      continue;
+    }
+    if (section.id === 'workspace-base') {
+      next.workspaceBaseModel = section.effectiveModel;
+      if (String(source.baseProvider || source.providerSource || '').trim().toLowerCase() && String(source.baseModel || '').trim()) {
+        next.baseModel = section.effectiveModel;
+      }
+      if (Array.isArray(next.aiWrappedProfiles)) {
+        next.aiWrappedProfiles = next.aiWrappedProfiles.map((profile) => {
+          const current = profile && typeof profile === 'object' ? profile : {};
+          const profileId = String(current.id || current.profileId || '').trim();
+          const profileRole = String(current.role || '').trim().toLowerCase();
+          if (profileId === workspaceWrappedProfileId || profileRole === 'workspace') {
+            return {
+              ...current,
+              baseModel: section.effectiveModel,
+            };
+          }
+          return current;
+        });
+      }
+    } else if (section.id === 'engine-base') {
+      next.engineBaseModel = section.effectiveModel;
+      if (Array.isArray(next.aiWrappedProfiles)) {
+        next.aiWrappedProfiles = next.aiWrappedProfiles.map((profile) => {
+          const current = profile && typeof profile === 'object' ? profile : {};
+          const profileId = String(current.id || current.profileId || '').trim();
+          const profileRole = String(current.role || '').trim().toLowerCase();
+          if (profileId === engineWrappedProfileId || profileRole === 'engine') {
+            return {
+              ...current,
+              baseModel: section.effectiveModel,
+            };
+          }
+          return current;
+        });
+      }
+    } else {
+      next.taskModeRoutes = next.taskModeRoutes && typeof next.taskModeRoutes === 'object' ? next.taskModeRoutes : {};
+      next.taskModeRoutes[section.id] = next.taskModeRoutes[section.id] && typeof next.taskModeRoutes[section.id] === 'object'
+        ? { ...next.taskModeRoutes[section.id], model: section.effectiveModel }
+        : { provider: section.provider, model: section.effectiveModel };
+      if (Array.isArray(next.aiWrappedProfiles)) {
+        next.aiWrappedProfiles = next.aiWrappedProfiles.map((profile) => {
+          const current = profile && typeof profile === 'object' ? profile : {};
+          const taskModeRoutes = current.taskModeRoutes && typeof current.taskModeRoutes === 'object'
+            ? { ...current.taskModeRoutes }
+            : {};
+          const existingRoute = taskModeRoutes[section.id] && typeof taskModeRoutes[section.id] === 'object'
+            ? taskModeRoutes[section.id]
+            : null;
+          const routeProvider = String(existingRoute?.provider || section.provider || '').trim().toLowerCase();
+          if (!existingRoute && !section.provider) {
+            return current;
+          }
+          if (routeProvider !== 'ollama' && routeProvider !== 'local') {
+            return current;
+          }
+          taskModeRoutes[section.id] = existingRoute
+            ? { ...existingRoute, model: section.effectiveModel }
+            : { provider: section.provider, model: section.effectiveModel };
+          return {
+            ...current,
+            taskModeRoutes,
+          };
+        });
+      }
+    }
+  }
+  next.localModelGuardrails = guardrails;
+  return next;
+}
+
+function summarizeSectionLabels(labels = []) {
+  return labels.map((label) => String(label || '').trim()).filter(Boolean).join(', ');
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(new Set(
+    values.map((value) => String(value || '').trim()).filter(Boolean),
+  ));
+}
+
+function summarizePolicyModels(entries = []) {
+  return toArray(entries).map((entry) => {
+    const label = String(entry?.label || entry?.ollamaModel || '').trim();
+    return entry?.largerHeadroom ? `${label} larger-headroom` : label;
+  }).filter(Boolean).join(', ');
+}
+
+function buildLocalModelPolicySnapshot(config = {}, options = {}) {
+  const source = config && typeof config === 'object' ? config : {};
+  const policy = options.policy && typeof options.policy === 'object'
+    ? {
+      approvedDefaultModelTags: toArray(options.policy.approvedDefaultModelTags).map(normalizeModelTag).filter(Boolean),
+      candidateOnlyModelTags: toArray(options.policy.candidateOnlyModelTags).map(normalizeModelTag).filter(Boolean),
+      largerHeadroomModelTags: toArray(options.policy.largerHeadroomModelTags).map(normalizeModelTag).filter(Boolean),
+    }
+    : LOCAL_MODEL_BLUEPRINT_POLICY;
+  const approvedDefaults = policy.approvedDefaultModelTags
+    .map((value) => buildLocalModelPolicyEntry(value, policy))
+    .filter(Boolean);
+  const candidateOnlyModels = policy.candidateOnlyModelTags
+    .map((value) => buildLocalModelPolicyEntry(value, policy))
+    .filter(Boolean);
+  const largerHeadroomModels = policy.largerHeadroomModelTags
+    .map((value) => buildLocalModelPolicyEntry(value, policy))
+    .filter(Boolean);
+  const liveLocalSections = buildLiveLocalModelSections(source);
+  const groupedSections = Array.from(liveLocalSections.reduce((accumulator, entry) => {
+    const key = normalizeModelTag(entry.model);
+    if (!key) {
+      return accumulator;
+    }
+    if (!accumulator.has(key)) {
+      accumulator.set(key, {
+        model: String(entry.model || '').trim(),
+        labels: [],
+      });
+    }
+    accumulator.get(key).labels.push(entry.label);
+    return accumulator;
+  }, new Map()).values()).map((entry) => {
+    const policyEntry = buildLocalModelPolicyEntry(entry.model, policy);
+    return {
+      ...entry,
+      policyState: String(policyEntry?.policyState || 'unclassified').trim(),
+      policyLabel: String(policyEntry?.policyLabel || 'unclassified').trim(),
+      largerHeadroom: policyEntry?.largerHeadroom === true,
+    };
+  });
+  const activeLocalModels = uniqueStrings(groupedSections.map((entry) => entry.model));
+  const mixedLiveState = activeLocalModels.length > 1 || groupedSections.some((entry) => entry.policyState === 'candidate-only');
+  const currentStateSummary = groupedSections.length === 0
+    ? 'No local-first model routes are configured in live config yet.'
+    : mixedLiveState
+      ? `Live stack is mixed: ${groupedSections.map((entry) => `${entry.model} for ${summarizeSectionLabels(entry.labels)}${entry.policyState === 'candidate-only' ? ' candidate-only' : ''}`).join('; ')}.`
+      : `Live stack stays aligned on ${groupedSections[0].model} for ${summarizeSectionLabels(groupedSections[0].labels)}.`;
+  const approvedDefaultsSummary = approvedDefaults.length > 0
+    ? `Approved defaults: ${approvedDefaults.map((entry, index) => index === 0 ? `${entry.label} baseline primary` : `${entry.label} low-headroom fallback`).join(', ')}.`
+    : 'Approved defaults are not recorded yet.';
+  const candidateOnlySummary = candidateOnlyModels.length > 0
+    ? `Candidate-only models: ${summarizePolicyModels(candidateOnlyModels)}.`
+    : 'Candidate-only models are not recorded yet.';
+  const largerHeadroomSummary = largerHeadroomModels.length > 0
+    ? `Larger-headroom models: ${summarizePolicyModels(largerHeadroomModels)}.`
+    : 'No larger-headroom models are tracked yet.';
+  const guardrails = evaluateLocalModelGuardrails(source, {
+    ...options,
+    policy,
+  });
+  return {
+    approvedDefaults,
+    candidateOnlyModels,
+    largerHeadroomModels,
+    approvedDefaultsSummary,
+    candidateOnlySummary,
+    largerHeadroomSummary,
+    currentStateSummary,
+    mixedLiveState,
+    activeLocalModels,
+    liveLocalSections: groupedSections,
+    guardrails,
+    perModelCapSummary: guardrails.perModelCapSummary,
+    activeBundleSummary: guardrails.activeBundleSummary,
+    enforcementSummary: guardrails.enforcementSummary,
+    configReviewNotes: [
+      approvedDefaultsSummary,
+      candidateOnlySummary,
+      largerHeadroomSummary,
+      currentStateSummary,
+      guardrails.perModelCapSummary,
+      guardrails.activeBundleSummary,
+      guardrails.enforcementSummary,
+    ].filter(Boolean),
+    summary: [approvedDefaultsSummary, currentStateSummary].filter(Boolean).join(' '),
+  };
+}
+
 function buildLocalModelInventory(options = {}) {
   const workspaceRoot = String(options.workspaceRoot || '').trim();
+  const sourceSettings = options.settings && typeof options.settings === 'object' ? options.settings : {};
   const settings = normalizeTrainingTuningSettings(options.settings || {});
   const telemetry = options.telemetry && typeof options.telemetry === 'object' ? options.telemetry : {};
   const wrappedProfiles = toArray(options.wrappedProfiles).filter((item) => item && typeof item === 'object');
@@ -2118,9 +2684,12 @@ function buildLocalModelInventory(options = {}) {
 
   const entries = [...wrappedEntries, ...candidateEntries, ...exportEntries, ...mergeEntries];
   const summary = summarizeLocalModelInventory(entries, tuningTrust);
+  const policySnapshot = options.policySnapshot && typeof options.policySnapshot === 'object'
+    ? options.policySnapshot
+    : buildLocalModelPolicySnapshot(sourceSettings);
   return {
     status: summary.status,
-    summary: summary.summary,
+    summary: [summary.summary, policySnapshot.currentStateSummary].filter(Boolean).join(' | '),
     readyCount: summary.readyCount,
     storeOnlyCount: summary.storeOnlyCount,
     localCount: summary.localCount,
@@ -2137,6 +2706,7 @@ function buildLocalModelInventory(options = {}) {
     registeredRoot: String(selector.configuredOllamaRoot || '').trim(),
     trainingExports,
     checkpointMerges,
+    policySnapshot,
     entries,
   };
 }
@@ -2316,7 +2886,12 @@ module.exports = {
   buildAdaptiveTrainingProfiles,
   resolveAdaptiveTrainingProfile,
   buildTrainingTrustSummary,
+  LOCAL_MODEL_BLUEPRINT_POLICY,
+  buildLocalModelPolicySnapshot,
   buildLocalModelInventory,
   collectTrainingTelemetry,
   buildPatternMemorySummary,
+  buildLocalModelGuardrailDecision,
+  evaluateLocalModelGuardrails,
+  applyLocalModelGuardrailsToConfig,
 };

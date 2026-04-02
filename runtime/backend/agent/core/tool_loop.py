@@ -240,6 +240,12 @@ def _synthesized_execution_steps(targets: list[str], objective: str, context: di
         return []
     if not _objective_requires_write(objective, context):
         return [{"action": "inspect_file", "path": item} for item in normalized_targets[:3]]
+    lowered_objective = str(objective or '').strip().lower()
+    if len(normalized_targets) > 1 and any(token in lowered_objective for token in ('create', 'scaffold', 'starter', 'new file', 'new files')):
+        return [
+            {"action": "synthesize_edit", "path": item, "reason": "write-capable scaffold target"}
+            for item in normalized_targets[:4]
+        ]
     filtered_targets = [item for item in normalized_targets if not _is_low_signal_mutation_target(item)] or normalized_targets
     preferred_target = _select_preferred_mutation_target(filtered_targets)
     inspect_targets: list[str] = []
@@ -762,6 +768,51 @@ def _tool_loop_result_summary(result: dict[str, Any]) -> str:
     return str(result.get('status') or '').strip()
 
 
+def _tool_loop_observed_changed_files(result: dict[str, Any]) -> list[dict[str, str]]:
+    changed: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in _tool_loop_execution_rows(result):
+        step = dict(item.get("step") or {})
+        step_result = dict(item.get("result") or {})
+        path = str(step_result.get("path") or step_result.get("output_path") or step.get("path") or "").strip().replace('\\', '/')
+        if not path:
+            continue
+        lowered = path.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        status = str(step_result.get("status") or "").strip().upper()
+        if not status:
+            if str(step.get("action") or "").strip().lower() in {"synthesize_edit", "edit_file", "modify_file", "smart_patch"}:
+                status = "M"
+            elif str(step.get("action") or "").strip().lower() in {"create_file"}:
+                status = "A"
+            else:
+                status = "M"
+        changed.append({"path": path, "status": status})
+    return changed
+
+
+def _merge_changed_file_sets(primary: list[dict[str, Any]] | None, secondary: list[dict[str, Any]] | None, *, limit: int = 12) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for group in (list(primary or []), list(secondary or [])):
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip().replace('\\', '/')
+            if not path:
+                continue
+            lowered = path.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            merged.append({"path": path, "status": str(item.get("status") or "M").strip() or "M"})
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
 def _tool_loop_expects_mutation(context: dict[str, Any] | None = None) -> bool:
     source = dict(context or {})
     lane_id = str(source.get('lane_id') or source.get('laneId') or '').strip().lower()
@@ -978,16 +1029,15 @@ def _tool_loop_review_bundle(result: dict[str, Any]) -> dict[str, Any]:
         )
     )
     first_request = review_requests[0] if review_requests else {}
-    planned_files = [
-        str((dict(item.get("step") or {}).get("path") or dict(item.get("result") or {}).get("path") or dict(item.get("result") or {}).get("output_path") or "")).strip()
-        for item in _tool_loop_execution_rows(result)
-    ]
-    planned_files = [item for item in planned_files if item]
+    changed_files = _merge_changed_file_sets(
+        list((dict(result.get("runtime_context") or {}).get("changed_files") or [])),
+        _tool_loop_observed_changed_files(result),
+    )
     change_summary = (
-        f"{len(planned_files)} planned file(s)"
-        + (f", starting with {planned_files[0]}" if planned_files else "")
-        if planned_files
-        else "No planned files were captured yet."
+        f"{len(changed_files)} changed file(s) touched"
+        + (f", starting with {changed_files[0].get('path') or ''}" if changed_files else "")
+        if changed_files
+        else "No changed files were captured yet."
     )
     review_reason = str(review_summary.get("summary") or first_request.get("summary") or "").strip()
     review_next_action = str(review_summary.get("next_action") or review_summary.get("nextAction") or first_request.get("next_action") or first_request.get("nextAction") or "").strip()
@@ -1190,7 +1240,10 @@ def _implementer_handler(orchestrator, _agent, _task, payload):
             result = orchestrator.execute_tool("implementer", "read_file", path=step.get("path"), start_line=1, end_line=120)
         elif action in {"synthesize_edit", "modify_file"}:
             target_path = str(step.get('path') or '').strip()
-            file_snapshot = orchestrator.execute_tool("implementer", "read_file", path=target_path, start_line=1, end_line=240)
+            try:
+                file_snapshot = orchestrator.execute_tool("implementer", "read_file", path=target_path, start_line=1, end_line=240)
+            except Exception as exc:
+                file_snapshot = {'ok': False, 'error': str(exc), 'path': target_path}
             if isinstance(file_snapshot, dict) and file_snapshot.get('ok') is False and not _is_missing_file_read(file_snapshot):
                 result = file_snapshot
             else:
@@ -1465,6 +1518,12 @@ def run_tool_loop(
         permission_state=result["permission_state"],
         host_boundary=task_context.get("host_boundary") or task_context.get("hostBoundary") or {},
     )
+    observed_changed_files = _tool_loop_observed_changed_files(result)
+    if observed_changed_files:
+        result["runtime_context"]["changed_files"] = _merge_changed_file_sets(
+            list((result.get("runtime_context") or {}).get("changed_files") or []),
+            observed_changed_files,
+        )
     result["requires_approval"] = bool(result["pending_approvals"])
     result["review_summary"] = build_review_summary(
         execution_results=[item.get("result") for item in list(result.get("payload", {}).get("execution", []) or []) if isinstance(item, dict)],

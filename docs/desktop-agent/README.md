@@ -54,9 +54,13 @@ The docs use these labels when needed:
 - [Architecture](./ARCHITECTURE.md)
 - [IPC and internal API](./IPC_API.md)
 - [UI surfaces and operator flows](./UI_SURFACES.md)
-- [UI overall plan](./UI_OVERALL_PLAN.md)
-- [Month 1 / 30-day engine baseline](./ROADMAP_30_DAY_MVP.md)
-- [12-month layered MVP baseline](./ROADMAP_12_MONTH_MVP.md)
+
+Historical planning notes that used to act like primary roadmap docs were archived during the board-first cleanup pass. Use the canonical board plus linked checklists instead:
+
+- [BAT feature board](../BAT_FEATURE_BOARD.md)
+- [Engine blueprint checklist](../ENGINE_BLUEPRINT_CHECKLIST.md)
+- [Local model blueprint checklist](../LOCAL_MODEL_BLUEPRINT_CHECKLIST.md)
+- [Archived desktop-agent planning notes](../../archive/2026-04-01-board-cleanup/README.md)
 
 ## Desktop subsystem summary
 

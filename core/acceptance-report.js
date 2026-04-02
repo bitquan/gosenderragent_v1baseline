@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getConfiguredAssistantBenchmarkRoot } = require('./assistant-paths');
+const { buildCapabilityDescriptor } = require('./capability-status');
 const { ensureDirectory, readJsonFile, writeJsonFileAtomic } = require('./utils');
 
 const LATEST_REPORT_FILE = 'latest.json';
@@ -310,6 +311,20 @@ function buildModelParitySummary(report = {}) {
         : status === 'fail'
           ? 'BLOCKED'
           : 'NOT READY',
+    ...buildCapabilityDescriptor({
+      status,
+      label: status === 'pass'
+        ? 'PROVEN'
+        : status === 'warn'
+          ? 'PARTIAL'
+          : status === 'fail'
+            ? 'BLOCKED'
+            : 'NOT READY',
+      exists: capabilityCount > 0 || readyCount > 0,
+      proven: status === 'pass',
+      blocked: status === 'fail',
+      partial: status === 'warn',
+    }),
     proven: status === 'pass',
     widenReady: parity.widenReady === true || status === 'pass',
     capabilityCount,
@@ -403,6 +418,14 @@ function buildRepoScopedProofSummary(report = {}, proofKey = '', options = {}) {
   return {
     status,
     label: formatStatusLabel(status, actionCount > 0 ? 'RECORDED' : 'NOT RUN'),
+    ...buildCapabilityDescriptor({
+      status,
+      label: formatStatusLabel(status, actionCount > 0 ? 'RECORDED' : 'NOT RUN'),
+      exists: actionCount > 0,
+      proven: status === 'pass',
+      blocked: status === 'fail',
+      partial: status === 'warn',
+    }),
     target,
     safeCount,
     overscopedCount,
@@ -473,13 +496,31 @@ function buildAcceptanceControlSummary(report = null, state = {}) {
       : nextDayStatus === 'caution' && smoke.smokeStatus === 'missing'
         ? 'Rerun acceptance with smoke coverage before using it as the next-day gate.'
         : String(safeReport.nextAction || baseSummary.nextAction || '').trim();
+  const smokeCapability = buildCapabilityDescriptor({
+    status: smoke.smokeStatus,
+    label: smoke.smokeLabel,
+    exists: smoke.smokeChecks.length > 0,
+    proven: smoke.smokeStatus === 'pass',
+    blocked: smoke.smokeStatus === 'fail',
+    partial: smoke.smokeStatus === 'warn',
+  });
   return {
     acceptanceStatus,
     acceptanceLabel,
+    ...buildCapabilityDescriptor({
+      status: nextDayStatus,
+      label: formatStatusLabel(nextDayStatus, 'BLOCKED'),
+      exists: state.exists === true || checks.length > 0,
+      proven: nextDayStatus === 'ready',
+      blocked: nextDayStatus === 'blocked',
+      partial: nextDayStatus === 'caution',
+    }),
     acceptanceSummary: String(safeReport.summary || baseSummary.summary || '').trim(),
     lastAcceptanceAt,
     smokeStatus: smoke.smokeStatus,
     smokeLabel: smoke.smokeLabel,
+    smokeCapabilityState: smokeCapability.capabilityState,
+    smokeCapabilityLabel: smokeCapability.capabilityLabel,
     smokeSummary: smoke.smokeSummary,
     lastSmokeAt: smoke.smokeChecks.length > 0 ? lastAcceptanceAt : '',
     smokeChecks: smoke.smokeChecks,

@@ -14,6 +14,7 @@ const { runPreflight } = require('./preflight');
 const { AgentRuntimeClient } = require('./agent-runtime-client');
 const { getAssistantRuntimeStatePath } = require('../core/assistant-paths');
 const { buildNextActionRecipe } = require('../core/followup-recipes');
+const { normalizeLoopTaskModeId } = require('../core/route-schema');
 
 function normalizeRecoveredRun(run) {
   if (!run || typeof run !== 'object') {
@@ -259,39 +260,9 @@ function clipTail(value, maxChars = 4000) {
 }
 
 function normalizeTaskLoopMode(value, fallbackAction = '') {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'planner') {
-    return 'planner';
-  }
-  if (normalized === 'validator' || normalized === 'review') {
-    return 'validator';
-  }
-  if (normalized === 'summarizer' || normalized === 'summary') {
-    return 'summarizer';
-  }
-  if (normalized === 'repair') {
-    return 'repair';
-  }
-  if (normalized === 'research') {
-    return 'research';
-  }
-  if (normalized === 'chat') {
-    return 'chat';
-  }
-  if (normalized === 'implementer' || normalized === 'coder') {
-    return 'coder';
-  }
-  if (normalized === 'plan') {
-    return 'planner';
-  }
-  if (normalized === 'run') {
-    return 'validator';
-  }
-  if (normalized === 'implement') {
-    return 'coder';
-  }
-  if (normalized === 'release') {
-    return 'summarizer';
+  const normalized = normalizeLoopTaskModeId(value);
+  if (normalized) {
+    return normalized;
   }
   return fallbackAction === 'plan'
     ? 'planner'

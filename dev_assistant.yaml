@@ -14,7 +14,7 @@ assistant_training_thread_limit: 4
 assistant_training_thermal_preset: 80
 assistant_training_live_sampling_sec: 5
 assistant_training_auto_start_ollama: true
-assistant_training_ollama_model: "qwen2.5-coder:14b"
+assistant_training_ollama_model: "qwen2.5-coder:7b"
 assistant_training_model_storage_root: E:/dev/projects/gosenderr_dev_offload/local_model_storage/models
 
 assistant_training_launch_surface: app
@@ -47,7 +47,7 @@ assistant_model_profile_id: gs-dev-1-default
 
 assistant_model_display_name: GS-Dev-1 Default
 
-assistant_model_base_model: "qwen2.5-coder:14b"
+assistant_model_base_model: "qwen2.5-coder:7b"
 
 assistant_model_base_provider: ollama
 
@@ -57,7 +57,7 @@ assistant_workspace_model_profile_id: gs-dev-1-default
 
 assistant_workspace_model_display_name: GS-Dev-1 Default
 
-assistant_workspace_model_base_model: "qwen2.5-coder:14b"
+assistant_workspace_model_base_model: "qwen2.5-coder:7b"
 
 assistant_workspace_model_base_provider: ollama
 
@@ -93,8 +93,6 @@ assistant_task_mode_summarizer_provider: ollama
 
 assistant_task_mode_summarizer_model: "qwen2.5-coder:7b"
 
-
-
 assistant_docs_registry_path: docs/assistant_docs_registry.json
 assistant_docs_cache_dir: .dev_agent_runs/docs_cache
 assistant_docs_import_queue_path: .dev_agent_runs/docs_import_queue.json
@@ -108,3 +106,5 @@ assistant_docs_priority_topics:
   - testing
   - python
   - javascript
+
+

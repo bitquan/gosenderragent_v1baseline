@@ -45,12 +45,12 @@ async function runUiSmokeInWindow(mainWindow) {
           throw new Error(message);
         }
       };
-      const clickModule = async (moduleId) => {
+      const clickModule = async (moduleId, panelId = moduleId) => {
         const button = document.querySelector('[data-route-tab="' + moduleId + '"]')
           || document.querySelector('[data-module-nav="' + moduleId + '"]');
         assert(button, 'Missing module button for ' + moduleId + '.');
         button.click();
-        await waitFor(() => document.querySelector('[data-panel="' + moduleId + '"]'), 2500, moduleId + ' panel');
+        await waitFor(() => document.querySelector('[data-panel="' + panelId + '"]'), 2500, panelId + ' panel');
         return moduleId;
       };
       const clickSettingsTab = async (tabId) => {
@@ -74,8 +74,8 @@ async function runUiSmokeInWindow(mainWindow) {
       for (const tabId of ['ai', 'labs', 'learning', 'storage']) {
         visitedModules.push(await clickSettingsTab(tabId));
       }
-      visitedModules.push(await clickModule('monitor'));
-      visitedModules.push(await clickModule('workbench'));
+      visitedModules.push(await clickModule('workbench', 'monitor'));
+      visitedModules.push(await clickModule('chat', 'workbench'));
 
       if (!bootstrap || !bootstrap.workspaceRoot) {
         await clickModule('settings');
@@ -104,7 +104,7 @@ async function runUiSmokeInWindow(mainWindow) {
         ? document.querySelectorAll('[data-review-path]').length
         : 0;
 
-      await clickModule('workbench');
+      await clickModule('workbench', 'monitor');
       const firstReviewTarget = document.querySelector('[data-review-path]');
       if (firstReviewTarget) {
         firstReviewTarget.click();
@@ -116,7 +116,7 @@ async function runUiSmokeInWindow(mainWindow) {
       const runtimeSelect = await waitFor(() => document.querySelector('[data-setting="runtime"]'), 5000, 'settings runtime selector');
       assert(runtimeSelect, 'Settings runtime selector was not rendered.');
 
-      await clickModule('workbench');
+      await clickModule('chat', 'workbench');
       const chatInput = document.querySelector('[data-chat-input="true"]');
       const chatSend = document.querySelector('[data-chat-send="true"]');
       assert(chatInput && chatSend, 'Chat composer did not render.');

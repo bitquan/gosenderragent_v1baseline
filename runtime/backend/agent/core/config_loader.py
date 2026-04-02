@@ -95,6 +95,19 @@ def load_project_config(project_root: Path, *, base_name: str = "dev_assistant.y
 
 
 _ALLOWED_PROVIDER_VALUES = {"", "auto", "openai", "ollama", "local", "anthropic", "azure-openai"}
+_LOCAL_PROVIDER_VALUES = {"ollama", "local"}
+_LOCAL_APPROVED_DEFAULT_MODELS = {"qwen2.5-coder:7b", "qwen2.5-coder:3b"}
+
+
+def _check_local_default_guardrail(provider: str, model: str, label: str, warnings: list[str]) -> None:
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_model = str(model or "").strip()
+    if normalized_provider not in _LOCAL_PROVIDER_VALUES or not normalized_model:
+        return
+    if normalized_model not in _LOCAL_APPROVED_DEFAULT_MODELS:
+        warnings.append(
+            f"{label} pins local model '{normalized_model}', which exceeds the 32 GB default-bundle guardrail; the runtime will fall back to qwen2.5-coder:7b."
+        )
 
 
 def _as_trimmed_text(value: Any) -> str:
@@ -123,6 +136,7 @@ def validate_config_coherence(project_root: Path) -> dict[str, Any]:
             warnings.append(f"assistant_task_mode_{prefix}_provider is set to {provider} but no model is pinned.")
         if provider in {'local', 'ollama'} and not model:
             warnings.append(f"assistant_task_mode_{prefix}_provider is set to {provider} but no local model is pinned.")
+        _check_local_default_guardrail(provider, model, f'assistant_task_mode_{prefix}_model', warnings)
 
     for key in (
         'assistant_artifacts_root',
@@ -142,6 +156,9 @@ def validate_config_coherence(project_root: Path) -> dict[str, Any]:
     base_provider = _as_trimmed_text(cfg.get('assistant_model_base_provider')).lower()
     provider_source = _as_trimmed_text(cfg.get('assistant_model_provider_source')).lower()
     engine_provider = _as_trimmed_text(cfg.get('assistant_engine_model_base_provider')).lower()
+    _check_local_default_guardrail(base_provider or provider_source, _as_trimmed_text(cfg.get('assistant_model_base_model')), 'assistant_model_base_model', warnings)
+    _check_local_default_guardrail(_as_trimmed_text(cfg.get('assistant_workspace_model_base_provider')).lower() or _as_trimmed_text(cfg.get('assistant_workspace_model_provider_source')).lower(), _as_trimmed_text(cfg.get('assistant_workspace_model_base_model')), 'assistant_workspace_model_base_model', warnings)
+    _check_local_default_guardrail(engine_provider or _as_trimmed_text(cfg.get('assistant_engine_model_provider_source')).lower(), _as_trimmed_text(cfg.get('assistant_engine_model_base_model')), 'assistant_engine_model_base_model', warnings)
     if base_provider and provider_source and base_provider != provider_source:
         warnings.append('assistant_model_base_provider and assistant_model_provider_source diverge; routing may look inconsistent in the UI.')
     if engine_provider == 'openai' and _as_trimmed_text(cfg.get('assistant_engine_model_base_model')) == '':

@@ -100,6 +100,26 @@ function looksStubCompanion(extensionRoot, pkg = {}) {
   );
 }
 
+function readCompanionVersionMetadata(extensionRoot) {
+  const root = String(extensionRoot || '').trim();
+  if (!root) {
+    return {
+      packageVersion: '',
+      integrationVersion: '',
+      metadataVersionMismatch: false,
+    };
+  }
+  const pkg = readJson(path.join(root, 'package.json')) || {};
+  const integration = readJson(path.join(root, 'integration.json')) || {};
+  const packageVersion = String(pkg.version || '').trim();
+  const integrationVersion = String(integration.version || '').trim();
+  return {
+    packageVersion,
+    integrationVersion,
+    metadataVersionMismatch: Boolean(packageVersion && integrationVersion && packageVersion !== integrationVersion),
+  };
+}
+
 function buildVsCodeExtensionHealth(workspaceRoot) {
   const root = String(workspaceRoot || '').trim();
   if (!root) {
@@ -137,6 +157,7 @@ function buildVsCodeExtensionHealth(workspaceRoot) {
   const legacyExtensionRoots = listLegacyExtensionRoots(root, extensionRoot);
   const legacyDesktopRoot = path.join(root, 'tools', 'gosenderr-desktop-agent');
   const expectedMain = path.join(extensionRoot, String(pkg.main || './extension.js').replace(/^\.\//, ''));
+  const versionMetadata = readCompanionVersionMetadata(extensionRoot);
 
   if (!fs.existsSync(expectedMain)) {
     warnings.push('Extension build output is missing.');
@@ -146,6 +167,9 @@ function buildVsCodeExtensionHealth(workspaceRoot) {
   }
   if (looksStubCompanion(extensionRoot, pkg)) {
     warnings.push('VS Code companion is still a stub and does not expose the shared dev-engine flow yet.');
+  }
+  if (versionMetadata.metadataVersionMismatch) {
+    warnings.push('Companion integration metadata version does not match the extension package version.');
   }
   if (legacyExtensionRoots.length > 0) {
     warnings.push('Legacy VS Code extension copies still exist beside the real companion path. Treat them as compatibility drift.');
@@ -165,6 +189,8 @@ function buildVsCodeExtensionHealth(workspaceRoot) {
     packageName: String(pkg.name || '').trim(),
     displayName: String(pkg.displayName || pkg.name || 'VS Code extension').trim(),
     version: String(pkg.version || '').trim(),
+    integrationVersion: versionMetadata.integrationVersion,
+    metadataVersionMismatch: versionMetadata.metadataVersionMismatch,
     commandCount: commands.length,
     settingCount: Object.keys(properties).length,
     scriptCount: Object.keys(scripts).length,

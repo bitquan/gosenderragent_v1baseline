@@ -252,7 +252,7 @@ function getConfiguredAssistantBenchmarkRoot(workspaceRoot) {
   const config = readConfigMap(workspaceRoot);
   const entries = readConfigEntries(workspaceRoot);
   if (config.assistant_benchmark_root) {
-    return resolveConfiguredPath(entries.assistant_benchmark_root, '');
+    return namespaceConfiguredDir(resolveConfiguredPath(entries.assistant_benchmark_root, ''), workspaceRoot, entries.assistant_benchmark_root);
   }
   const root = getAssistantArtifactsRoot(workspaceRoot);
   return root ? path.join(root, 'assistant_benchmarks') : '';

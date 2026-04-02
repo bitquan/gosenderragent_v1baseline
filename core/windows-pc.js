@@ -172,7 +172,7 @@ Copy this folder from the external SSD onto the Windows machine before you run i
 
 - ${hardwarePreset.label}
 - ${hardwarePreset.summary}
-- Start with \`qwen2.5-coder:14b\` locally and keep remote fallbacks available for harder review and multimodal work.
+- Start with \`qwen2.5-coder:7b\` as the normal local baseline, then move to \`qwen2.5-coder:14b\` only when a specific proof slice shows the heavier lane is worth the extra headroom.
 
 ## Fast start in PowerShell
 
@@ -242,7 +242,7 @@ function buildWindowsConfigExample() {
     'assistant_training_thread_limit: 8',
     'assistant_training_thermal_preset: 85',
     'assistant_training_live_sampling_sec: 3',
-    'assistant_training_ollama_model: qwen2.5-coder:14b',
+    'assistant_training_ollama_model: qwen2.5-coder:7b',
     '',
     '# Update this path after copying the bundle onto Windows.',
     '# assistant_training_model_storage_root: D:/gosenderr-models',

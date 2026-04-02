@@ -58,6 +58,82 @@ function makeWorkspace() {
   };
 }
 
+function recordLocalProofRun(workspaceRoot, {
+  id,
+  name,
+  labRoot,
+  modelProfileId = 'gs-dev-1-default',
+  baseModel = 'qwen2.5-coder:14b',
+  providerSource = 'ollama',
+  taskMode = 'coder',
+  benchmarkTags = [],
+}) {
+  recordBenchmarkRun(workspaceRoot, {
+    id,
+    name,
+    model: baseModel,
+    modelProfileId,
+    baseModel,
+    providerSource,
+    taskMode,
+    benchmarkTags,
+    labRoot,
+    targetRoot: workspaceRoot,
+    status: 'pass',
+    ok: true,
+  });
+}
+
+function seedFullLocalProofCoverage(workspaceRoot, {
+  labRoot,
+  prefix,
+  modelProfileId = 'gs-dev-1-default',
+  baseModel = 'qwen2.5-coder:14b',
+  providerSource = 'ollama',
+}) {
+  const runs = [
+    { suffix: 'plan', taskMode: 'planner' },
+    { suffix: 'code', taskMode: 'coder' },
+    { suffix: 'repair', taskMode: 'repair' },
+    { suffix: 'review', taskMode: 'validator' },
+    { suffix: 'docs', taskMode: 'research', benchmarkTags: ['docs-guided'] },
+    { suffix: 'scaffold', taskMode: 'coder', benchmarkTags: ['scaffold'] },
+    { suffix: 'autonomy', taskMode: 'coder', benchmarkTags: ['clone-lab-autonomy'] },
+  ];
+  for (const run of runs) {
+    recordLocalProofRun(workspaceRoot, {
+      id: `${prefix}-${run.suffix}`,
+      name: `${prefix}-${run.suffix}`,
+      labRoot,
+      modelProfileId,
+      baseModel,
+      providerSource,
+      taskMode: run.taskMode,
+      benchmarkTags: run.benchmarkTags || [],
+    });
+  }
+}
+
+function buildVerifiedLocalProofMatrix({
+  modelProfileId = 'gs-dev-1-default',
+  baseModel = 'qwen2.5-coder:14b',
+  providerSource = 'ollama',
+}) {
+  return {
+    entries: [
+      {
+        wrappedProfileId: modelProfileId,
+        baseModel,
+        providerSource,
+        status: 'verified',
+        capabilityCount: 7,
+        verifiedCapabilityCount: 7,
+        missingCapabilities: [],
+      },
+    ],
+  };
+}
+
 test('promotion candidate can move lab changes into live and roll them back', () => {
   const { workspaceRoot } = makeWorkspace();
   const labRoot = path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'self-host');
@@ -80,6 +156,11 @@ test('promotion candidate can move lab changes into live and roll them back', ()
       modelProfileId: 'gs-dev-1-default',
       baseModel: 'qwen2.5-coder:14b',
       taskMode: 'coder',
+    });
+
+    seedFullLocalProofCoverage(workspaceRoot, {
+      labRoot,
+      prefix: 'self-host-proof',
     });
 
     recordBenchmarkRun(workspaceRoot, {
@@ -133,7 +214,7 @@ test('promotion candidate can move lab changes into live and roll them back', ()
   }
 });
 
-test('promotion can activate and roll back a benchmark-backed local route bundle', () => {
+test('promotion blocks a benchmark-backed local route bundle that exceeds the 32 GB default guardrail', () => {
   const { workspaceRoot } = makeWorkspace();
   const labRoot = path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'route-bundle');
   fs.mkdirSync(path.dirname(labRoot), { recursive: true });
@@ -223,32 +304,166 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
       training: { trustSummary: { status: 'ready' } },
     });
 
+    assert.throws(() => promoteCandidate(workspaceRoot, {
+      candidateId: created.candidate.id,
+    }), /32 GB|live default guardrail|candidate-only/i);
+
+    const state = listPromotionState(workspaceRoot, { labRoot });
+    assert.equal(state.candidates[0].routeBundlePromotion.status, 'blocked');
+    assert.equal(state.candidates[0].promotionGate.status, 'blocked');
+    assert.match(state.candidates[0].routeBundlePromotion.summary, /32 GB|candidate-only/i);
+
+    const activeConfig = readAssistantConfig(workspaceRoot);
+    assert.equal(activeConfig.taskModeRoutes.planner.provider, 'openai');
+    assert.equal(activeConfig.taskModeRoutes.planner.model, 'gpt-4.1-mini');
+    assert.equal(activeConfig.taskModeRoutes.repair.provider, 'openai');
+    assert.equal(activeConfig.taskModeRoutes.repair.model, 'gpt-4.1-mini');
+    assert.equal(activeConfig.taskModeRoutes.coder.provider, 'openai');
+    assert.equal(activeConfig.taskModeRoutes.coder.model, 'gpt-4.1-mini');
+    assert.equal(activeConfig.taskModeRoutes.validator.provider, 'openai');
+    assert.equal(activeConfig.taskModeRoutes.validator.model, 'gpt-4.1-mini');
+    assert.equal(activeConfig.workspaceBaseModel, 'qwen2.5-coder:7b');
+    assert.equal(activeConfig.engineBaseModel, 'qwen2.5-coder:7b');
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('promoteCandidate freezes an approved local route bundle into live config only after proof is green and rollback restores the last known-good bundle', () => {
+  const { workspaceRoot } = makeWorkspace();
+  const labRoot = path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'approved-route-bundle');
+  fs.mkdirSync(path.dirname(labRoot), { recursive: true });
+
+  try {
+    fs.writeFileSync(path.join(workspaceRoot, 'dev_assistant.yaml'), [
+      'assistant_model_profile_id: gs-dev-1-default',
+      'assistant_model_display_name: GS-Dev-1 Default',
+      'assistant_model_base_model: qwen2.5-coder:3b',
+      'assistant_model_base_provider: ollama',
+      'assistant_model_provider_source: ollama',
+      'assistant_workspace_model_profile_id: gs-dev-1-default',
+      'assistant_workspace_model_display_name: GS-Dev-1 Default',
+      'assistant_workspace_model_base_model: qwen2.5-coder:3b',
+      'assistant_workspace_model_base_provider: ollama',
+      'assistant_workspace_model_provider_source: ollama',
+      'assistant_engine_model_profile_id: gs-dev-1-default',
+      'assistant_engine_model_display_name: GS-Dev-1 Default',
+      'assistant_engine_model_base_model: qwen2.5-coder:3b',
+      'assistant_engine_model_base_provider: ollama',
+      'assistant_engine_model_provider_source: ollama',
+      'assistant_task_mode_planner_provider: openai',
+      'assistant_task_mode_planner_model: gpt-4.1-mini',
+      'assistant_task_mode_repair_provider: openai',
+      'assistant_task_mode_repair_model: gpt-4.1-mini',
+      'assistant_task_mode_coder_provider: openai',
+      'assistant_task_mode_coder_model: gpt-4.1-mini',
+      'assistant_task_mode_validator_provider: openai',
+      'assistant_task_mode_validator_model: gpt-4.1-mini',
+    ].join('\n') + '\n', 'utf8');
+
+    exec('git', ['clone', '--no-hardlinks', workspaceRoot, labRoot], workspaceRoot);
+    fs.writeFileSync(
+      path.join(labRoot, '.gos-lab.json'),
+      `${JSON.stringify({ sourceRoot: workspaceRoot, recipe: 'approved-route-bundle' }, null, 2)}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(path.join(labRoot, 'README.md'), '# approved route bundle\n', 'utf8');
+
+    seedFullLocalProofCoverage(workspaceRoot, {
+      labRoot,
+      prefix: 'approved-route-bundle-proof',
+      baseModel: 'qwen2.5-coder:7b',
+    });
+
+    recordBenchmarkRun(workspaceRoot, {
+      id: 'bench-approved-route-bundle',
+      name: 'approved-route-bundle-benchmark',
+      model: 'qwen2.5-coder:7b',
+      modelProfileId: 'gs-dev-1-default',
+      baseModel: 'qwen2.5-coder:7b',
+      providerSource: 'ollama',
+      taskMode: 'coder',
+      labRoot,
+      targetRoot: workspaceRoot,
+      status: 'pass',
+      ok: true,
+    });
+
+    seedModelFoundryCandidate(workspaceRoot, {
+      candidate: {
+        id: 'foundry-approved-route-bundle',
+        type: 'route-bundle',
+        title: 'Approved local qwen route bundle',
+        sourceBenchmarks: ['bench-approved-route-bundle'],
+        targetLanes: ['chat-fast', 'code-main', 'repair-fast', 'review-verify'],
+        modelProfileId: 'gs-dev-1-default',
+        baseModel: 'qwen2.5-coder:7b',
+        providerSource: 'ollama',
+        taskMode: 'coder',
+        rollbackSource: 'last-known-good',
+      },
+    });
+
+    const created = createCandidate(workspaceRoot, {
+      labRoot,
+      targetWorkspaceRoot: workspaceRoot,
+      verification: { ok: true },
+      name: 'approved-local-route-bundle',
+      foundryCandidateId: 'foundry-approved-route-bundle',
+      modelProfileId: 'gs-dev-1-default',
+      baseModel: 'qwen2.5-coder:7b',
+      providerSource: 'ollama',
+      taskMode: 'coder',
+      variantType: 'route-bundle',
+      targetLanes: ['chat-fast', 'code-main', 'repair-fast', 'review-verify'],
+    });
+
+    writeAcceptanceReport(workspaceRoot, {
+      runId: 'acceptance-approved-route-bundle-pass',
+      label: 'engine-acceptance',
+      checks: [{ id: 'smoke', label: 'Renderer smoke', status: 'pass' }],
+      training: { trustSummary: { status: 'ready' } },
+    });
+
     const promoted = promoteCandidate(workspaceRoot, {
       candidateId: created.candidate.id,
     });
 
+    assert.equal(created.ok, true);
     assert.equal(promoted.ok, true);
-    assert.equal(promoted.routeActivation?.ok, true);
-    assert.equal(promoted.candidate.routeBundlePromotion.status, 'promoted');
+    assert.equal(promoted.routeActivation?.approvedBundleFrozen, true);
+    assert.equal(promoted.candidate.promotedRouteBundle.approvedBundleFrozen, true);
+    assert.equal(promoted.candidate.promotedRouteBundle.frozenBundle.baseModel, 'qwen2.5-coder:7b');
+    assert.match(promoted.routeActivation.summary, /Froze approved live bundle/i);
 
     const activeConfig = readAssistantConfig(workspaceRoot);
+    assert.equal(activeConfig.baseModel, 'qwen2.5-coder:7b');
+    assert.equal(activeConfig.workspaceBaseModel, 'qwen2.5-coder:7b');
+    assert.equal(activeConfig.engineBaseModel, 'qwen2.5-coder:7b');
     assert.equal(activeConfig.taskModeRoutes.planner.provider, 'ollama');
-    assert.equal(activeConfig.taskModeRoutes.planner.model, 'qwen2.5-coder:14b');
+    assert.equal(activeConfig.taskModeRoutes.planner.model, 'qwen2.5-coder:7b');
     assert.equal(activeConfig.taskModeRoutes.repair.provider, 'ollama');
-    assert.equal(activeConfig.taskModeRoutes.repair.model, 'qwen2.5-coder:14b');
+    assert.equal(activeConfig.taskModeRoutes.repair.model, 'qwen2.5-coder:7b');
     assert.equal(activeConfig.taskModeRoutes.coder.provider, 'ollama');
-    assert.equal(activeConfig.taskModeRoutes.coder.model, 'qwen2.5-coder:14b');
+    assert.equal(activeConfig.taskModeRoutes.coder.model, 'qwen2.5-coder:7b');
     assert.equal(activeConfig.taskModeRoutes.validator.provider, 'ollama');
-    assert.equal(activeConfig.taskModeRoutes.validator.model, 'qwen2.5-coder:14b');
-    assert.equal(activeConfig.workspaceBaseModel, 'qwen2.5-coder:14b');
-    assert.equal(activeConfig.engineBaseModel, 'qwen2.5-coder:14b');
+    assert.equal(activeConfig.taskModeRoutes.validator.model, 'qwen2.5-coder:7b');
 
     const rolledBack = rollbackPromotion(workspaceRoot, {
       backupId: promoted.backup.id,
     });
 
     assert.equal(rolledBack.ok, true);
+    assert.equal(rolledBack.restoredBundle.baseModel, 'qwen2.5-coder:3b');
+    assert.equal(rolledBack.restoredBundle.workspaceBaseModel, 'qwen2.5-coder:3b');
+    assert.equal(rolledBack.restoredBundle.engineBaseModel, 'qwen2.5-coder:3b');
+    assert.equal(rolledBack.restoredBundle.taskModeRoutes.planner.provider, 'openai');
+    assert.equal(rolledBack.restoredBundle.taskModeRoutes.coder.model, 'gpt-4.1-mini');
+
     const restoredConfig = readAssistantConfig(workspaceRoot);
+    assert.equal(restoredConfig.baseModel, 'qwen2.5-coder:3b');
+    assert.equal(restoredConfig.workspaceBaseModel, 'qwen2.5-coder:3b');
+    assert.equal(restoredConfig.engineBaseModel, 'qwen2.5-coder:3b');
     assert.equal(restoredConfig.taskModeRoutes.planner.provider, 'openai');
     assert.equal(restoredConfig.taskModeRoutes.planner.model, 'gpt-4.1-mini');
     assert.equal(restoredConfig.taskModeRoutes.repair.provider, 'openai');
@@ -257,8 +472,11 @@ test('promotion can activate and roll back a benchmark-backed local route bundle
     assert.equal(restoredConfig.taskModeRoutes.coder.model, 'gpt-4.1-mini');
     assert.equal(restoredConfig.taskModeRoutes.validator.provider, 'openai');
     assert.equal(restoredConfig.taskModeRoutes.validator.model, 'gpt-4.1-mini');
-    assert.equal(restoredConfig.workspaceBaseModel, 'qwen2.5-coder:7b');
-    assert.equal(restoredConfig.engineBaseModel, 'qwen2.5-coder:7b');
+
+    const state = listPromotionState(workspaceRoot, { labRoot });
+    assert.equal(state.candidates[0].status, 'rolled-back');
+    assert.equal(state.candidates[0].routeBundlePromotion.status, 'rolled-back');
+    assert.equal(state.candidates[0].promotedRouteBundle.restoredBundle.baseModel, 'qwen2.5-coder:3b');
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }
@@ -409,6 +627,11 @@ test('listPromotionState surfaces the first ready candidate when no lab is selec
       taskMode: 'coder',
     });
 
+    seedFullLocalProofCoverage(workspaceRoot, {
+      labRoot,
+      prefix: 'parity-ready-proof',
+    });
+
     recordBenchmarkRun(workspaceRoot, {
       id: 'bench-parity-ready',
       name: 'parity-ready-benchmark',
@@ -437,6 +660,122 @@ test('listPromotionState surfaces the first ready candidate when no lab is selec
     assert.equal(state.currentCandidateId, created.candidate.id);
     assert.equal(state.currentCandidateIdentity.candidateId, created.candidate.id);
     assert.equal(state.currentBenchmarkIdentity.id, 'bench-parity-ready');
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('promoteCandidate blocks local promotion until the full proof matrix is covered', () => {
+  const { workspaceRoot } = makeWorkspace();
+  const labRoot = path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'proof-gated');
+  fs.mkdirSync(path.dirname(labRoot), { recursive: true });
+
+  try {
+    exec('git', ['clone', '--no-hardlinks', workspaceRoot, labRoot], workspaceRoot);
+    fs.writeFileSync(
+      path.join(labRoot, '.gos-lab.json'),
+      `${JSON.stringify({ sourceRoot: workspaceRoot, recipe: 'proof-gated' }, null, 2)}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(path.join(labRoot, 'README.md'), '# proof gated candidate\n', 'utf8');
+
+    const created = createCandidate(workspaceRoot, {
+      labRoot,
+      targetWorkspaceRoot: workspaceRoot,
+      verification: { ok: true },
+      name: 'proof-gated-candidate',
+      modelProfileId: 'gs-dev-1-default',
+      baseModel: 'qwen2.5-coder:14b',
+      providerSource: 'ollama',
+      taskMode: 'coder',
+    });
+
+    recordLocalProofRun(workspaceRoot, {
+      id: 'bench-proof-gated-code',
+      name: 'proof-gated-code',
+      labRoot,
+    });
+
+    writeAcceptanceReport(workspaceRoot, {
+      runId: 'acceptance-proof-gated',
+      label: 'engine-acceptance',
+      checks: [{ status: 'pass' }],
+      training: { trustSummary: { status: 'ready' } },
+    });
+
+    const state = listPromotionState(workspaceRoot, { labRoot });
+
+    assert.equal(created.ok, true);
+    assert.equal(state.candidates[0].promotionGate.status, 'blocked');
+    assert.equal(state.candidates[0].proofRequirement.status, 'blocked');
+    assert.equal(state.candidates[0].proofRequirement.source, 'benchmark-runs');
+    assert.equal(state.candidates[0].proofRequirement.verifiedCapabilityCount, 1);
+    assert.match(state.candidates[0].proofRequirement.summary, /local model promotion stays blocked|proves/i);
+
+    assert.throws(() => promoteCandidate(workspaceRoot, {
+      candidateId: created.candidate.id,
+    }), /local model promotion stays blocked|proves/i);
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('promotion state can use the shared ai proof matrix for local readiness', () => {
+  const { workspaceRoot } = makeWorkspace();
+  const labRoot = path.join(workspaceRoot, 'artifacts', 'assistant_labs', 'persistent', 'proof-matrix-ready');
+  fs.mkdirSync(path.dirname(labRoot), { recursive: true });
+
+  try {
+    exec('git', ['clone', '--no-hardlinks', workspaceRoot, labRoot], workspaceRoot);
+    fs.writeFileSync(
+      path.join(labRoot, '.gos-lab.json'),
+      `${JSON.stringify({ sourceRoot: workspaceRoot, recipe: 'proof-matrix-ready' }, null, 2)}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(path.join(labRoot, 'README.md'), '# proof matrix ready\n', 'utf8');
+
+    const created = createCandidate(workspaceRoot, {
+      labRoot,
+      targetWorkspaceRoot: workspaceRoot,
+      verification: { ok: true },
+      name: 'proof-matrix-ready-candidate',
+      modelProfileId: 'gs-dev-1-default',
+      baseModel: 'qwen2.5-coder:14b',
+      providerSource: 'ollama',
+      taskMode: 'coder',
+    });
+
+    recordLocalProofRun(workspaceRoot, {
+      id: 'bench-proof-matrix-ready-code',
+      name: 'proof-matrix-ready-code',
+      labRoot,
+    });
+
+    writeAcceptanceReport(workspaceRoot, {
+      runId: 'acceptance-proof-matrix-ready',
+      label: 'engine-acceptance',
+      checks: [{ status: 'pass' }],
+      training: { trustSummary: { status: 'ready' } },
+    });
+
+    const localModelProofMatrix = buildVerifiedLocalProofMatrix({});
+    const state = listPromotionState(workspaceRoot, {
+      labRoot,
+      localModelProofMatrix,
+    });
+    const dryRun = promoteCandidate(workspaceRoot, {
+      candidateId: created.candidate.id,
+      dryRun: true,
+      localModelProofMatrix,
+    });
+
+    assert.equal(created.ok, true);
+    assert.equal(state.candidates[0].promotionGate.status, 'ready');
+    assert.equal(state.candidates[0].proofRequirement.status, 'verified');
+    assert.equal(state.candidates[0].proofRequirement.source, 'ai-status');
+    assert.equal(dryRun.governance.canPromote, true);
+    assert.equal(dryRun.proofRequirement.status, 'verified');
+    assert.equal(dryRun.routeBundlePromotion.applies, false);
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
   }

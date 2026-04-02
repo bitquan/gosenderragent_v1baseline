@@ -8,8 +8,11 @@ const assert = require('node:assert/strict');
 
 const {
   buildModelFoundryStatus,
+  FOUNDRY_PROOF_CAPABILITIES,
+  runFoundryCandidateProofs,
   seedModelFoundryCandidate,
 } = require('../core/model-foundry');
+const { listBenchmarkRuns } = require('../core/benchmarks');
 
 function makeWorkspace() {
   const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gos-model-foundry-'));
@@ -144,4 +147,89 @@ test('buildModelFoundryStatus dedupes legacy candidate files with the same id', 
   assert.equal(status.candidates.length, 1);
   assert.equal(status.candidates[0].id, 'route-bundle:qwen');
   assert.match(String(status.candidates[0].summary || ''), /Newest candidate payload/i);
+});
+
+test('runFoundryCandidateProofs records benchmark evidence and persists proof summary for a candidate', () => {
+  const { workspaceRoot, artifactsRoot } = makeWorkspace();
+  seedModelFoundryCandidate(workspaceRoot, {
+    candidate: {
+      id: 'route-bundle:qwen',
+      type: 'route-bundle',
+      title: 'Promote qwen route bundle',
+      summary: 'Capture the current local benchmark leader.',
+      modelProfileId: 'gs-dev-1-default',
+      baseModel: 'qwen2.5-coder:14b',
+      providerSource: 'ollama',
+      recommendedModels: ['qwen2.5-coder:14b'],
+      targetLanes: ['code-main'],
+      safetyLevel: 'candidate',
+    },
+  });
+
+  const result = runFoundryCandidateProofs(workspaceRoot, {
+    candidateId: 'route-bundle:qwen',
+    capabilitySpecs: FOUNDRY_PROOF_CAPABILITIES.slice(0, 2),
+    runCommand(commandText) {
+      return {
+        command: commandText,
+        ok: true,
+        status: 0,
+        signal: '',
+        stdout: `passed ${commandText}`,
+        stderr: '',
+        durationMs: 25,
+        summary: `passed ${commandText}`,
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.capabilityCount, 2);
+  assert.equal(result.results[0].proof.status, 'verified');
+  assert.equal(result.results[0].proof.verifiedCapabilityCount, 2);
+  assert.equal(result.results[0].proof.benchmarkRunIds.length, 2);
+
+  const benchmarks = listBenchmarkRuns(workspaceRoot);
+  assert.equal(benchmarks.count, 2);
+  assert.equal(benchmarks.runs.every((run) => String(run.baseModel || '') === 'qwen2.5-coder:14b'), true);
+
+  const candidatesRoot = path.join(artifactsRoot, 'model_foundry', 'candidates');
+  const candidateFile = fs.readdirSync(candidatesRoot)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => path.join(candidatesRoot, name))[0];
+  const persistedCandidate = JSON.parse(fs.readFileSync(candidateFile, 'utf8'));
+  assert.equal(persistedCandidate.proof.status, 'verified');
+  assert.equal(persistedCandidate.proof.verifiedCapabilityCount, 2);
+});
+
+test('runFoundryCandidateProofs can dry-run the next suggested candidate without recording runs', () => {
+  const { workspaceRoot } = makeWorkspace();
+  const status = buildModelFoundryStatus(workspaceRoot, {
+    benchmarks: {
+      runs: [
+        {
+          id: 'bench-1',
+          status: 'pass',
+          model: 'qwen2.5-coder:7b',
+          modelProfileId: 'gs-dev-1-default',
+          baseModel: 'qwen2.5-coder:7b',
+          providerSource: 'ollama',
+          taskMode: 'coder',
+        },
+      ],
+    },
+  });
+
+  const result = runFoundryCandidateProofs(workspaceRoot, {
+    foundryStatus: status,
+    dryRun: true,
+    capabilitySpecs: FOUNDRY_PROOF_CAPABILITIES.slice(0, 1),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.dryRun, true);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.results[0].proof.status, 'verified');
+  assert.equal(listBenchmarkRuns(workspaceRoot).count, 0);
 });

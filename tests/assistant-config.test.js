@@ -56,6 +56,10 @@ test('assistant config persists GS-Dev-1 model profile routing fields in dev_ass
     assert.equal(config.taskModeRoutes.repair.model, 'qwen2.5-coder:7b');
     assert.equal(config.taskModeRoutes.coder.provider, 'ollama');
     assert.equal(config.taskModeRoutes.summarizer.model, 'gpt-4.1-mini');
+    assert.equal(config.modelPolicy.mixedLiveState, true);
+    assert.match(config.modelPolicy.currentStateSummary, /qwen2\.5-coder:14b.*candidate-only/i);
+    assert.equal(Array.isArray(config.modelConfigReviewNotes), true);
+    assert.match(config.modelConfigReviewNotes.join(' '), /Approved defaults:/i);
 
     const raw = fs.readFileSync(path.join(workspaceRoot, 'dev_assistant.yaml'), 'utf8');
     assert.match(raw, /assistant_model_profile_id: gs-dev-1-default/);

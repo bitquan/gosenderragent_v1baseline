@@ -1,6 +1,14 @@
 'use strict';
 
+const { buildCapabilityDescriptor } = require('./capability-status');
 const { buildDailyTaskSummary, summarizeSelfHostExpansion, entityMatchesWorkspaceScope } = require('./task-hub');
+
+function withCapabilityDescriptor(payload = {}) {
+  return {
+    ...payload,
+    ...buildCapabilityDescriptor(payload),
+  };
+}
 
 const ROADMAP_MONTHS = Object.freeze([
   {
@@ -211,7 +219,7 @@ function buildSelfHostProofSignals(acceptance = {}) {
   const passing = selfHostChecks.filter((check) => normalizeStatus(check?.status) === 'pass');
   const smokeCheck = selfHostChecks.find((check) => String(check?.id || '').trim().toLowerCase() === 'self-host-smoke') || null;
   if (selfHostChecks.length === 0) {
-    return {
+    return withCapabilityDescriptor({
       exists: false,
       status: acceptance?.exists ? 'warn' : 'idle',
       label: acceptance?.exists ? 'PARTIAL' : 'NOT RUN',
@@ -225,10 +233,10 @@ function buildSelfHostProofSignals(acceptance = {}) {
       checkCount: 0,
       passedCount: 0,
       smokeRecorded: false,
-    };
+    });
   }
   if (failing.length > 0) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'fail',
       label: 'BLOCKED',
@@ -245,10 +253,10 @@ function buildSelfHostProofSignals(acceptance = {}) {
       checkCount: selfHostChecks.length,
       passedCount: passing.length,
       smokeRecorded: Boolean(smokeCheck),
-    };
+    });
   }
   if (!smokeCheck || normalizeStatus(smokeCheck?.status) !== 'pass') {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'warn',
       label: 'PARTIAL',
@@ -260,9 +268,9 @@ function buildSelfHostProofSignals(acceptance = {}) {
       checkCount: selfHostChecks.length,
       passedCount: passing.length,
       smokeRecorded: Boolean(smokeCheck),
-    };
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     exists: true,
     status: 'pass',
     label: 'PROVEN',
@@ -274,7 +282,7 @@ function buildSelfHostProofSignals(acceptance = {}) {
     checkCount: selfHostChecks.length,
     passedCount: passing.length,
     smokeRecorded: true,
-  };
+  });
 }
 
 const SELF_IMPROVEMENT_SAFE_STATUSES = new Set(['succeeded', 'success', 'pass', 'passed', 'review']);
@@ -291,7 +299,7 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
   const testsPassed = normalizeStatus(testsCheck?.status) === 'pass';
   const uiSmokePassed = normalizeStatus(uiSmokeCheck?.status) === 'pass';
   if (!checks.length && !report.summary && !acceptance?.exists) {
-    return {
+    return withCapabilityDescriptor({
       exists: false,
       status: 'idle',
       label: 'NOT RUN',
@@ -300,10 +308,10 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
       partial: false,
       summary: 'No operator baseline acceptance bundle is recorded yet.',
       nextAction: 'Run the operator baseline acceptance path before widening beyond the current usable baseline.',
-    };
+    });
   }
   if (overallStatus === 'pass') {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'pass',
       label: 'PROVEN',
@@ -312,10 +320,10 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
       partial: false,
       summary: shortText(report.summary || 'Operator baseline acceptance passed cleanly.'),
       nextAction: 'Keep the next slice bounded, then rerun the same baseline acceptance bundle after meaningful changes.',
-    };
+    });
   }
   if (baselineFailing.length > 0 || selfHostProof.blocked === true) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'fail',
       label: 'BLOCKED',
@@ -334,10 +342,10 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
         || selfHostProof.nextAction
         || 'Repair the failing baseline checks and rerun the operator baseline acceptance path.',
       ),
-    };
+    });
   }
   if (testsPassed && uiSmokePassed && selfHostProof.proven === true) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'pass',
       label: 'PROVEN',
@@ -346,9 +354,9 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
       partial: false,
       summary: 'Operator baseline acceptance is proven: tests, UI smoke, and self-host proof are all green.',
       nextAction: 'Keep the next slice bounded, then rerun the same operator baseline acceptance path after meaningful changes.',
-    };
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     exists: true,
     status: 'warn',
     label: 'PARTIAL',
@@ -363,7 +371,7 @@ function buildOperatorBaselineAcceptanceSignals(acceptance = {}, selfHostProof =
       report.nextAction
       || 'Finish the operator baseline acceptance path so tests, UI smoke, and self-host proof are all green together.',
     ),
-  };
+  });
 }
 
 function buildSelfImprovementProofSignals(summary = {}) {
@@ -374,7 +382,7 @@ function buildSelfImprovementProofSignals(summary = {}) {
   const historyCount = numericValue(payload.historyCount, 0);
   const safeExecutionCount = numericValue(payload.safeExecutionCount, 0);
   if (['fail', 'failed', 'blocked', 'needs-repair', 'cancelled'].includes(lastStatus)) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'fail',
       label: 'BLOCKED',
@@ -385,10 +393,10 @@ function buildSelfImprovementProofSignals(summary = {}) {
       nextAction: shortText(payload.recommendedNextSafeAction || 'Repair the latest supervised self-improvement run before opening another one.'),
       lastStatus,
       lastTimestamp: String(lastExecution.timestamp || '').trim(),
-    };
+    });
   }
   if (safeExecutionCount > 0 || (historyCount > 0 && SELF_IMPROVEMENT_SAFE_STATUSES.has(lastStatus))) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'pass',
       label: 'PROVEN',
@@ -405,10 +413,10 @@ function buildSelfImprovementProofSignals(summary = {}) {
       ),
       lastStatus,
       lastTimestamp: String(lastExecution.timestamp || '').trim(),
-    };
+    });
   }
   if (preparedTaskCount > 0 || historyCount > 0) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'warn',
       label: 'PARTIAL',
@@ -425,9 +433,9 @@ function buildSelfImprovementProofSignals(summary = {}) {
       ),
       lastStatus,
       lastTimestamp: String(lastExecution.timestamp || '').trim(),
-    };
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     exists: false,
     status: 'idle',
     label: 'NOT RUN',
@@ -438,7 +446,7 @@ function buildSelfImprovementProofSignals(summary = {}) {
     nextAction: 'Generate and complete one bounded supervised self-improvement task before widening further.',
     lastStatus,
     lastTimestamp: '',
-  };
+  });
 }
 
 function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
@@ -449,7 +457,7 @@ function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
   const extensionStatus = normalizeStatus(extensionHealth?.status || '');
   const installed = install.installed === true;
   if (installed && extensionExists && extensionStatus === 'ready') {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'pass',
       label: 'PROVEN',
@@ -458,10 +466,10 @@ function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
       partial: false,
       summary: shortText(extensionHealth.summary || 'Desktop and VS Code companion parity is ready for the bounded coding loop.'),
       nextAction: shortText(extensionHealth.nextStep || 'Keep the companion aligned with the desktop contracts as you tune the coding loop.'),
-    };
+    });
   }
   if (install.available || extensionExists || installed) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'warn',
       label: 'PARTIAL',
@@ -478,9 +486,9 @@ function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
         extensionHealth.nextStep
         || (installed ? 'Clean up the companion health warnings before treating parity as complete.' : 'Install and validate the real VS Code companion before calling desktop and companion parity complete.'),
       ),
-    };
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     exists: false,
     status: 'idle',
     label: 'NOT READY',
@@ -489,7 +497,7 @@ function buildCompanionParitySignals(vscodeSetup = {}, extensionHealth = {}) {
     partial: false,
     summary: 'No VS Code companion parity proof is recorded yet.',
     nextAction: 'Install and validate the real VS Code companion before treating desktop and companion parity as complete.',
-  };
+  });
 }
 
 function buildModelParitySignals(acceptance = {}) {
@@ -505,7 +513,7 @@ function buildModelParitySignals(acceptance = {}) {
   const capabilityCount = Math.max(0, Number(pack.capabilityCount || 0));
   const readyCount = Math.max(0, Number(pack.readyCount || 0));
   if (status === 'pass' || pack.widenReady === true) {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: 'pass',
       label: 'PROVEN',
@@ -516,10 +524,10 @@ function buildModelParitySignals(acceptance = {}) {
       readyCount,
       summary: shortText(pack.summary || 'Local-vs-remote model parity is proven for the bounded coding loop.'),
       nextAction: shortText(pack.nextAction || 'Keep the local stack aligned with the remote helper path as the bounded loop changes.'),
-    };
+    });
   }
   if (capabilityCount > 0 || readyCount > 0 || status === 'warn' || status === 'fail') {
-    return {
+    return withCapabilityDescriptor({
       exists: true,
       status: status || 'warn',
       label: readyCount > 0 ? 'PARTIAL' : 'BLOCKED',
@@ -530,9 +538,9 @@ function buildModelParitySignals(acceptance = {}) {
       readyCount,
       summary: shortText(pack.summary || 'Local-vs-remote model parity still needs proof before the local stack can widen.'),
       nextAction: shortText(pack.nextAction || 'Finish the missing local-vs-remote parity checks before widening the local default path.'),
-    };
+    });
   }
-  return {
+  return withCapabilityDescriptor({
     exists: false,
     status: 'idle',
     label: 'NOT READY',
@@ -543,7 +551,7 @@ function buildModelParitySignals(acceptance = {}) {
     readyCount: 0,
     summary: 'No local-vs-remote model parity pack is recorded yet.',
     nextAction: 'Capture one clean local-vs-remote parity pack before widening the local default path.',
-  };
+  });
 }
 
 function buildSelfHostExpansion(signals = {}, activePhase = null) {

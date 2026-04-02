@@ -13,9 +13,9 @@ const workspaceRoot = resolveTargetWorkspaceRoot(process.env.DESKTOP_AGENT_TARGE
 const configuredOutputDir = getConfiguredAssistantDesktopBuildDir(workspaceRoot);
 const electronBuilderBin = path.join(appRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder');
 
-const args = process.argv.slice(2);
+let args = process.argv.slice(2);
 const explicitOutputArg = args.find((arg) => /^-c\.directories\.output=/.test(String(arg || '')));
-const outputDir = explicitOutputArg
+let outputDir = explicitOutputArg
   ? String(explicitOutputArg).replace(/^-c\.directories\.output=/, '')
   : (configuredOutputDir || path.join(appRoot, 'dist'));
 if (configuredOutputDir && !explicitOutputArg) {
@@ -63,6 +63,27 @@ function removePathRobustly(targetPath) {
   const renamedPath = `${targetPath}.stale-${Date.now()}`;
   fs.renameSync(targetPath, renamedPath);
   fs.rmSync(renamedPath, { recursive: true, force: true, maxRetries: 6, retryDelay: 200 });
+}
+
+function isRecoverableCleanupError(error) {
+  return ['ENOTEMPTY', 'EBUSY', 'EPERM'].includes(String(error?.code || ''));
+}
+
+function buildFreshOutputDir(baseDir) {
+  const parentDir = path.dirname(baseDir);
+  const baseName = path.basename(baseDir);
+  return path.join(parentDir, `${baseName}-fresh-${Date.now()}`);
+}
+
+function applyOutputDirArg(nextOutputDir) {
+  outputDir = nextOutputDir;
+  const argValue = `-c.directories.output=${nextOutputDir}`;
+  const existingIndex = args.findIndex((arg) => /^-c\.directories\.output=/.test(String(arg || '')));
+  if (existingIndex >= 0) {
+    args[existingIndex] = argValue;
+    return;
+  }
+  args.push(argValue);
 }
 
 function printResult(result) {
@@ -127,7 +148,17 @@ function cleanOutputTargets(directory, currentArgs) {
   }
 }
 
-cleanOutputTargets(outputDir, args);
+try {
+  cleanOutputTargets(outputDir, args);
+} catch (error) {
+  if (!(process.platform === 'win32' && args.includes('--win') && isRecoverableCleanupError(error))) {
+    throw error;
+  }
+  const freshOutputDir = buildFreshOutputDir(outputDir);
+  fs.mkdirSync(freshOutputDir, { recursive: true });
+  process.stderr.write(`[run-electron-builder] output cleanup hit ${String(error?.code || 'error')} at ${String(error?.path || outputDir)}. Retrying with fresh output dir ${freshOutputDir}.\n`);
+  applyOutputDirArg(freshOutputDir);
+}
 
 let result = runBuilder(args);
 printResult(result);

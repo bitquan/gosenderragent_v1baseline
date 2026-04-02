@@ -148,6 +148,24 @@ function canonicalVerb(value) {
   return VERB_ALIASES[word] || word;
 }
 
+function appendUniqueText(values = [], nextValues = []) {
+  const out = [];
+  const seen = new Set();
+  [...values, ...nextValues].forEach((value) => {
+    const text = String(value || '').trim();
+    if (!text) {
+      return;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(text);
+  });
+  return out;
+}
+
 function normalizeVerdict(value) {
   const verdict = String(value || '').trim().toLowerCase();
   if (!verdict) {
@@ -273,6 +291,8 @@ function buildReusablePrompts(promptMap, limit = 4) {
       uses: item.uses,
       lastUsedAt: item.lastUsedAt || nowIso(),
       source: 'learning-journal',
+      surfaces: Array.isArray(item.surfaces) ? item.surfaces : [],
+      trustedSignals: Array.isArray(item.trustedSignals) ? item.trustedSignals : [],
     }));
 }
 
@@ -343,6 +363,9 @@ function deriveStyleProfileFromEntries(entries = []) {
   for (const group of trustedGroups) {
     const trustedPrompts = group.entries.filter((entry) => String(entry.type || '').trim().toLowerCase() === 'chat-prompt');
     const trustedTitles = group.entries.filter((entry) => ['goal-created', 'task-created'].includes(String(entry.type || '').trim().toLowerCase()));
+    const trustedSignals = appendUniqueText([], group.entries
+      .filter((entry) => qualifiesAsTrustedOutcome(entry))
+      .map((entry) => String(entry.type || '').trim().toLowerCase()));
 
     for (const entry of trustedPrompts) {
       const prompt = stripPromptFiller(entry.payload?.text || '');
@@ -356,9 +379,13 @@ function deriveStyleProfileFromEntries(entries = []) {
         category,
         uses: 0,
         lastUsedAt: '',
+        surfaces: [],
+        trustedSignals: [],
       };
       current.uses += 1;
       current.lastUsedAt = String(entry.recordedAt || current.lastUsedAt || '');
+      current.surfaces = appendUniqueText(current.surfaces, [entry.payload?.surface, entry.payload?.source]);
+      current.trustedSignals = appendUniqueText(current.trustedSignals, trustedSignals);
       promptMap.set(key, current);
       increment(verbCounts, category);
       const target = extractTargetPhrase(prompt);

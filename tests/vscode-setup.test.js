@@ -98,11 +98,17 @@ test('installVsCodeCompanion copies the real companion into the user extensions 
   fs.mkdirSync(companionRoot, { recursive: true });
   fs.writeFileSync(path.join(companionRoot, 'package.json'), JSON.stringify({
     name: 'gosenderr-vscode-companion',
+    publisher: 'gosenderr',
     displayName: 'GoSenderr VS Code Companion',
     version: '0.1.0',
     main: './extension.js',
     engines: { vscode: '^1.95.0' },
     contributes: { commands: [{ command: 'gosenderr.openWorkbench' }] },
+  }, null, 2));
+  fs.writeFileSync(path.join(companionRoot, 'integration.json'), JSON.stringify({
+    id: 'vscode-companion-extension',
+    kind: 'extension',
+    version: '0.1.0',
   }, null, 2));
   fs.writeFileSync(path.join(companionRoot, 'extension.js'), 'module.exports = {};\n');
 
@@ -113,6 +119,49 @@ test('installVsCodeCompanion copies the real companion into the user extensions 
 
   assert.equal(result.ok, true);
   assert.ok(fs.existsSync(path.join(result.installRoot, 'package.json')));
+  assert.match(path.basename(result.installRoot), /^gosenderr\.gosenderr-vscode-companion-0\.1\.0$/);
   assert.equal(result.status.companionInstall.installed, true);
   assert.equal(result.status.companionInstall.installRoot, result.installRoot);
+  assert.equal(result.status.companionInstall.publisher, 'gosenderr');
+  assert.equal(result.status.companionInstall.versionMismatch, false);
+  assert.equal(result.status.companionInstall.metadataVersionMismatch, false);
+});
+
+test('buildVsCodeSetupStatus flags companion install version drift and metadata drift', () => {
+  const workspaceRoot = makeWorkspace();
+  const companionRoot = path.join(workspaceRoot, 'integration-library', 'extensions', 'vscode-companion');
+  const extensionsRoot = path.join(workspaceRoot, '.tmp-vscode-extensions');
+  const installedRoot = path.join(extensionsRoot, 'gosenderr.gosenderr-vscode-companion-0.1.2');
+  fs.mkdirSync(companionRoot, { recursive: true });
+  fs.mkdirSync(installedRoot, { recursive: true });
+  fs.writeFileSync(path.join(companionRoot, 'package.json'), JSON.stringify({
+    name: 'gosenderr-vscode-companion',
+    publisher: 'gosenderr',
+    version: '0.1.3',
+    main: './extension.js',
+    engines: { vscode: '^1.95.0' },
+    contributes: { commands: [{ command: 'gosenderr.openWorkbench' }] },
+  }, null, 2));
+  fs.writeFileSync(path.join(companionRoot, 'integration.json'), JSON.stringify({
+    id: 'vscode-companion-extension',
+    kind: 'extension',
+    version: '0.1.0',
+  }, null, 2));
+  fs.writeFileSync(path.join(companionRoot, 'extension.js'), 'module.exports = {};\n');
+  fs.writeFileSync(path.join(installedRoot, 'package.json'), JSON.stringify({
+    name: 'gosenderr-vscode-companion',
+    publisher: 'gosenderr',
+    version: '0.1.2',
+  }, null, 2));
+
+  const status = buildVsCodeSetupStatus(workspaceRoot, { extensionsRoot, cliCommand: 'code.cmd' });
+
+  assert.equal(status.status, 'needs-attention');
+  assert.equal(status.companionInstall.installed, true);
+  assert.equal(status.companionInstall.versionMismatch, true);
+  assert.equal(status.companionInstall.installedVersion, '0.1.2');
+  assert.equal(status.companionInstall.metadataVersionMismatch, true);
+  assert.deepEqual(status.companionInstall.staleInstallRoots, [installedRoot]);
+  assert.ok(status.setupWarnings.some((warning) => /installed companion version 0\.1\.2/i.test(warning)));
+  assert.ok(status.setupWarnings.some((warning) => /integration metadata version/i.test(warning)));
 });

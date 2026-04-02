@@ -1,12 +1,10 @@
 # GoSenderr Desktop Agent PC
 
-This is the Windows-ready sibling bundle for the standalone desktop agent.
+Use `docs/BAT_FEATURE_BOARD.md` first for the live command book, board ownership, and active roadmap state. This file is Windows-specific quick-start reference material only.
 
-## Default clone path
+## Recommended clone path
 
-`/Volumes/projects/gosenderr-desktop-agent-PC`
-
-Copy this folder from the external SSD onto the Windows machine before you run installs or builds.
+Clone or copy the repo onto a local Windows drive that matches your current workspace layout, for example `E:\dev\projects\gosenderr-desktop-agent-PC`.
 
 ## Recommended tools on Windows
 
@@ -21,7 +19,7 @@ Copy this folder from the external SSD onto the Windows machine before you run i
 
 - Windows dev PC (i9 / 32 GB / RTX 4060 8 GB)
 - Higher-throughput target for your Windows box with an i9 12th-gen CPU, 32 GB RAM, SSD, and an RTX 4060 8 GB GPU.
-- Start with `qwen2.5-coder:14b` locally and keep remote fallbacks available for harder review and multimodal work.
+- Start with `qwen2.5-coder:7b` as the normal local baseline, then move to `qwen2.5-coder:14b` only when a specific proof slice shows the heavier lane is worth the extra headroom.
 
 ## Fast start in PowerShell
 

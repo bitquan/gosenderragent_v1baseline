@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const childProcess = require('child_process');
 const path = require('path');
 
@@ -36,9 +37,16 @@ const {
   RECOMMENDED_LOCAL_MODELS,
   WORKER_FAMILY_OPTIONS,
 } = require('../core/training-tuning');
+const {
+  fetchTrustedDocDigests,
+  renderTrustedDocPromptBlock,
+} = require('../core/trusted-docs');
+const { buildEngineModelProofSnapshot: buildSharedEngineModelProofSnapshot } = require('../core/engine-model-proof');
+const { LearningJournalService } = require('../core/learning-journal');
 const { readAssistantConfig } = require('../host/assistant-config');
 const { AgentRuntimeClient, resolvePythonCommand } = require('../shared-runtime/agent-runtime-client');
 const { SharedAgentRuntime, buildOperatorExecutionSnapshot } = require('../shared-runtime/runtime');
+const { FOUNDRY_PROOF_CAPABILITIES, runFoundryCandidateProofs } = require('../core/model-foundry');
 
 function clipText(value, maxLength = 220) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -64,9 +72,15 @@ function parseCliArgs(argv = []) {
     secondaryPath: '',
     outputPath: '',
     mergeName: '',
+    candidateId: '',
+    title: '',
     alpha: null,
     method: '',
+    capabilityIds: [],
     dryRun: false,
+    docSources: [],
+    summaryPath: '',
+    all: false,
     trailing: [],
   };
 
@@ -126,6 +140,14 @@ function parseCliArgs(argv = []) {
       parsed.mergeName = String(args.shift() || '').trim();
       continue;
     }
+    if (token === '--candidate-id' || token === '--candidate') {
+      parsed.candidateId = String(args.shift() || '').trim();
+      continue;
+    }
+    if (token === '--title') {
+      parsed.title = String(args.shift() || '').trim();
+      continue;
+    }
     if (token === '--alpha') {
       const alpha = Number(args.shift() || '');
       parsed.alpha = Number.isFinite(alpha) ? alpha : null;
@@ -137,6 +159,28 @@ function parseCliArgs(argv = []) {
     }
     if (token === '--dry-run') {
       parsed.dryRun = true;
+      continue;
+    }
+    if (token === '--capability') {
+      const capabilityId = String(args.shift() || '').trim().toLowerCase();
+      if (capabilityId) {
+        parsed.capabilityIds.push(capabilityId);
+      }
+      continue;
+    }
+    if (token === '--all') {
+      parsed.all = true;
+      continue;
+    }
+    if (token === '--doc-source' || token === '--doc-url') {
+      const docSource = String(args.shift() || '').trim();
+      if (docSource) {
+        parsed.docSources.push(docSource);
+      }
+      continue;
+    }
+    if (token === '--summary-path') {
+      parsed.summaryPath = path.resolve(String(args.shift() || '').trim());
       continue;
     }
     parsed.trailing.push(token);
@@ -155,12 +199,29 @@ function buildSyntheticTicketId(seed = '') {
   return `9${digits}`;
 }
 
+function normalizeCliChatCommand(command = '') {
+  const value = String(command || '').trim().toLowerCase();
+  if (value === 'ask-docs') {
+    return 'ask';
+  }
+  if (value === 'plan-docs') {
+    return 'plan';
+  }
+  return value;
+}
+
+function usesTrustedDocs(command = '', docSources = []) {
+  return ['ask-docs', 'plan-docs'].includes(String(command || '').trim().toLowerCase())
+    || (Array.isArray(docSources) && docSources.length > 0);
+}
+
 function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '', validationCommands = [] } = {}) {
-  const chatMode = command === 'plan'
+  const normalizedCommand = normalizeCliChatCommand(command);
+  const chatMode = normalizedCommand === 'plan'
     ? 'plan'
-    : command === 'edit'
+    : normalizedCommand === 'edit'
       ? 'edit'
-      : command === 'agent'
+      : normalizedCommand === 'agent'
         ? 'agent'
         : 'ask';
   const normalizedValidationCommands = Array.isArray(validationCommands)
@@ -225,6 +286,314 @@ function buildTerminalRequest({ command, workspaceRoot, labRoot, prompt = '', va
       },
     },
   };
+}
+
+function buildDocsAwareGroundedPrompt({ built = {}, report = {}, userPrompt = '', docDigests = [] } = {}) {
+  const basePrompt = buildGroundedChatPrompt({
+    chatMode: built.chatMode || 'ask',
+    userPrompt,
+    report,
+    built,
+  });
+  const docsBlock = renderTrustedDocPromptBlock(docDigests);
+  if (!docsBlock) {
+    return basePrompt;
+  }
+  return [
+    basePrompt,
+    '',
+    docsBlock,
+    '',
+    'In this prompt, docs means trusted technical documentation such as VS Code, Node, Python, MDN, or Microsoft references. It does not mean building a document CRUD subsystem.',
+    'Do not invent new folders, commands, or subsystems unless the current repo state or trusted docs above explicitly require them.',
+    'Name the real repo files or commands you would touch. If you cannot name concrete repo files from the live state, say that the evidence is missing instead of giving generic project-management steps.',
+    'Do not add review, stakeholder, or submission workflow advice unless the live repo state explicitly calls for it.',
+    'Use the trusted online docs above only as supporting evidence. Prefer the repo state and repo files when they conflict.',
+  ].filter(Boolean).join('\n');
+}
+
+function buildProgressSummaryMarkdown({
+  title = '',
+  objective = '',
+  workspaceRoot = '',
+  report = {},
+  docDigests = [],
+  updatedAt = new Date().toISOString(),
+} = {}) {
+  const roadmap = report?.areas?.roadmap && typeof report.areas.roadmap === 'object' ? report.areas.roadmap : {};
+  const acceptance = report?.areas?.acceptance && typeof report.areas.acceptance === 'object' ? report.areas.acceptance : {};
+  const trust = report?.areas?.trust && typeof report.areas.trust === 'object' ? report.areas.trust : {};
+  const runs = report?.areas?.runs && typeof report.areas.runs === 'object' ? report.areas.runs : {};
+  const latestRun = runs.latestRun && typeof runs.latestRun === 'object' ? runs.latestRun : {};
+  const lines = [
+    '# Locked Plan Summary',
+    '',
+    `Updated: ${updatedAt}`,
+    `Workspace: ${workspaceRoot}`,
+    '',
+    `## ${title || 'Untitled locked plan'}`,
+    '',
+    '### Goal',
+    objective || 'No objective recorded yet.',
+    '',
+    '### Repo Snapshot',
+    `- Roadmap: ${String(roadmap.status || 'unknown').toUpperCase()} | ${clipText(roadmap.summary || 'No roadmap summary recorded yet.', 180)}`,
+    `- Acceptance: ${String(acceptance.status || 'unknown').toUpperCase()} | ${clipText(acceptance.summary || 'No acceptance summary recorded yet.', 180)}`,
+    `- Trust: ${String(trust.status || 'unknown').toUpperCase()} | ${clipText(trust.summary || 'No trust summary recorded yet.', 180)}`,
+    latestRun.task ? `- Latest run: ${clipText(latestRun.task, 180)}` : '- Latest run: none recorded',
+    roadmap.recommendedNextSafeAction ? `- Next safe action: ${clipText(roadmap.recommendedNextSafeAction, 180)}` : '- Next safe action: not recorded',
+    '',
+    '### Locked Trackers',
+    '- Primary board: docs/BAT_FEATURE_BOARD.md',
+    '- Engine blueprint: docs/ENGINE_BLUEPRINT_CHECKLIST.md',
+    '- Model blueprint: docs/LOCAL_MODEL_BLUEPRINT_CHECKLIST.md',
+    '- Engine model proof: docs/ENGINE_MODEL_PROOF.md',
+    '',
+    '### Guardrails',
+    '- Keep using the existing desktop shell, VS Code companion, and tool catalog until native engine replacements are actually proven.',
+    '- Keep learning user-driven and review-backed by default; autonomous self-improvement stays optional and gated.',
+    '- Refresh docs/ENGINE_MODEL_PROOF.md after each bounded engine or model pass so Python runtime proof and routed model proof stay visible.',
+  ];
+  if (Array.isArray(docDigests) && docDigests.length > 0) {
+    lines.push('', '### Trusted Online Docs');
+    docDigests.slice(0, 5).forEach((digest) => {
+      lines.push(`- ${digest.title || digest.url}`);
+      lines.push(`  - URL: ${digest.url}`);
+      if (digest.summary) {
+        lines.push(`  - Summary: ${clipText(digest.summary, 180)}`);
+      }
+      if (Array.isArray(digest.goodPatterns) && digest.goodPatterns.length > 0) {
+        lines.push(`  - Good patterns: ${digest.goodPatterns.slice(0, 2).join(' | ')}`);
+      }
+      if (Array.isArray(digest.avoidPatterns) && digest.avoidPatterns.length > 0) {
+        lines.push(`  - Avoid patterns: ${digest.avoidPatterns.slice(0, 2).join(' | ')}`);
+      }
+    });
+  }
+  lines.push('', '### Notes', '- Update this file whenever a multi-phase engine plan starts, changes phase, or is replaced by a newer locked plan.');
+  return lines.join('\n');
+}
+
+function applyRepairRouteOverride(request = {}) {
+  return {
+    ...request,
+    taskMode: 'repair',
+    laneId: 'repair-fast',
+    laneLabel: 'Repair fast',
+    modelRole: resolveExecutionModelRole({
+      taskMode: 'repair',
+      action: request.action,
+      laneId: 'repair-fast',
+    }),
+  };
+}
+
+function buildCliRouteProofRows(workspaceRoot, { labRoot = '' } = {}) {
+  const rows = [
+    {
+      label: 'Ask',
+      cliCommand: 'npm run engine:cli -- ask "Why is the current run blocked?"',
+      built: buildTerminalRequest({
+        command: 'ask',
+        workspaceRoot,
+        labRoot,
+        prompt: 'Why is the current run blocked?',
+      }),
+    },
+    {
+      label: 'Plan',
+      cliCommand: 'npm run engine:cli -- plan "Plan the safest next slice for the current roadmap."',
+      built: buildTerminalRequest({
+        command: 'plan',
+        workspaceRoot,
+        labRoot,
+        prompt: 'Plan the safest next slice for the current roadmap.',
+      }),
+    },
+    {
+      label: 'Edit',
+      cliCommand: 'npm run engine:cli -- edit --yes "Prepare the smallest safe fix for the current issue."',
+      built: buildTerminalRequest({
+        command: 'edit',
+        workspaceRoot,
+        labRoot,
+        prompt: 'Prepare the smallest safe fix for the current issue.',
+      }),
+    },
+    {
+      label: 'Repair',
+      cliCommand: 'npm run engine:cli -- repair "Repair the latest failed bounded run and rerun the smallest relevant validation."',
+      built: {
+        ...buildTerminalRequest({
+          command: 'edit',
+          workspaceRoot,
+          labRoot,
+          prompt: 'Repair the latest failed bounded run and rerun the smallest relevant validation.',
+        }),
+      },
+    },
+  ];
+
+  return rows.map((row) => {
+    const request = row.label === 'Repair'
+      ? applyRepairRouteOverride(row.built.request)
+      : row.built.request;
+    return {
+      label: row.label,
+      cliCommand: row.cliCommand,
+      laneLabel: request.laneLabel || request.laneId || 'Unknown lane',
+      laneId: request.laneId || '',
+      taskMode: request.taskMode || '',
+      modelRole: request.modelRole || '',
+      modelDisplayName: request.modelDisplayName || request.modelProfileId || request.baseModel || 'unresolved',
+      modelProfileId: request.modelProfileId || '',
+      baseModel: request.baseModel || '',
+      providerSource: request.providerSource || '',
+    };
+  });
+}
+
+function buildLearningPolicySummary(assistantConfig = {}) {
+  const autonomyMode = String(assistantConfig.autonomyMode || '').trim().toLowerCase();
+  const safetyLevel = String(assistantConfig.safetyLevel || '').trim().toLowerCase();
+  const selfImproveEnabled = autonomyMode === 'self' || assistantConfig.selfImprovementOnly === true;
+  const approvalGate = assistantConfig.humanApprovalProtectedOnly === true
+    ? 'protected-only approvals'
+    : assistantConfig.humanApprovalProtectedOnly === false
+      ? 'broader automatic approvals'
+      : 'default protected approvals';
+  const sandboxPolicy = assistantConfig.sandboxRequired === true
+    ? 'sandbox required'
+    : assistantConfig.sandboxRequired === false
+      ? 'sandbox optional'
+      : 'sandbox policy not overridden';
+  return {
+    learningDefault: 'User-driven and review-backed learning stays primary. Research, tests, and accepted runs can feed memory, but they do not widen autonomy on their own.',
+    selfImproveSummary: selfImproveEnabled
+      ? 'Autonomous self-improvement is enabled by config, but it still remains bounded by approvals, safety level, and proof.'
+      : 'Autonomous self-improvement stays optional and should remain off until explicitly enabled for a bounded slice.',
+    approvalEnvelope: `Autonomy mode: ${autonomyMode || 'default'} | Safety level: ${safetyLevel || 'default'} | Approval gate: ${approvalGate} | ${sandboxPolicy}`,
+  };
+}
+
+function buildLearningProofSnapshot(workspaceRoot) {
+  try {
+    const service = new LearningJournalService();
+    service.setScope({
+      workspaceRoot,
+      targetRoot: workspaceRoot,
+      pollingEnabled: false,
+    });
+    return service.getStatus();
+  } catch (error) {
+    return {
+      ok: false,
+      journalPath: '',
+      operatorSupervision: {
+        count: 0,
+        summary: `Learning journal unavailable: ${String(error?.message || error).trim()}`,
+      },
+      trainingReadiness: {
+        status: 'missing',
+        summary: 'Learning readiness is unavailable.',
+      },
+      gsDev1ExportReadiness: {
+        status: 'missing',
+        summary: 'GS-Dev-1 export readiness is unavailable.',
+      },
+    };
+  }
+}
+
+function buildEngineModelProofMarkdown({
+  title = '',
+  objective = '',
+  workspaceRoot = '',
+  pythonCommand = '',
+  acceptanceState = {},
+  assistantConfig = {},
+  learningStatus = {},
+  routeProofRows = [],
+  updatedAt = new Date().toISOString(),
+} = {}) {
+  const control = acceptanceState?.controlSummary && typeof acceptanceState.controlSummary === 'object'
+    ? acceptanceState.controlSummary
+    : {};
+  const operatorSupervision = learningStatus?.operatorSupervision && typeof learningStatus.operatorSupervision === 'object'
+    ? learningStatus.operatorSupervision
+    : {};
+  const trainingReadiness = learningStatus?.trainingReadiness && typeof learningStatus.trainingReadiness === 'object'
+    ? learningStatus.trainingReadiness
+    : {};
+  const exportReadiness = learningStatus?.gsDev1ExportReadiness && typeof learningStatus.gsDev1ExportReadiness === 'object'
+    ? learningStatus.gsDev1ExportReadiness
+    : {};
+  const reusablePrompts = Array.isArray(learningStatus?.reusablePrompts)
+    ? learningStatus.reusablePrompts
+    : [];
+  const learningPolicy = buildLearningPolicySummary(assistantConfig);
+  const lines = [
+    '# Engine Model Proof',
+    '',
+    `Updated: ${updatedAt}`,
+    `Workspace: ${workspaceRoot}`,
+    `Pass: ${title || 'Engine model proof'}`,
+    '',
+    '## Goal',
+    objective || 'Show the current Python-backed engine path, routed CLI models, learning envelope, and proof gate.',
+    '',
+    '## Engine Path',
+    `- Python runtime: ${pythonCommand || 'missing'}`,
+    `- Acceptance artifact: ${acceptanceState.outputPath || 'not recorded yet'}`,
+    `- Acceptance gate: ${control.acceptanceLabel || 'NOT RUN'} | ${clipText(control.acceptanceSummary || 'No acceptance summary recorded yet.', 180)}`,
+    `- Smoke gate: ${control.smokeLabel || 'NOT RUN'} | ${clipText(control.smokeSummary || 'No smoke summary recorded yet.', 180)}`,
+    `- Next-day gate: ${control.nextDayLabel || 'BLOCKED'} | ${clipText(control.nextDaySummary || 'Next-day readiness is not recorded yet.', 180)}`,
+    `- Model parity: ${clipText(control.modelParity?.summary || 'No model parity proof is recorded yet.', 180)}`,
+    `- Next safe action: ${clipText(control.nextSafeAction || 'Run acceptance before widening the engine surface.', 180)}`,
+    '',
+    '## Routed CLI Model Proof',
+  ];
+
+  if (Array.isArray(routeProofRows) && routeProofRows.length > 0) {
+    routeProofRows.forEach((row) => {
+      lines.push(`- ${row.label}: ${row.laneLabel} | ${row.taskMode} | ${row.modelRole} role | ${row.modelDisplayName}${row.providerSource ? ` via ${row.providerSource}` : ''}`);
+      lines.push(`  - CLI: ${row.cliCommand}`);
+      if (row.baseModel || row.modelProfileId) {
+        lines.push(`  - Model details: ${row.baseModel || row.modelProfileId}${row.modelProfileId && row.baseModel && row.modelProfileId !== row.baseModel ? ` | profile ${row.modelProfileId}` : ''}`);
+      }
+    });
+  } else {
+    lines.push('- No routed CLI model proof rows are available.');
+  }
+
+  lines.push(
+    '',
+    '## Learning And Self-Improvement Envelope',
+    `- Operator supervision: ${Number(operatorSupervision.count || 0)} signal(s) | ${clipText(operatorSupervision.summary || 'No operator supervision summary recorded yet.', 180)}`,
+    `- Training readiness: ${String(trainingReadiness.status || 'unknown').toUpperCase()} | ${clipText(trainingReadiness.summary || 'Training readiness is not recorded yet.', 180)}`,
+    `- GS-Dev-1 export readiness: ${String(exportReadiness.status || 'unknown').toUpperCase()} | ${clipText(exportReadiness.summary || 'GS-Dev-1 export readiness is not recorded yet.', 180)}`,
+    `- Reusable prompts: ${reusablePrompts.length}${reusablePrompts.length > 0 ? ` | ${reusablePrompts.slice(0, 2).map((item) => `${clipText(item?.prompt || '', 140)}${Array.isArray(item?.surfaces) && item.surfaces.length > 0 ? ` (${item.surfaces.join(', ')})` : ''}`).join(' | ')}` : ' | No trusted prompt patterns recorded yet.'}`,
+    `- Learning default: ${learningPolicy.learningDefault}`,
+    `- Self-improvement: ${learningPolicy.selfImproveSummary}`,
+    `- Approval envelope: ${learningPolicy.approvalEnvelope}`,
+    `- Learning journal: ${learningStatus.journalPath || 'not configured'}`,
+    '',
+    '## VS Code Reuse Contract',
+    '- Desktop bridge: main.js + preload.js stay the existing operator bridge.',
+    '- VS Code client surface: integration-library/extensions/vscode-companion/extension.js stays the coding-side client surface.',
+    '- Canonical tools: core/tool-catalog.js stays the engine tool surface until native replacements are proven.',
+    '- Locked plan: docs/LOCKED_PLAN_SUMMARY.md stays the multi-phase plan anchor.',
+    '',
+    '## Per-Pass Proof Commands',
+    '- npm run engine:cli -- status --area roadmap',
+    '- npm run engine:acceptance',
+    '- npm run engine:cli -- proof-summary --title "Current engine pass"',
+    '',
+    '## Notes',
+    '- Refresh this file after each bounded engine or model pass so the Python runtime path, routed model path, and current proof gate stay visible.',
+    '- Keep autonomous self-improvement opt-in. User input, accepted runs, focused tests, and review outcomes should remain the main supervised learning signals.'
+  );
+  return lines.join('\n');
 }
 
 function buildAuditScriptArgs(workspaceRoot, { json = false } = {}) {
@@ -390,6 +759,37 @@ function renderModelLifecycleStatus(status = {}) {
   if (status.commands?.checkpointMerge) {
     lines.push(`Checkpoint merge command: ${status.commands.checkpointMerge}`);
   }
+  if (status.commands?.candidateProof) {
+    lines.push(`Candidate proof command: ${status.commands.candidateProof}`);
+  }
+  return lines.join('\n');
+}
+
+function renderFoundryProofExecution(result = {}) {
+  const lines = [
+    `Workspace: ${String(result.workspaceRoot || '').trim()}`,
+    `Dry run: ${result.dryRun === true ? 'yes' : 'no'}`,
+    `Candidates: ${Number(result.candidateCount || 0)} | Capabilities: ${Number(result.capabilityCount || 0)}`,
+  ];
+  if (result.summary) {
+    lines.push(`Summary: ${result.summary}`);
+  }
+  if (result.message) {
+    lines.push(`Message: ${result.message}`);
+  }
+  const candidateResults = Array.isArray(result.results) ? result.results : [];
+  candidateResults.forEach((entry) => {
+    const candidate = entry?.candidate && typeof entry.candidate === 'object' ? entry.candidate : {};
+    const proof = entry?.proof && typeof entry.proof === 'object' ? entry.proof : {};
+    lines.push(`- ${candidate.label || candidate.id || 'Foundry candidate'} :: ${String(proof.status || 'next').toUpperCase()} :: ${Number(proof.verifiedCapabilityCount || 0)}/${Number(proof.capabilityCount || 0)} capabilities`);
+    if (proof.summary) {
+      lines.push(`  ${proof.summary}`);
+    }
+    const capabilityResults = Array.isArray(entry?.capabilityResults) ? entry.capabilityResults : [];
+    capabilityResults.forEach((capability) => {
+      lines.push(`  - ${capability.label || capability.capabilityId}: ${capability.ok === true || capability.dryRun === true ? 'pass' : 'fail'}${capability.benchmarkId ? ` | ${capability.benchmarkId}` : ''}`);
+    });
+  });
   return lines.join('\n');
 }
 
@@ -437,6 +837,95 @@ function extractChatReply(result = {}) {
   return String(result.reply || result.summary || result.message || '').trim();
 }
 
+function createCliLearningJournal({ workspaceRoot = '', targetWorkspaceRoot = '', labRoot = '', command = '', prompt = '', changeSessionId = '' } = {}) {
+  const service = new LearningJournalService();
+  service.setScope({
+    workspaceRoot,
+    targetRoot: String(targetWorkspaceRoot || workspaceRoot || '').trim(),
+    labRoot,
+    pollingEnabled: false,
+    threadId: `engine-cli:${normalizeCliChatCommand(command) || 'ask'}`,
+    changeSessionId: String(changeSessionId || '').trim() || buildSyntheticTicketId(`${command}\n${targetWorkspaceRoot || workspaceRoot}\n${prompt}`),
+  });
+  return service;
+}
+
+function collectCliChangedFiles(snapshot = {}) {
+  const items = Array.isArray(snapshot?.changedFiles) ? snapshot.changedFiles : [];
+  return items
+    .map((item) => {
+      if (item && typeof item === 'object') {
+        return {
+          path: String(item.path || '').trim(),
+          status: String(item.status || item.state || '').trim(),
+        };
+      }
+      return {
+        path: String(item || '').trim(),
+        status: '',
+      };
+    })
+    .filter((item) => item.path);
+}
+
+function recordCliPromptStart(learningJournal, { command = '', prompt = '', built = {}, docsResult = {} } = {}) {
+  if (!learningJournal || !prompt) {
+    return;
+  }
+  const normalizedCommand = normalizeCliChatCommand(command);
+  const docDigests = Array.isArray(docsResult?.digests) ? docsResult.digests : [];
+  learningJournal.recordEvent('chat-prompt', {
+    text: prompt,
+    command: normalizedCommand,
+    chatMode: String(built?.chatMode || normalizedCommand || '').trim(),
+    laneId: String(built?.request?.laneId || '').trim(),
+    taskMode: String(built?.request?.taskMode || '').trim(),
+    surface: 'engine-cli',
+    source: 'engine-cli',
+    docSourceCount: docDigests.length,
+    trustedDocs: docDigests.slice(0, 3).map((item) => ({
+      title: String(item?.title || item?.summary || item?.url || '').trim(),
+      url: String(item?.url || '').trim(),
+      domain: String(item?.domain || '').trim(),
+    })),
+  });
+  if (['plan', 'edit', 'agent', 'repair'].includes(normalizedCommand)) {
+    learningJournal.recordEvent('task-created', {
+      title: prompt,
+      command: normalizedCommand,
+      laneId: String(built?.request?.laneId || '').trim(),
+      taskMode: String(built?.request?.taskMode || '').trim(),
+      surface: 'engine-cli',
+      source: 'engine-cli',
+    });
+  }
+}
+
+function recordCliRunOutcome(learningJournal, { command = '', built = {}, trackedRun = {} } = {}) {
+  if (!learningJournal) {
+    return;
+  }
+  const snapshot = trackedRun?.operatorExecution || buildOperatorExecutionSnapshot(trackedRun || {}, {});
+  const changedFiles = collectCliChangedFiles(snapshot);
+  const state = String(trackedRun?.state || snapshot?.status || '').trim().toLowerCase() || 'unknown';
+  learningJournal.recordEvent('run-complete', {
+    state,
+    accepted: state === 'pass',
+    trusted: state === 'pass',
+    command: normalizeCliChatCommand(command),
+    laneId: String(built?.request?.laneId || snapshot?.laneId || '').trim(),
+    taskMode: String(built?.request?.taskMode || snapshot?.taskMode || '').trim(),
+    summary: String(snapshot?.reviewSummary?.summary || snapshot?.runSummary?.summary || snapshot?.testSummary?.summary || '').trim(),
+    reviewBundle: snapshot?.reviewBundle && typeof snapshot.reviewBundle === 'object' ? snapshot.reviewBundle : {},
+    failureClass: snapshot?.failureClass && typeof snapshot.failureClass === 'object' ? snapshot.failureClass : {},
+    nextAction: snapshot?.nextAction && typeof snapshot.nextAction === 'object' ? snapshot.nextAction : {},
+    changedFiles,
+    changedFileCount: Number(snapshot?.changedFileCount || changedFiles.length || 0),
+    surface: 'engine-cli',
+    source: 'engine-cli',
+  });
+}
+
 async function executeTrackedRuntimeRun(runtime, request, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 0);
   const run = runtime.run(request);
@@ -459,33 +948,55 @@ async function runChatCommand(parsed) {
     workspaceRoot,
     ...context,
   });
+  const docMode = usesTrustedDocs(parsed.command, parsed.docSources);
+  const docsResult = docMode
+    ? await fetchTrustedDocDigests(parsed.docSources)
+    : { digests: [], failures: [] };
+  if (docMode && parsed.docSources.length > 0 && docsResult.digests.length === 0) {
+    throw new Error(`Unable to load trusted docs: ${docsResult.failures.map((item) => `${item.source || 'source'} (${item.reason})`).join('; ')}`);
+  }
   const built = buildTerminalRequest({
-    command: parsed.command,
+    command: normalizeCliChatCommand(parsed.command),
     workspaceRoot,
     labRoot: parsed.labRoot,
     prompt,
     validationCommands: parsed.validationCommands,
   });
   const modeConfig = getChatModeConfig(built.chatMode);
+  const learningJournal = createCliLearningJournal({
+    workspaceRoot,
+    targetWorkspaceRoot,
+    labRoot: parsed.labRoot,
+    command: parsed.command,
+    prompt,
+    changeSessionId: built?.request?.ticket || '',
+  });
+  recordCliPromptStart(learningJournal, {
+    command: parsed.command,
+    prompt,
+    built,
+    docsResult,
+  });
 
-  if (parsed.command === 'ask' || parsed.command === 'plan') {
-    const directReply = parsed.command === 'ask'
+  if (['ask', 'plan', 'ask-docs', 'plan-docs'].includes(parsed.command)) {
+    const directReply = !docMode && normalizeCliChatCommand(parsed.command) === 'ask'
       ? buildDirectAskReply(prompt, report)
-      : buildDirectPlanReply(prompt, report, built);
+      : (!docMode ? buildDirectPlanReply(prompt, report, built) : '');
     if (directReply) {
       console.log(directReply);
-      if (parsed.command === 'plan') {
+      if (normalizeCliChatCommand(parsed.command) === 'plan') {
         console.log('');
         console.log(`Route: ${built.routing.laneLabel} | ${built.request.taskMode} | ${built.request.modelRole} role`);
         console.log(`Model: ${built.request.modelDisplayName || built.request.modelProfileId || built.request.baseModel || 'unresolved'}${built.request.providerSource ? ` via ${built.request.providerSource}` : ''}`);
       }
+      learningJournal.stop();
       return 0;
     }
-    const chatPrompt = buildGroundedChatPrompt({
-      chatMode: built.chatMode,
-      userPrompt: prompt,
-      report,
+    const chatPrompt = buildDocsAwareGroundedPrompt({
       built,
+      report,
+      userPrompt: prompt,
+      docDigests: docsResult.digests,
     });
     const result = await runtime.chat(chatPrompt, {
       chatMode: built.chatMode,
@@ -495,14 +1006,24 @@ async function runChatCommand(parsed) {
       env: buildChatEnvOverrides(built.request, built.chatMode),
     });
     const reply = extractChatReply(result);
-    if (parsed.command === 'plan') {
+    if (normalizeCliChatCommand(parsed.command) === 'plan') {
       console.log(reply || 'No plan reply received.');
+      if (docsResult.failures.length > 0) {
+        console.log('');
+        console.log(`Docs skipped: ${docsResult.failures.map((item) => `${item.source || 'source'} (${item.reason})`).join('; ')}`);
+      }
       console.log('');
       console.log(`Route: ${built.routing.laneLabel} | ${built.request.taskMode} | ${built.request.modelRole} role`);
       console.log(`Model: ${built.request.modelDisplayName || built.request.modelProfileId || built.request.baseModel || 'unresolved'}${built.request.providerSource ? ` via ${built.request.providerSource}` : ''}`);
+      learningJournal.stop();
       return result.ok === false ? 1 : 0;
     }
     console.log(reply || 'No reply received.');
+    if (docsResult.failures.length > 0) {
+      console.log('');
+      console.log(`Docs skipped: ${docsResult.failures.map((item) => `${item.source || 'source'} (${item.reason})`).join('; ')}`);
+    }
+    learningJournal.stop();
     return result.ok === false ? 1 : 0;
   }
 
@@ -511,12 +1032,14 @@ async function runChatCommand(parsed) {
     console.log(`Route: ${built.routing.laneLabel} | ${built.request.taskMode} | ${built.request.modelRole} role`);
     console.log(`Next step: ${built.routing.suggestedNextAction}`);
     console.log('Run the same command again with --yes when you want the engine to execute it.');
+    learningJournal.stop();
     return 0;
   }
 
   if (built.request.taskMode === 'summarizer') {
     const report = buildSystemCheck(workspaceRoot);
     console.log(renderSystemCheck(report, { area: parsed.area || 'roadmap', compact: true }));
+    learningJournal.stop();
     return report.areas?.roadmap?.status === 'blocked' ? 1 : 0;
   }
 
@@ -538,9 +1061,63 @@ async function runChatCommand(parsed) {
     projectRoot: targetWorkspaceRoot,
   });
   const snapshot = trackedRun?.operatorExecution || buildOperatorExecutionSnapshot(trackedRun || {}, {});
+  recordCliRunOutcome(learningJournal, {
+    command: parsed.command,
+    built,
+    trackedRun,
+  });
+  learningJournal.stop();
   console.log(`${modeConfig.label} mode completed.`);
   console.log(renderSnapshot(snapshot));
   return trackedRun?.state === 'pass' || trackedRun?.state === 'skipped' ? 0 : 1;
+}
+
+async function runProgressSummaryCommand(parsed) {
+  const objective = parsed.trailing.join(' ').trim();
+  const context = await buildSystemCheckContext(parsed.workspaceRoot);
+  const report = buildSystemCheck({
+    workspaceRoot: parsed.workspaceRoot,
+    ...context,
+  });
+  const docsResult = parsed.docSources.length > 0
+    ? await fetchTrustedDocDigests(parsed.docSources)
+    : { digests: [], failures: [] };
+  const outputPath = parsed.summaryPath || path.join(parsed.workspaceRoot, 'docs', 'LOCKED_PLAN_SUMMARY.md');
+  const markdown = buildProgressSummaryMarkdown({
+    title: parsed.title || objective || 'Locked engine plan',
+    objective,
+    workspaceRoot: parsed.workspaceRoot,
+    report,
+    docDigests: docsResult.digests,
+  });
+  fs.writeFileSync(outputPath, `${markdown}\n`, 'utf8');
+  console.log(`Wrote locked plan summary to ${outputPath}`);
+  if (docsResult.failures.length > 0) {
+    console.log(`Docs skipped: ${docsResult.failures.map((item) => `${item.source || 'source'} (${item.reason})`).join('; ')}`);
+  }
+  return 0;
+}
+
+async function runProofSummaryCommand(parsed) {
+  const objective = parsed.trailing.join(' ').trim();
+  const proofSnapshot = buildSharedEngineModelProofSnapshot({
+    workspaceRoot: parsed.workspaceRoot,
+    labRoot: parsed.labRoot,
+  });
+  const outputPath = parsed.summaryPath || path.join(parsed.workspaceRoot, 'docs', 'ENGINE_MODEL_PROOF.md');
+  const markdown = buildEngineModelProofMarkdown({
+    title: parsed.title || objective || 'Engine model proof',
+    objective,
+    workspaceRoot: parsed.workspaceRoot,
+    pythonCommand: proofSnapshot.pythonCommand,
+    acceptanceState: proofSnapshot.acceptanceState,
+    assistantConfig: proofSnapshot.assistantConfig,
+    learningStatus: proofSnapshot.learningStatus,
+    routeProofRows: proofSnapshot.routeProofRows,
+  });
+  fs.writeFileSync(outputPath, `${markdown}\n`, 'utf8');
+  console.log(`Wrote engine model proof to ${outputPath}`);
+  return 0;
 }
 
 async function runStatusCommand(parsed) {
@@ -629,16 +1206,22 @@ async function runRepairCommand(parsed) {
     prompt,
     validationCommands: parsed.validationCommands,
   });
-  built.request.taskMode = 'repair';
-  built.request.laneId = 'repair-fast';
-  built.request.laneLabel = 'Repair fast';
-  built.request.modelRole = resolveExecutionModelRole({
-    taskMode: 'repair',
-    action: built.request.action,
-    laneId: 'repair-fast',
-  });
+  built.request = applyRepairRouteOverride(built.request);
   const runtime = new SharedAgentRuntime({ workspaceRoot: parsed.workspaceRoot });
   const targetWorkspaceRoot = parsed.labRoot || parsed.workspaceRoot;
+  const learningJournal = createCliLearningJournal({
+    workspaceRoot: parsed.workspaceRoot,
+    targetWorkspaceRoot,
+    labRoot: parsed.labRoot,
+    command: 'repair',
+    prompt,
+    changeSessionId: built?.request?.ticket || '',
+  });
+  recordCliPromptStart(learningJournal, {
+    command: 'repair',
+    prompt,
+    built,
+  });
   if (targetWorkspaceRoot && targetWorkspaceRoot !== parsed.workspaceRoot) {
     built.request.approvalGated = false;
     built.request.approvalProtectedOnly = false;
@@ -656,6 +1239,12 @@ async function runRepairCommand(parsed) {
     projectRoot: targetWorkspaceRoot,
   });
   const snapshot = trackedRun?.operatorExecution || buildOperatorExecutionSnapshot(trackedRun || {}, {});
+  recordCliRunOutcome(learningJournal, {
+    command: 'repair',
+    built,
+    trackedRun,
+  });
+  learningJournal.stop();
   console.log(renderSnapshot(snapshot));
   return trackedRun?.state === 'pass' || trackedRun?.state === 'skipped' ? 0 : 1;
 }
@@ -683,6 +1272,28 @@ async function runSelfImproveCommand(parsed) {
   return response.ok && result.ok !== false ? 0 : 1;
 }
 
+async function runAutopilotCommand(parsed) {
+  const client = new AgentRuntimeClient({ workspaceRoot: parsed.workspaceRoot });
+  const targetWorkspaceRoot = parsed.labRoot || parsed.workspaceRoot;
+  const response = await client.invoke('action', {
+    request: {
+      action: 'autopilot',
+      workspaceRoot: parsed.workspaceRoot,
+      workspace: targetWorkspaceRoot,
+      targetWorkspaceRoot,
+      projectRoot: targetWorkspaceRoot,
+      labRoot: parsed.labRoot || '',
+    },
+    workspaceRoot: parsed.workspaceRoot,
+    targetWorkspaceRoot,
+    workspace: targetWorkspaceRoot,
+    projectRoot: targetWorkspaceRoot,
+  });
+  const result = response.result || { ok: response.ok };
+  console.log(clipText(result.summary || result.message || result.label || 'Autopilot run finished.', 240));
+  return response.ok && result.ok !== false ? 0 : 1;
+}
+
 async function runTrainCommand(parsed) {
   const client = new AgentRuntimeClient({ workspaceRoot: parsed.workspaceRoot });
   const targetWorkspaceRoot = parsed.labRoot || parsed.workspaceRoot;
@@ -698,6 +1309,7 @@ async function runTrainCommand(parsed) {
 }
 
 async function runModelsCommand(parsed) {
+  const subcommand = String(parsed.trailing[0] || 'status').trim().toLowerCase() || 'status';
   const settings = readTrainingTuningSettings(parsed.workspaceRoot);
   const runtime = new SharedAgentRuntime({ workspaceRoot: parsed.workspaceRoot });
   const telemetry = await collectTrainingTelemetry({
@@ -711,6 +1323,35 @@ async function runModelsCommand(parsed) {
     learning: {},
     acceptance: readLatestAcceptanceReport(parsed.workspaceRoot),
   });
+
+  if (subcommand === 'proof') {
+    const candidateId = String(parsed.candidateId || parsed.trailing[1] || '').trim();
+    const proofResult = runFoundryCandidateProofs(parsed.workspaceRoot, {
+      candidateId,
+      all: parsed.all === true,
+      capabilityIds: parsed.capabilityIds,
+      dryRun: parsed.dryRun === true,
+      labRoot: parsed.labRoot || '',
+      foundryStatus,
+    });
+    const payload = {
+      ...proofResult,
+      workspaceRoot: parsed.workspaceRoot,
+      candidateId,
+      supportedCapabilities: FOUNDRY_PROOF_CAPABILITIES.map((capability) => ({
+        id: capability.id,
+        label: capability.label,
+        commands: capability.commands,
+      })),
+    };
+    if (parsed.json) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log(renderFoundryProofExecution(payload));
+    }
+    return proofResult.ok ? 0 : 1;
+  }
+
   const aiStatus = buildAiStatus({
     workspaceRoot: parsed.workspaceRoot,
     settings,
@@ -731,6 +1372,7 @@ async function runModelsCommand(parsed) {
         outputPath: path.join(parsed.workspaceRoot, '.assistant_checkpoint_merges', 'merge-output'),
         mergeName: 'lab-merge',
       }),
+      candidateProof: `npm run engine:cli -- models proof --candidate-id "${String(foundryStatus?.nextCandidate?.id || '<candidate-id>').trim() || '<candidate-id>'}"`,
     },
   };
   if (parsed.json) {
@@ -847,6 +1489,8 @@ async function dispatch(parsed) {
   switch (parsed.command) {
     case 'ask':
     case 'plan':
+    case 'ask-docs':
+    case 'plan-docs':
     case 'edit':
     case 'agent':
       return runChatCommand(parsed);
@@ -858,6 +1502,8 @@ async function dispatch(parsed) {
       return runAuditCommand(parsed);
     case 'repair':
       return runRepairCommand(parsed);
+    case 'autopilot':
+      return runAutopilotCommand(parsed);
     case 'self-improve':
       return runSelfImproveCommand(parsed);
     case 'train':
@@ -868,6 +1514,10 @@ async function dispatch(parsed) {
       return runCheckpointMergeCommand(parsed);
     case 'doctor':
       return runDoctorCommand(parsed);
+    case 'progress-summary':
+      return runProgressSummaryCommand(parsed);
+    case 'proof-summary':
+      return runProofSummaryCommand(parsed);
     case 'git':
       return runGitCommand(parsed);
     default:
@@ -894,13 +1544,22 @@ module.exports = {
   buildDirectAskReply,
   buildDirectPlanReply,
   buildAuditScriptArgs,
+  buildEngineModelProofMarkdown,
+  buildDocsAwareGroundedPrompt,
   buildGroundedChatPrompt,
   buildLiveStateSummary,
+  buildProgressSummaryMarkdown,
   buildTerminalRequest,
   buildChatEnvOverrides,
+  createCliLearningJournal,
+  collectCliChangedFiles,
   extractChatReply,
+  normalizeCliChatCommand,
   parseCliArgs,
+  recordCliPromptStart,
+  recordCliRunOutcome,
   renderGitStatus,
+  renderFoundryProofExecution,
   renderModelLifecycleStatus,
   renderPreflight,
   renderSnapshot,

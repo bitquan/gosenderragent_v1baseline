@@ -100,3 +100,37 @@ test('buildVsCodeExtensionHealth ignores a retired breadcrumb-only desktop folde
   assert.ok(!health.warnings.some((warning) => /legacy in-repo desktop copy/i.test(warning)));
   assert.ok(!health.warnings.some((warning) => /still a stub/i.test(warning)));
 });
+
+test('buildVsCodeExtensionHealth flags integration metadata version drift', () => {
+  const workspaceRoot = makeWorkspace();
+  const extensionRoot = path.join(workspaceRoot, 'integration-library', 'extensions', 'vscode-companion');
+  fs.mkdirSync(path.join(extensionRoot, 'out'), { recursive: true });
+  fs.writeFileSync(path.join(extensionRoot, 'package.json'), JSON.stringify({
+    name: 'gosenderr-vscode-companion',
+    displayName: 'GoSenderr VS Code Companion',
+    version: '0.1.3',
+    main: './out/extension.js',
+    scripts: {
+      check: 'node --check extension.js',
+    },
+    contributes: {
+      commands: [
+        { command: 'gosenderr.openDesktopAgent' },
+        { command: 'gosenderr.openWorkbench' },
+      ],
+    },
+  }, null, 2));
+  fs.writeFileSync(path.join(extensionRoot, 'integration.json'), JSON.stringify({
+    id: 'vscode-companion-extension',
+    kind: 'extension',
+    version: '0.1.0',
+  }, null, 2));
+  fs.writeFileSync(path.join(extensionRoot, 'out', 'extension.js'), 'module.exports = {};');
+
+  const health = buildVsCodeExtensionHealth(workspaceRoot);
+
+  assert.equal(health.exists, true);
+  assert.equal(health.metadataVersionMismatch, true);
+  assert.equal(health.integrationVersion, '0.1.0');
+  assert.ok(health.warnings.some((warning) => /integration metadata version/i.test(warning)));
+});

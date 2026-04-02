@@ -28,6 +28,8 @@ test('engine contract parses slash directives and routes modes safely', () => {
   const autoDirective = parseChatModeDirective('/auto');
   const autoRoute = inferChatModeRouting('auto', 'repair the failing validation path');
   const askRoute = inferChatModeRouting('ask', 'why is the review blocked?');
+  const askRepoStateRoute = inferChatModeRouting('ask', 'Why is the current run blocked right now?');
+  const askDocsRoute = inferChatModeRouting('ask', 'Research the VS Code docs for command registration.');
   const planRoute = inferChatModeRouting('plan', 'plan the next safe coding task');
   const editRoute = inferChatModeRouting('edit', 'repair the failing validation path');
   const agentRoute = inferChatModeRouting('agent', 'research why the docs path is failing');
@@ -38,6 +40,8 @@ test('engine contract parses slash directives and routes modes safely', () => {
   assert.equal(autoDirective.message, '');
   assert.equal(autoRoute.effectiveChatMode, 'agent');
   assert.equal(askRoute.modeAllowsExecution, false);
+  assert.notEqual(askRepoStateRoute.suggestedLaneId, 'research-docs');
+  assert.equal(askDocsRoute.suggestedLaneId, 'research-docs');
   assert.equal(planRoute.suggestedLaneId, 'plan-reasoning');
   assert.equal(editRoute.suggestedLaneId, 'repair-fast');
   assert.equal(editRoute.modeRequiresEditConfirmation, true);
@@ -133,7 +137,8 @@ test('engine contract prefers a dedicated repair route and falls back to coder w
   });
 
   assert.equal(withRepairRoute.active.baseModel, 'qwen2.5-coder:7b');
-  assert.equal(fallbackToCoder.active.baseModel, 'qwen2.5-coder:14b');
+  assert.equal(fallbackToCoder.active.baseModel, 'qwen2.5-coder:7b');
+  assert.equal(fallbackToCoder.localModelGuardrails.blockedSections.some((section) => section.id === 'coder'), true);
 });
 
 test('engine contract resolves model profile selection without inventing a second routing truth', () => {

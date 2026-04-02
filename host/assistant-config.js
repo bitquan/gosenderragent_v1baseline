@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { buildLocalModelPolicySnapshot } = require('../core/training-tuning');
 
 const DEFAULT_SAFE_BLOCKED_TAGS = ['SEC', 'AUTH', 'PAYMENT', 'MIGRATION', 'WALLET'];
 const DEFAULT_SAFE_BLOCKED_DOMAINS = ['payments'];
@@ -309,6 +310,11 @@ function readAssistantConfig(workspaceRoot, options = {}) {
     config.engineBaseProvider = config.engineBaseProvider || config.workspaceBaseProvider;
     config.engineProviderSource = config.engineProviderSource || config.workspaceProviderSource;
   }
+
+  config.modelPolicy = buildLocalModelPolicySnapshot(config);
+  config.modelConfigReviewNotes = Array.isArray(config.modelPolicy?.configReviewNotes)
+    ? config.modelPolicy.configReviewNotes.slice()
+    : [];
 
   return config;
 }

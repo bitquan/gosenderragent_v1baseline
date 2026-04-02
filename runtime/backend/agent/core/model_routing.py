@@ -7,6 +7,11 @@ from typing import Any
 from backend.agent.core.config_loader import load_project_config
 
 
+LOCAL_PROVIDER_VALUES = {'ollama', 'local'}
+LOCAL_APPROVED_DEFAULT_MODELS = {'qwen2.5-coder:7b', 'qwen2.5-coder:3b'}
+LOCAL_DEFAULT_FALLBACK_MODEL = 'qwen2.5-coder:7b'
+
+
 @dataclass(frozen=True)
 class AgentModelRoute:
     agent: str
@@ -33,7 +38,7 @@ DEFAULT_AGENT_MODEL_ROUTES: dict[str, AgentModelRoute] = {
         task_mode='planner',
         provider='ollama',
         model='qwen2.5-coder:7b',
-        fallback_model='qwen2.5-coder:14b',
+        fallback_model='qwen2.5-coder:7b',
         fallback_provider='ollama',
         purpose='Bound ticket scope, choose files, and prepare a safe implementation plan.',
     ),
@@ -44,7 +49,7 @@ DEFAULT_AGENT_MODEL_ROUTES: dict[str, AgentModelRoute] = {
         wrapped_profile_role='workspace',
         task_mode='coder',
         provider='ollama',
-        model='qwen2.5-coder:14b',
+        model='qwen2.5-coder:7b',
         fallback_model='qwen2.5-coder:3b',
         fallback_provider='ollama',
         purpose='Write bounded code changes, reuse existing patterns, and keep diffs small.',
@@ -57,7 +62,7 @@ DEFAULT_AGENT_MODEL_ROUTES: dict[str, AgentModelRoute] = {
         task_mode='validator',
         provider='ollama',
         model='qwen2.5-coder:7b',
-        fallback_model='qwen2.5-coder:14b',
+        fallback_model='qwen2.5-coder:7b',
         fallback_provider='ollama',
         purpose='Review diffs, interpret failing checks, and decide repair versus release.',
     ),
@@ -81,23 +86,36 @@ DEFAULT_AGENT_MODEL_ROUTES: dict[str, AgentModelRoute] = {
         task_mode='summarizer',
         provider='ollama',
         model='qwen2.5-coder:7b',
-        fallback_model='qwen2.5-coder:14b',
+        fallback_model='qwen2.5-coder:7b',
         fallback_provider='ollama',
         purpose='Prepare trusted summaries, release-facing artifacts, and training handoff output.',
     ),
 }
 
 AGENT_ROUTE_ALIASES: dict[str, str] = {
+    'chat': 'planner',
     'coder': 'implementer',
+    'review': 'validator',
+    'research': 'planner',
+    'run': 'validator',
+    'plan': 'planner',
+    'implement': 'implementer',
     'summarizer': 'release',
+    'summary': 'release',
 }
 AGENT_TASK_MODE_NAMES: dict[str, str] = {
+    'chat': 'planner',
     'planner': 'planner',
     'implementer': 'coder',
+    'implement': 'coder',
     'coder': 'coder',
+    'review': 'validator',
+    'run': 'validator',
     'validator': 'validator',
     'repair': 'repair',
+    'research': 'planner',
     'release': 'summarizer',
+    'summary': 'summarizer',
     'summarizer': 'summarizer',
 }
 
@@ -105,6 +123,21 @@ AGENT_TASK_MODE_NAMES: dict[str, str] = {
 def _normalized_string(value: Any, fallback: str) -> str:
     text = str(value or '').strip()
     return text or fallback
+
+
+def _normalized_local_provider(value: Any) -> str:
+    return str(value or '').strip().lower()
+
+
+def _guard_local_route(provider: str, model: str) -> str:
+    if _normalized_local_provider(provider) not in LOCAL_PROVIDER_VALUES:
+        return model
+    normalized_model = str(model or '').strip()
+    if not normalized_model:
+        return LOCAL_DEFAULT_FALLBACK_MODEL
+    if normalized_model in LOCAL_APPROVED_DEFAULT_MODELS:
+        return normalized_model
+    return LOCAL_DEFAULT_FALLBACK_MODEL
 
 
 def _routing_config(project_root: Path | None) -> dict[str, Any]:
@@ -172,7 +205,7 @@ def resolve_agent_model_route(agent_name: str, project_root: Path | None = None)
             task_mode='planner',
             provider='ollama',
             model='qwen2.5-coder:7b',
-            fallback_model='qwen2.5-coder:14b',
+            fallback_model='qwen2.5-coder:7b',
             fallback_provider='ollama',
             purpose='Fallback agent route.',
         )
@@ -190,6 +223,8 @@ def resolve_agent_model_route(agent_name: str, project_root: Path | None = None)
         if approval_override:
             config = {**config, **approval_override}
     if not config:
+        model = _guard_local_route(default.provider, default.model)
+        fallback_model = _guard_local_route(default.fallback_provider, default.fallback_model)
         return AgentModelRoute(
             agent=normalized_name or default.agent,
             role=default.role,
@@ -197,21 +232,25 @@ def resolve_agent_model_route(agent_name: str, project_root: Path | None = None)
             wrapped_profile_role=default.wrapped_profile_role,
             task_mode=default.task_mode,
             provider=default.provider,
-            model=default.model,
-            fallback_model=default.fallback_model,
+            model=model,
+            fallback_model=fallback_model,
             fallback_provider=default.fallback_provider,
             purpose=default.purpose,
         )
+    provider = _normalized_string(config.get('provider'), default.provider)
+    model = _guard_local_route(provider, _normalized_string(config.get('model'), default.model))
+    fallback_provider = _normalized_string(config.get('fallback_provider'), default.fallback_provider)
+    fallback_model = _guard_local_route(fallback_provider, _normalized_string(config.get('fallback_model'), default.fallback_model))
     return AgentModelRoute(
         agent=normalized_name or default.agent,
         role=_normalized_string(config.get('role'), default.role),
         model_role=_normalized_string(config.get('model_role'), default.model_role),
         wrapped_profile_role=_normalized_string(config.get('wrapped_profile_role'), default.wrapped_profile_role),
         task_mode=_normalized_string(config.get('task_mode'), default.task_mode),
-        provider=_normalized_string(config.get('provider'), default.provider),
-        model=_normalized_string(config.get('model'), default.model),
-        fallback_model=_normalized_string(config.get('fallback_model'), default.fallback_model),
-        fallback_provider=_normalized_string(config.get('fallback_provider'), default.fallback_provider),
+        provider=provider,
+        model=model,
+        fallback_model=fallback_model,
+        fallback_provider=fallback_provider,
         purpose=_normalized_string(config.get('purpose'), default.purpose),
     )
 
